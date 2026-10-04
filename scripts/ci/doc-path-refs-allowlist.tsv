@@ -60,6 +60,11 @@ docs/tutorial/	other-root	the pager crate's docs/tutorial tree; the citing rows 
 docs/user-guide/	other-root	the pager crate's docs/user-guide tree, used as the section heading of MT-4 and in doc-l10n-progress.md
 bin/safe-shell.sh	other-root	hook script the reader is told to write in their own project, in the 10-hooks.md hardening example
 bin/workspace_server.rs	other-root	crate-relative shorthand inside a row whose evidence block cites the full crates/codegen/xai-grok-workspace/src/bin path
+bin/install-lib.js	other-root	npm package-relative name (the layout inside node_modules/chaos-code); in this repo it is crates/codegen/xai-grok-pager/npm/chaos/bin/install-lib.js
+bin/postinstall.js	other-root	as above: the name the published package's own package.json points at; the source is crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js
+bin/chaos-bootstrap.js	other-root	as above: the launcher's companion inside the published package; the source is crates/codegen/xai-grok-pager/npm/chaos/bin/chaos-bootstrap.js
+bin/integrity.json	other-root	written into each platform package by the assembler and shipped inside the tarball; never a path in this repository
+bin/chaos.br	other-root	the brotli archive the published platform package carries, produced at assemble time; not repository content
 
 # --- To be created later by the plan that names it ---------------------------------
 crates/codegen/xai-grok-code-mode/	planned	proposed crate in the DSH port proposal; the proposal records P1 code mode as needing a decision, and no crate was created

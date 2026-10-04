@@ -511,6 +511,17 @@ jobs:
           export ONLY_PLATFORMS="${ARGS[*]}"
           node crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js
 
+      # The packages now carry a claim about their own bytes, and SHA256SUMS is the one digest list
+      # in this pipeline that a mirror cannot rewrite on the way to a user. This is the step that
+      # ties the two together: if a package's record describes anything other than the artifact
+      # whose .sig sidecar was just produced, the release stops here rather than on someone's
+      # machine where the installer refuses to write the binary.
+      - name: Check npm packages against the signed artifact digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-npm-integrity.py --sha256sums release-bins/SHA256SUMS
+
       - name: npm pack dry-run
         working-directory: crates/codegen/xai-grok-pager/npm
         shell: bash

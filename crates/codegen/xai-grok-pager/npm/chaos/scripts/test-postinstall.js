@@ -1,16 +1,31 @@
 #!/usr/bin/env node
-// Tests for the versioned-binary + symlink installation logic used by
-// postinstall.js and bin/chaos-bootstrap.js.
+// Tests for the installation logic in `bin/install-lib.js`.
 //
 // Run with:  node scripts/test-postinstall.js
 //
-// Uses only Node.js built-in modules (no test framework needed).
+// This file used to carry its own copy of the install logic and test that copy, which is how a
+// suite stays green while the two shipped entry points do something else: the mirror drifted from
+// `postinstall.js` in three places (the chaos-home rule, the cleanup suffix guard, and the Windows
+// chmod) and not one test noticed. Everything below requires `../bin/install-lib.js`, so a test
+// here can only pass for the code that ships. The end-to-end path -- a real `postinstall.js` run
+// and a real `bin/chaos` launch against a package the real assembler built -- lives in
+// `scripts/ci/test-assemble-integrity.sh`, and the split is deliberate: this file covers the
+// decision each function makes, that file covers the two programs users run.
+//
+// Packages are built with `buildIntegrityRecord` from the assembler, which is the code that
+// produces the claim in a real release, and every refusal below is checked against bytes that were
+// changed *after* the record was written rather than against a hand-written record.
+
+'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const os = require('os');
+const path = require('path');
 const zlib = require('zlib');
 const assert = require('assert');
+
+const lib = require('../bin/install-lib.js');
+const { buildIntegrityRecord, INTEGRITY_FILE } = require('./assemble-platform-packages.js');
 
 let passed = 0;
 let failed = 0;
@@ -28,1205 +43,726 @@ function test(name, fn) {
 }
 
 function makeTmpDir() {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'chaos-test-'));
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'chaos-install-test-'));
 }
 
 function cleanup(dir) {
     fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// ─── Extracted logic (mirrors postinstall.js and bin/chaos-bootstrap.js) ─
-
-/** Comparator: sort "<prefix>X.Y.Z" filenames by version, newest first. */
-function byVersionDescending(prefix) {
-    return (a, b) => {
-        const pa = a.slice(prefix.length).split('.').map(Number);
-        const pb = b.slice(prefix.length).split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-            if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
-        }
-        return 0;
-    };
-}
-
-/** Install a versioned binary + atomic symlink (same as postinstall.js). */
-function installVersionedBinary(vendoredBinPath, version, canonicalDir) {
-    const canonicalPath = path.join(canonicalDir, 'chaos');
-    fs.mkdirSync(canonicalDir, { recursive: true });
-
-    const versionedName = `chaos-${version}`;
-    const versionedPath = path.join(canonicalDir, versionedName);
-
-    if (!fs.existsSync(versionedPath)) {
-        const tmpPath = versionedPath + `.tmp.${process.pid}`;
-        try {
-            fs.copyFileSync(vendoredBinPath, tmpPath);
-            fs.chmodSync(tmpPath, 0o755);
-            fs.renameSync(tmpPath, versionedPath);
-        } finally {
-            try { fs.unlinkSync(tmpPath); } catch {}
-        }
-    }
-
-    const tmpLink = canonicalPath + `.link.${process.pid}`;
-    try { fs.unlinkSync(tmpLink); } catch {}
-    fs.symlinkSync(versionedName, tmpLink);
-    fs.renameSync(tmpLink, canonicalPath);
-
-    return { canonicalPath, versionedPath, versionedName };
-}
-
-/** Cleanup old versioned binaries (same as postinstall.js). */
-function cleanupOldVersions(canonicalDir, currentVersionedName) {
-    const entries = fs.readdirSync(canonicalDir);
-    const versionedBinaries = entries
-        .filter(e => e.startsWith('chaos-') && !e.includes('.tmp.') && !e.includes('.link.') && e !== currentVersionedName)
-        .sort(byVersionDescending('chaos-'));
-    // Keep the most recent old version, remove anything older.
-    for (const old of versionedBinaries.slice(1)) {
-        try { fs.unlinkSync(path.join(canonicalDir, old)); } catch {}
-    }
-    return versionedBinaries;
-}
-
-/** Grok bin dir resolution (mirrors postinstall.js and bin/chaos-bootstrap.js). */
-function resolveGrokBinDir(env, homedir) {
-    const chaosHome = env.GROK_HOME ?? path.join(homedir, '.chaos');
-    return path.join(chaosHome, 'bin');
-}
-
-/** Write the shipped binary to destPath (mirrors writeVendorBinary). */
-function writeVendorBinary(brotliPath, binaryPath, destPath) {
-    const tmp = destPath + `.tmp.${process.pid}`;
-    try {
-        if (fs.existsSync(brotliPath)) {
-            fs.writeFileSync(tmp, zlib.brotliDecompressSync(fs.readFileSync(brotliPath)));
-        } else if (fs.existsSync(binaryPath)) {
-            fs.copyFileSync(binaryPath, tmp);
-        } else {
-            return false;
-        }
-        fs.chmodSync(tmp, 0o755);
-        fs.renameSync(tmp, destPath);
-        return true;
-    } catch {
-        return false;
-    } finally {
-        try { fs.unlinkSync(tmp); } catch {}
-    }
-}
-
-/** Decompress a compressed binary into the bin dir (mirrors installBinary). */
-function installBinaryFromBrotli(brotliPath, version, canonicalDir) {
-    fs.mkdirSync(canonicalDir, { recursive: true });
-    const versionedName = `chaos-${version}`;
-    const versionedPath = path.join(canonicalDir, versionedName);
-    const canonicalPath = path.join(canonicalDir, 'chaos');
-
-    if (!fs.existsSync(versionedPath)) {
-        const tmpPath = versionedPath + `.tmp.${process.pid}`;
-        try {
-            const decompressed = zlib.brotliDecompressSync(fs.readFileSync(brotliPath));
-            fs.writeFileSync(tmpPath, decompressed);
-            fs.chmodSync(tmpPath, 0o755);
-            fs.renameSync(tmpPath, versionedPath);
-        } finally {
-            try { fs.unlinkSync(tmpPath); } catch {}
-        }
-    }
-
-    const tmpLink = canonicalPath + `.link.${process.pid}`;
-    try { fs.unlinkSync(tmpLink); } catch {}
-    fs.symlinkSync(versionedName, tmpLink);
-    fs.renameSync(tmpLink, canonicalPath);
-
-    return { canonicalPath, versionedPath, versionedName };
-}
-
-/** Install the shipped binary into the bin dir (same as bin/chaos-bootstrap.js). */
-function bootstrapCanonical(vendoredBinPath, version, canonicalDir) {
-    const canonicalPath = path.join(canonicalDir, 'chaos');
-    try {
-        fs.mkdirSync(canonicalDir, { recursive: true });
-        const versionedName = `chaos-${version}`;
-        const versionedPath = path.join(canonicalDir, versionedName);
-        if (!fs.existsSync(versionedPath)) {
-            const tmpPath = versionedPath + `.tmp.${process.pid}`;
-            fs.copyFileSync(vendoredBinPath, tmpPath);
-            fs.chmodSync(tmpPath, 0o755);
-            fs.renameSync(tmpPath, versionedPath);
-        }
-        const tmpLink = canonicalPath + `.link.${process.pid}`;
-        try { fs.unlinkSync(tmpLink); } catch {}
-        fs.symlinkSync(versionedName, tmpLink);
-        fs.renameSync(tmpLink, canonicalPath);
-        return canonicalPath;
-    } catch {
-        return vendoredBinPath;
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Install + Symlink Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('install + symlink tests\n');
-
-test('creates versioned binary and symlink on fresh install', () => {
-    const dir = makeTmpDir();
-    try {
-        const vendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(vendored, 'binary-content-v1');
-
-        const binDir = path.join(dir, 'bin');
-        const result = installVersionedBinary(vendored, '0.1.140', binDir);
-
-        // Versioned file should exist
-        assert.ok(fs.existsSync(result.versionedPath), 'versioned binary should exist');
-        assert.strictEqual(fs.readFileSync(result.versionedPath, 'utf8'), 'binary-content-v1');
-
-        // Canonical path should be a symlink
-        const stat = fs.lstatSync(result.canonicalPath);
-        assert.ok(stat.isSymbolicLink(), 'canonical path should be a symlink');
-
-        // Symlink should point to the versioned name (relative)
-        const target = fs.readlinkSync(result.canonicalPath);
-        assert.strictEqual(target, 'chaos-0.1.140');
-
-        // Reading through the symlink should return the binary content
-        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'binary-content-v1');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('upgrade swaps symlink and preserves old binary', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-
-        // Install v1
-        const vendored_v1 = path.join(dir, 'vendored-v1');
-        fs.writeFileSync(vendored_v1, 'v1-content');
-        installVersionedBinary(vendored_v1, '0.1.140', binDir);
-
-        // Install v2
-        const vendored_v2 = path.join(dir, 'vendored-v2');
-        fs.writeFileSync(vendored_v2, 'v2-content');
-        const result = installVersionedBinary(vendored_v2, '0.1.141', binDir);
-
-        // Symlink now points to v2
-        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-0.1.141');
-        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'v2-content');
-
-        // Old v1 binary MUST still exist on disk (this is the key safety property)
-        const oldBinary = path.join(binDir, 'chaos-0.1.140');
-        assert.ok(fs.existsSync(oldBinary), 'old versioned binary must not be deleted');
-        assert.strictEqual(fs.readFileSync(oldBinary, 'utf8'), 'v1-content');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('idempotent: reinstalling same version does not re-copy', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'original');
-        installVersionedBinary(vendored, '0.1.140', binDir);
-
-        // Modify vendored source (simulate npm replacing it)
-        fs.writeFileSync(vendored, 'replaced-by-npm');
-
-        // Re-run postinstall with same version
-        installVersionedBinary(vendored, '0.1.140', binDir);
-
-        // Versioned binary should NOT have been replaced (existsSync guard)
-        const versionedPath = path.join(binDir, 'chaos-0.1.140');
-        assert.strictEqual(fs.readFileSync(versionedPath, 'utf8'), 'original');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('symlink swap is atomic (no intermediate missing state)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const canonicalPath = path.join(binDir, 'chaos');
-
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'v1');
-        installVersionedBinary(vendored, '0.1.140', binDir);
-        assert.ok(fs.existsSync(canonicalPath), 'should exist after first install');
-
-        // Upgrade
-        fs.writeFileSync(vendored, 'v2');
-        installVersionedBinary(vendored, '0.1.141', binDir);
-        assert.ok(fs.existsSync(canonicalPath), 'should exist after upgrade');
-
-        // No temp files left behind
-        const entries = fs.readdirSync(binDir);
-        const tempFiles = entries.filter(e => e.includes('.tmp.') || e.includes('.link.'));
-        assert.strictEqual(tempFiles.length, 0, `temp files should be cleaned up, found: ${tempFiles}`);
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('handles upgrade from old-style regular file to versioned symlink', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const canonicalPath = path.join(binDir, 'chaos');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Simulate old installation: chaos is a regular file
-        fs.writeFileSync(canonicalPath, 'old-style-binary');
-        assert.ok(!fs.lstatSync(canonicalPath).isSymbolicLink(), 'should be regular file initially');
-
-        // Run new-style install
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'v2-content');
-        installVersionedBinary(vendored, '0.1.141', binDir);
-
-        // Should now be a symlink
-        assert.ok(fs.lstatSync(canonicalPath).isSymbolicLink(), 'should be symlink after install');
-        assert.strictEqual(fs.readFileSync(canonicalPath, 'utf8'), 'v2-content');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('handles broken symlink (target deleted externally)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Create a broken symlink (points to a file that doesn't exist)
-        const canonicalPath = path.join(binDir, 'chaos');
-        fs.symlinkSync('chaos-0.1.99', canonicalPath);
-        assert.ok(!fs.existsSync(canonicalPath), 'broken symlink should not "exist"');
-
-        // Install should work and fix the broken symlink
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'fixed-content');
-        const result = installVersionedBinary(vendored, '0.1.141', binDir);
-
-        assert.ok(fs.existsSync(result.canonicalPath), 'symlink should now resolve');
-        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'fixed-content');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('three sequential upgrades: v1 -> v2 -> v3 all coexist', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-
-        fs.writeFileSync(vendored, 'content-v1');
-        installVersionedBinary(vendored, '0.1.1', binDir);
-
-        fs.writeFileSync(vendored, 'content-v2');
-        installVersionedBinary(vendored, '0.1.2', binDir);
-
-        fs.writeFileSync(vendored, 'content-v3');
-        installVersionedBinary(vendored, '0.1.3', binDir);
-
-        // Symlink points to latest
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.3');
-
-        // All three versioned binaries still exist (no cleanup yet)
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.1')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.2')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.3')));
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('file permissions are preserved (0o755)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'binary');
-
-        const result = installVersionedBinary(vendored, '0.1.140', binDir);
-
-        const mode = fs.statSync(result.versionedPath).mode & 0o777;
-        assert.strictEqual(mode, 0o755, `expected 0755, got ${mode.toString(8)}`);
-    } finally {
-        cleanup(dir);
-    }
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// Cleanup / Semver Sort Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('\ncleanup + semver sort tests\n');
-
-test('cleanup keeps N-1 version and removes older ones', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Create three old versioned binaries
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'v138');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'v139');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'v140');
-        // chaos-0.1.141 is the current version (excluded from cleanup)
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'v141');
-
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'N-1 should be kept');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.139')), 'N-2 should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.138')), 'N-3 should be removed');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('cleanup with only one old version keeps it', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'v140');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'v141');
-
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'single old version should be kept');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current should exist');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('cleanup with no old versions is a no-op', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Only the current version exists
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'v141');
-
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current should still exist');
-        const entries = fs.readdirSync(binDir).filter(e => e.startsWith('chaos-'));
-        assert.strictEqual(entries.length, 1, 'should only have current version');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('cleanup ignores .tmp. and .link. files', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'current');
-        // Leftover temp files from a crashed install
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140.tmp.12345'), 'crashed-tmp');
-        fs.writeFileSync(path.join(binDir, 'chaos.link.12345'), 'crashed-link');
-
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
-
-        // Temp files should not be touched by cleanup (they're filtered out)
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140.tmp.12345')), 'tmp file should not be touched');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos.link.12345')), 'link file should not be touched');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('semver sort: 0.1.9 vs 0.1.10 (digit boundary)', () => {
-    // Regression test: lexical sort puts '0.1.9' after '0.1.10' because '9' > '1'
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.8'), 'v8');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.9'), 'v9');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.10'), 'v10');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.11'), 'v11');
-
-        cleanupOldVersions(binDir, 'chaos-0.1.11');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.11')), 'current should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.10')), '0.1.10 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.9')), '0.1.9 should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.8')), '0.1.8 should be removed');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('semver sort: major version boundary (0.x vs 1.x)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        fs.writeFileSync(path.join(binDir, 'chaos-0.9.99'), 'old');
-        fs.writeFileSync(path.join(binDir, 'chaos-1.0.0'), 'v1');
-        fs.writeFileSync(path.join(binDir, 'chaos-1.0.1'), 'current');
-
-        cleanupOldVersions(binDir, 'chaos-1.0.1');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-1.0.0')), '1.0.0 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.9.99')), '0.9.99 should be removed');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('semver sort: minor version boundary (0.1.x vs 0.2.x)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.999'), 'old');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.2.0'), 'v2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.2.1'), 'current');
-
-        cleanupOldVersions(binDir, 'chaos-0.2.1');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.2.0')), '0.2.0 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.999')), '0.1.999 should be removed');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('byVersionDescending: unit test comparator directly', () => {
-    const input = ['chaos-0.1.9', 'chaos-0.1.10', 'chaos-0.1.2', 'chaos-1.0.0', 'chaos-0.2.0'];
-    const sorted = [...input].sort(byVersionDescending('chaos-'));
-    assert.deepStrictEqual(sorted, [
-        'chaos-1.0.0',
-        'chaos-0.2.0',
-        'chaos-0.1.10',
-        'chaos-0.1.9',
-        'chaos-0.1.2',
-    ]);
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// Bootstrap Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('\nbootstrap tests\n');
-
-test('bootstrapCanonical creates versioned binary from vendored', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(vendored, 'vendored-content');
-
-        const result = bootstrapCanonical(vendored, '0.1.140', binDir);
-
-        assert.strictEqual(result, path.join(binDir, 'chaos'));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'versioned binary should exist');
-        assert.ok(fs.lstatSync(result).isSymbolicLink(), 'canonical should be symlink');
-        assert.strictEqual(fs.readFileSync(result, 'utf8'), 'vendored-content');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('bootstrapCanonical is idempotent', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(vendored, 'original-content');
-
-        bootstrapCanonical(vendored, '0.1.140', binDir);
-
-        // Change vendored content (simulating npm update)
-        fs.writeFileSync(vendored, 'npm-replaced-content');
-
-        // Second bootstrap should not overwrite existing versioned binary
-        const result = bootstrapCanonical(vendored, '0.1.140', binDir);
-
-        assert.strictEqual(
-            fs.readFileSync(path.join(binDir, 'chaos-0.1.140'), 'utf8'),
-            'original-content',
-            'should keep original, not npm-replaced version'
-        );
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('bootstrapCanonical returns vendored path on failure', () => {
-    // If the canonical dir can't be created (e.g. permission denied),
-    // bootstrap should gracefully fall back to the vendored binary.
-    const dir = makeTmpDir();
-    try {
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'fallback');
-
-        // Create a regular file where the dir should be — mkdirSync will fail.
-        const blockerFile = path.join(dir, 'blocked');
-        fs.writeFileSync(blockerFile, 'I am a file, not a directory');
-        const impossibleDir = path.join(blockerFile, 'subdir');
-
-        const result = bootstrapCanonical(vendored, '0.1.140', impossibleDir);
-
-        assert.strictEqual(result, vendored, 'should fall back to vendored path');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('bootstrapCanonical works when canonical already exists (different version)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-
-        // Install v1 via postinstall
-        const vendored1 = path.join(dir, 'vendored-v1');
-        fs.writeFileSync(vendored1, 'v1');
-        installVersionedBinary(vendored1, '0.1.140', binDir);
-
-        // Bootstrap with v2 (simulates the launcher running a newer vendored binary)
-        const vendored2 = path.join(dir, 'vendored-v2');
-        fs.writeFileSync(vendored2, 'v2');
-        const result = bootstrapCanonical(vendored2, '0.1.141', binDir);
-
-        assert.strictEqual(result, path.join(binDir, 'chaos'));
-        // Symlink should now point to v2
-        assert.strictEqual(fs.readlinkSync(result), 'chaos-0.1.141');
-        // v1 should still exist
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'old version should still exist');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// End-to-end Scenario Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('\nend-to-end scenario tests\n');
-
-test('full lifecycle: install, upgrade, cleanup', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-
-        // v1: fresh install
-        fs.writeFileSync(vendored, 'v1');
-        installVersionedBinary(vendored, '0.1.140', binDir);
-
-        // v2: upgrade
-        fs.writeFileSync(vendored, 'v2');
-        installVersionedBinary(vendored, '0.1.141', binDir);
-
-        // v3: another upgrade
-        fs.writeFileSync(vendored, 'v3');
-        installVersionedBinary(vendored, '0.1.142', binDir);
-        cleanupOldVersions(binDir, 'chaos-0.1.142');
-
-        // Current (v3) + N-1 (v2) should exist; v1 removed
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.142')), 'v3 should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'v2 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'v1 should be removed');
-
-        // Canonical symlink points to v3
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.142');
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos'), 'utf8'), 'v3');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('downgrade: installing older version than current', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-
-        // Install v2 first
-        fs.writeFileSync(vendored, 'v2');
-        installVersionedBinary(vendored, '0.1.141', binDir);
-
-        // Downgrade to v1
-        fs.writeFileSync(vendored, 'v1');
-        installVersionedBinary(vendored, '0.1.140', binDir);
-
-        // Symlink should now point to v1
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.140');
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos'), 'utf8'), 'v1');
-
-        // v2 should still exist (never delete old binaries during install)
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'v2 should still exist');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('non-chaos files in bin dir are not touched by cleanup', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Non-chaos files
-        fs.writeFileSync(path.join(binDir, 'other-tool'), 'should-stay');
-        fs.writeFileSync(path.join(binDir, 'README.md'), 'should-stay');
-
-        // Grok versions
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'old1');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'old2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'current');
-
-        cleanupOldVersions(binDir, 'chaos-0.1.140');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'other-tool')), 'non-chaos file should not be touched');
-        assert.ok(fs.existsSync(path.join(binDir, 'README.md')), 'non-chaos file should not be touched');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// chaos vs chaos-pager Isolation Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('\nchaos vs chaos-pager isolation tests\n');
-
 /**
- * Cleanup for a named binary (mirrors postinstall.js cleanupOldVersions).
- * Uses prefix + leading digit to avoid chaos-* matching chaos-pager-*.
+ * A platform package in the shape the assembler leaves it: `bin/<name>.br` plus the record that
+ * describes it, so the only way a test can make it disagree with itself is to change one of the
+ * two afterwards.
  */
-function cleanupOldVersionsNamed(canonicalDir, binName, version) {
-    const prefix = `${binName}-`;
-    const currentVersioned = `${binName}-${version}`;
-    const entries = fs.readdirSync(canonicalDir);
-    const versionedBinaries = entries
-        .filter(e => {
-            if (!e.startsWith(prefix)) return false;
-            if (e.includes('.tmp.') || e.includes('.link.')) return false;
-            if (e === currentVersioned) return false;
-            const suffix = e.slice(prefix.length);
-            return /^\d/.test(suffix);
-        })
-        .sort(byVersionDescending(prefix));
-    for (const old of versionedBinaries.slice(1)) {
-        try { fs.unlinkSync(path.join(canonicalDir, old)); } catch {}
-    }
-    return versionedBinaries;
+function makePackage(dir, { binName = 'chaos', version = '1.0.0', platform = 'linux-x64', raw, record } = {}) {
+    const bytes = raw ?? Buffer.from(`#!/bin/sh\nprintf 'fixture ${version} %s\\n' "$*"\n`);
+    const compressed = zlib.brotliCompressSync(bytes);
+    const [plat, ...rest] = platform.split('-');
+    const entry = record ?? buildIntegrityRecord({
+        platform: plat,
+        arch: rest.join('-'),
+        binName,
+        version,
+        raw: bytes,
+        compressed,
+    });
+    fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'bin', `${binName}.br`), compressed);
+    fs.writeFileSync(path.join(dir, 'bin', INTEGRITY_FILE), `${JSON.stringify(entry, null, 2)}\n`);
+    return { dir, bytes, compressed, record: entry };
 }
 
-/** Install a named binary (mirrors postinstall.js installBinary). */
-function installNamedBinary(vendoredBinPath, binName, version, canonicalDir) {
-    fs.mkdirSync(canonicalDir, { recursive: true });
-    const versionedName = `${binName}-${version}`;
-    const versionedPath = path.join(canonicalDir, versionedName);
-    const canonicalPath = path.join(canonicalDir, binName);
-
-    if (!fs.existsSync(versionedPath)) {
-        const tmpPath = versionedPath + `.tmp.${process.pid}`;
-        try {
-            fs.copyFileSync(vendoredBinPath, tmpPath);
-            fs.chmodSync(tmpPath, 0o755);
-            fs.renameSync(tmpPath, versionedPath);
-        } finally {
-            try { fs.unlinkSync(tmpPath); } catch {}
-        }
-    }
-
-    const tmpLink = canonicalPath + `.link.${process.pid}`;
-    try { fs.unlinkSync(tmpLink); } catch {}
-    fs.symlinkSync(versionedName, tmpLink);
-    fs.renameSync(tmpLink, canonicalPath);
-
-    return { canonicalPath, versionedPath, versionedName };
+/** Reads a record back off disk, mutates it, and writes it back. */
+function editRecord(dir, binName, mutate) {
+    const file = path.join(dir, 'bin', INTEGRITY_FILE);
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    mutate(record);
+    fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+    return record;
 }
 
-test('installing both chaos and chaos-pager creates independent symlinks', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'chaos-binary');
-        const vendoredPager = path.join(dir, 'vendored-pager');
-        fs.writeFileSync(vendoredPager, 'pager-binary');
-
-        installNamedBinary(vendored, 'chaos', '0.1.141', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.141', binDir);
-
-        // Both symlinks exist and point to correct targets
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.141');
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos-pager')), 'chaos-pager-0.1.141');
-
-        // Both versioned files exist with correct content
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos-0.1.141'), 'utf8'), 'chaos-binary');
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos-pager-0.1.141'), 'utf8'), 'pager-binary');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('cleanup of chaos-* does not remove chaos-pager-*', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Old chaos versions
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'old-chaos-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'old-chaos-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'old-chaos-3');
-        // Current chaos
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'current-chaos');
-
-        // chaos-pager versions (should not be touched)
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.138'), 'old-pager-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.139'), 'old-pager-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.141'), 'current-pager');
-
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.141');
-
-        // chaos cleanup: current + N-1 kept, older removed
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current chaos should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'N-1 chaos should be kept');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.139')), 'N-2 chaos should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.138')), 'N-3 chaos should be removed');
-
-        // ALL chaos-pager versions must be untouched
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.138')), 'chaos-pager-0.1.138 must survive chaos cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.139')), 'chaos-pager-0.1.139 must survive chaos cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.141')), 'chaos-pager-0.1.141 must survive chaos cleanup');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('cleanup of chaos-pager-* does not remove chaos-*', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // chaos versions (should not be touched)
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'old-chaos-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'old-chaos-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'current-chaos');
-
-        // Old chaos-pager versions
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.138'), 'old-pager-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.139'), 'old-pager-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.140'), 'old-pager-3');
-        // Current pager
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.141'), 'current-pager');
-
-        cleanupOldVersionsNamed(binDir, 'chaos-pager', '0.1.141');
-
-        // chaos-pager cleanup: current + N-1 kept, older removed
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.141')), 'current pager should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.140')), 'N-1 pager should be kept');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-pager-0.1.139')), 'N-2 pager should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-pager-0.1.138')), 'N-3 pager should be removed');
-
-        // ALL chaos versions must be untouched
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.138')), 'chaos-0.1.138 must survive pager cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.139')), 'chaos-0.1.139 must survive pager cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'chaos-0.1.141 must survive pager cleanup');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('full dual-binary lifecycle: install, upgrade, cleanup both', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-        const vendoredPager = path.join(dir, 'vendored-pager');
-
-        // v1
-        fs.writeFileSync(vendored, 'chaos-v1');
-        fs.writeFileSync(vendoredPager, 'pager-v1');
-        installNamedBinary(vendored, 'chaos', '0.1.140', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.140', binDir);
-
-        // v2
-        fs.writeFileSync(vendored, 'chaos-v2');
-        fs.writeFileSync(vendoredPager, 'pager-v2');
-        installNamedBinary(vendored, 'chaos', '0.1.141', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.141', binDir);
-
-        // v3
-        fs.writeFileSync(vendored, 'chaos-v3');
-        fs.writeFileSync(vendoredPager, 'pager-v3');
-        installNamedBinary(vendored, 'chaos', '0.1.142', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.142', binDir);
-
-        // Cleanup both independently
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.142');
-        cleanupOldVersionsNamed(binDir, 'chaos-pager', '0.1.142');
-
-        // Current + N-1 for each
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.142')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')));
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.140')));
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.142')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.141')));
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-pager-0.1.140')));
-
-        // Symlinks correct
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.142');
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos-pager')), 'chaos-pager-0.1.142');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// macOS-only Pager Platform Split Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('\nmacOS-only pager platform split tests\n');
-
-test('chaos installs normally regardless of platform key', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(vendored, 'chaos-binary');
-
-        for (const platform of ['darwin-arm64', 'linux-x64', 'linux-arm64']) {
-            const result = installNamedBinary(vendored, 'chaos', '0.1.150', binDir);
-            assert.ok(fs.existsSync(result.versionedPath), `chaos should install for ${platform}`);
-            assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-0.1.150');
-        }
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('chaos-pager installs when vendored binary exists (darwin-arm64 path)', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendoredPager = path.join(dir, 'vendored-pager');
-        fs.writeFileSync(vendoredPager, 'pager-binary');
-
-        const result = installNamedBinary(vendoredPager, 'chaos-pager', '0.1.150', binDir);
-        assert.ok(fs.existsSync(result.versionedPath), 'pager versioned binary should exist');
-        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-pager-0.1.150');
-        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'pager-binary');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('Linux pager vendor files are not required for chaos install', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendorBase = path.join(dir, 'vendor');
-
-        // Only darwin-arm64 pager exists (mirrors npm tarball)
-        fs.mkdirSync(path.join(vendorBase, 'darwin-arm64'), { recursive: true });
-        fs.writeFileSync(path.join(vendorBase, 'darwin-arm64', 'chaos-pager'), 'mac-pager');
-
-        // Linux pager vendor dirs exist but without pager binaries
-        fs.mkdirSync(path.join(vendorBase, 'linux-x64'), { recursive: true });
-        fs.mkdirSync(path.join(vendorBase, 'linux-arm64'), { recursive: true });
-
-        // Verify no Linux pager binaries
-        assert.ok(!fs.existsSync(path.join(vendorBase, 'linux-x64', 'chaos-pager')));
-        assert.ok(!fs.existsSync(path.join(vendorBase, 'linux-arm64', 'chaos-pager')));
-
-        // chaos install should succeed independently
-        const chaosVendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(chaosVendored, 'chaos-linux');
-        const result = installNamedBinary(chaosVendored, 'chaos', '0.1.150', binDir);
-        assert.ok(fs.existsSync(result.versionedPath), 'chaos should install without Linux pager');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('skipping pager install on Linux does not affect chaos cleanup', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored');
-
-        // Install chaos across two versions
-        fs.writeFileSync(vendored, 'chaos-v1');
-        installNamedBinary(vendored, 'chaos', '0.1.149', binDir);
-        fs.writeFileSync(vendored, 'chaos-v2');
-        installNamedBinary(vendored, 'chaos', '0.1.150', binDir);
-
-        // Simulate Linux: only run chaos cleanup, skip pager entirely
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.150');
-
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.150')), 'current chaos should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.149')), 'N-1 chaos should be kept');
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.150');
-
-        // No pager files should exist at all
-        const entries = fs.readdirSync(binDir);
-        const pagerEntries = entries.filter(e => e.includes('pager'));
-        assert.strictEqual(pagerEntries.length, 0, 'no pager artifacts on Linux');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('canonical pager from non-npm install is preserved on Linux', () => {
-    const dir = makeTmpDir();
-    try {
-        const binDir = path.join(dir, 'bin');
-        fs.mkdirSync(binDir, { recursive: true });
-
-        // Simulate pager installed by install-chaos.sh (not npm)
-        const pagerVersioned = path.join(binDir, 'chaos-pager-0.1.150');
-        fs.writeFileSync(pagerVersioned, 'installer-pager-binary');
-        fs.chmodSync(pagerVersioned, 0o755);
-        const pagerCanonical = path.join(binDir, 'chaos-pager');
-        fs.symlinkSync('chaos-pager-0.1.150', pagerCanonical);
-
-        // Run chaos-only install + cleanup (simulating Linux postinstall)
-        const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'chaos-binary');
-        installNamedBinary(vendored, 'chaos', '0.1.150', binDir);
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.150');
-
-        // Pager installed by other means must be untouched
-        assert.ok(fs.existsSync(pagerCanonical), 'canonical pager should survive');
-        assert.ok(fs.existsSync(pagerVersioned), 'versioned pager should survive');
-        assert.strictEqual(fs.readlinkSync(pagerCanonical), 'chaos-pager-0.1.150');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-console.log('\nchaos home + brotli install tests\n');
-
-test('resolveGrokBinDir honors $GROK_HOME, else falls back to <home>/.chaos/bin', () => {
-    assert.strictEqual(
-        resolveGrokBinDir({ GROK_HOME: '/fast/local/.chaos' }, '/home/alice'),
-        path.join('/fast/local/.chaos', 'bin'),
-    );
-    assert.strictEqual(
-        resolveGrokBinDir({}, '/home/alice'),
-        path.join('/home/alice', '.chaos', 'bin'),
-    );
-    assert.strictEqual(resolveGrokBinDir({ GROK_HOME: '' }, '/home/alice'), path.join('', 'bin'));
-});
-
-test('writeVendorBinary returns false (not true) when the destination cannot be written', () => {
-    const dir = makeTmpDir();
-    try {
-        const brotliPath = path.join(dir, 'chaos.br');
-        fs.writeFileSync(brotliPath, zlib.brotliCompressSync(Buffer.from('binary')));
-
-        // A non-empty directory at destPath makes the final rename fail.
-        const dest = path.join(dir, 'dest');
-        fs.mkdirSync(dest);
-        fs.writeFileSync(path.join(dest, 'child'), 'x');
-
-        assert.strictEqual(writeVendorBinary(brotliPath, path.join(dir, 'raw'), dest), false);
-        assert.ok(!fs.existsSync(`${dest}.tmp.${process.pid}`), 'temp file is cleaned up on failure');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-test('decompresses brotli into the canonical dir without duplicating into node_modules', () => {
-    const dir = makeTmpDir();
-    try {
-        const vendorBin = path.join(dir, 'node_modules', 'bin');
-        fs.mkdirSync(vendorBin, { recursive: true });
-        const brotliPath = path.join(vendorBin, 'chaos.br');
-        fs.writeFileSync(brotliPath, zlib.brotliCompressSync(Buffer.from('native-binary-bytes')));
-
-        const binDir = path.join(dir, '.chaos', 'bin');
-        const result = installBinaryFromBrotli(brotliPath, '0.1.220', binDir);
-
-        assert.ok(fs.lstatSync(result.canonicalPath).isSymbolicLink());
-        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'native-binary-bytes');
-        assert.ok(!fs.existsSync(path.join(vendorBin, 'chaos')), 'no uncompressed binary in node_modules');
-        assert.ok(fs.existsSync(brotliPath), 'compressed .br payload is preserved');
-    } finally {
-        cleanup(dir);
-    }
-});
-
-if (process.platform !== 'win32') {
-    console.log('\nbin link tests\n');
-
-    const { spawnSync } = require('child_process');
-
-    /** Extract the native binary beside the entry and link to it (mirrors installBinLink). */
-    function installBinLink(pkgBinDir, vendorBinary) {
-        const nativePath = path.join(pkgBinDir, 'chaos-native');
-        if (!writeVendorBinary(vendorBinary + '.br', vendorBinary, nativePath)) {
-            return;
-        }
-        const entryPath = path.join(pkgBinDir, 'chaos');
-        const tmp = entryPath + `.link.${process.pid}`;
-        try { fs.unlinkSync(tmp); } catch {}
-        fs.symlinkSync('./chaos-native', tmp);
-        fs.renameSync(tmp, entryPath);
-    }
-
-    test('bin entry links to the sibling native binary and launches with args', () => {
-        const dir = makeTmpDir();
-        try {
-            const vendorBinary = path.join(dir, 'platform', 'bin', 'chaos');
-            fs.mkdirSync(path.dirname(vendorBinary), { recursive: true });
-            fs.writeFileSync(vendorBinary, '#!/bin/sh\necho "REAL|$@"\n');
-
-            // npm-style layout: the PATH entry is a symlink to the package entry.
-            const pkgBinDir = path.join(dir, 'pkg-bin');
-            const entryPath = path.join(pkgBinDir, 'chaos');
-            fs.mkdirSync(pkgBinDir, { recursive: true });
-            fs.writeFileSync(entryPath, '#!/usr/bin/env node\n');
-            const pathEntry = path.join(dir, 'npm-bin', 'chaos');
-            fs.mkdirSync(path.dirname(pathEntry), { recursive: true });
-            fs.symlinkSync(entryPath, pathEntry);
-
-            installBinLink(pkgBinDir, vendorBinary);
-
-            assert.ok(fs.lstatSync(entryPath).isSymbolicLink(), 'entry should be a symlink');
-            assert.strictEqual(fs.readlinkSync(entryPath), './chaos-native');
-            const res = spawnSync(pathEntry, ['hello', 'a b'], { encoding: 'utf8' });
-            assert.strictEqual(res.status, 0, `launch failed: ${res.stderr}`);
-            assert.strictEqual(res.stdout.trim(), 'REAL|hello a b');
-
-            // Entry and binary share one lifetime: deleting unrelated state
-            // (the chaos home) cannot dangle the entry.
-            const res2 = spawnSync(pathEntry, ['x'], { encoding: 'utf8' });
-            assert.strictEqual(res2.stdout.trim(), 'REAL|x');
-        } finally {
-            cleanup(dir);
-        }
-    });
-
-    test('replacing the entry twice leaves one valid link and no temp files', () => {
-        const dir = makeTmpDir();
-        try {
-            const vendorBinary = path.join(dir, 'vendor', 'chaos');
-            fs.mkdirSync(path.dirname(vendorBinary), { recursive: true });
-            fs.writeFileSync(vendorBinary, 'binary');
-            const entryPath = path.join(dir, 'chaos');
-            fs.writeFileSync(entryPath, '#!/usr/bin/env node\n');
-
-            installBinLink(dir, vendorBinary);
-            installBinLink(dir, vendorBinary);
-
-            assert.ok(fs.lstatSync(entryPath).isSymbolicLink());
-            assert.strictEqual(fs.readFileSync(entryPath, 'utf8'), 'binary');
-            assert.strictEqual(fs.readdirSync(dir).filter(e => e.includes('.link.') || e.includes('.tmp.')).length, 0, 'no temp files left');
-        } finally {
-            cleanup(dir);
-        }
-    });
-
-    test('mirrored link matches postinstall.js and the shipped entry wires the bootstrap', () => {
-        const pkgRoot = path.join(__dirname, '..');
-        const postinstall = fs.readFileSync(path.join(pkgRoot, 'bin', 'postinstall.js'), 'utf8');
-        for (const line of [
-            "if (!(process.env.npm_config_user_agent ?? '').startsWith('npm/')) return;",
-            "fs.symlinkSync('./chaos-native', tmp);",
-        ]) {
-            assert.ok(postinstall.includes(line), `postinstall.js lost link line: ${line}`);
-        }
-        const launcher = fs.readFileSync(path.join(pkgRoot, 'bin', 'chaos'), 'utf8');
-        assert.ok(launcher.startsWith('#!/usr/bin/env node'), 'shipped entry must stay a node script for Windows cmd shims');
-        assert.ok(launcher.includes("require('./chaos-bootstrap.js')"), 'entry must run the bootstrap');
-        assert.ok(fs.existsSync(path.join(pkgRoot, 'bin', 'chaos-bootstrap.js')), 'bootstrap must ship in bin/');
-    });
+/** Replaces the archive with one that no longer matches the record beside it. */
+function tamperArchive(dir, binName) {
+    const file = path.join(dir, 'bin', `${binName}.br`);
+    const bytes = Buffer.from(fs.readFileSync(file));
+    bytes[Math.floor(bytes.length / 2)] ^= 0x01;
+    fs.writeFileSync(file, bytes);
+    return file;
 }
 
-// ─── The shipped launcher, actually executed, with no platform binary ──────
-//
-// Everything above mirrors logic. This runs the real bin/chaos in a child node and
-// only stubs which platform node reports, because the case worth testing -- Windows --
-// cannot be produced on this machine. It is the only way to know the message a user
-// sees comes from the file that ships rather than from a copy kept in this test.
-{
-    const { spawnSync } = require('child_process');
-    const pkgRoot = path.join(__dirname, '..');
-    const pinned = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'))
-        .optionalDependencies;
+function installFrom(pkg, opts) {
+    return lib.installVersionedBinary({ sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', ...opts });
+}
 
-    function runLauncherAs(platform, arch) {
-        const home = makeTmpDir();
+console.log('installVersionedBinary: the install a user gets');
+
+test('a fresh install writes the versioned file byte-for-byte and links the plain name at it', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const bin = path.join(root, 'bin');
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(result.ok, `install failed: ${JSON.stringify(result)}`);
+        assert.deepStrictEqual(fs.readFileSync(result.versionedPath), pkg.bytes);
+        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-1.0.0');
+        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), pkg.bytes.toString());
+    } finally { cleanup(root); }
+});
+
+test('the installed binary is executable without being asked to be', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: path.join(root, 'bin'),
+        });
+        assert.ok(result.ok, JSON.stringify(result));
+        // eslint-disable-next-line no-bitwise
+        assert.strictEqual(fs.statSync(result.versionedPath).mode & 0o777, 0o755);
+    } finally { cleanup(root); }
+});
+
+test('a rewrite lands as a new inode instead of writing into the one a process may hold', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const bin = path.join(root, 'bin');
+        fs.mkdirSync(bin, { recursive: true });
+        const dest = path.join(bin, 'chaos-1.0.0');
+        // This is what the self-heal path does with a file that disagrees: it rewrites it. Those
+        // bytes may be mapped by a live process, and on macOS writing into a mapped inode kills it,
+        // so the new bytes have to arrive as a different inode under the same name.
+        fs.writeFileSync(dest, 'the bytes a running process is still executing');
+        const before = fs.statSync(dest);
+        const result = lib.writeVerifiedBinary(pkg.dir, 'chaos', dest);
+        assert.ok(result.ok, JSON.stringify(result));
+        const after = fs.statSync(dest);
+        assert.notStrictEqual(after.ino, before.ino, 'the rewrite reused the inode it was replacing');
+        assert.deepStrictEqual(fs.readFileSync(dest), pkg.bytes);
+    } finally { cleanup(root); }
+});
+
+test('an upgrade leaves the previous version in place and moves the link', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const v1 = makePackage(path.join(root, 'p1'), { version: '1.0.0' });
+        const v2 = makePackage(path.join(root, 'p2'), { version: '1.1.0' });
+        lib.installVersionedBinary({ sourceDir: v1.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin });
+        const second = lib.installVersionedBinary({
+            sourceDir: v2.dir, binName: 'chaos', version: '1.1.0', canonicalDir: bin,
+        });
+        assert.ok(second.ok, JSON.stringify(second));
+        assert.strictEqual(fs.readlinkSync(path.join(bin, 'chaos')), 'chaos-1.1.0');
+        // Both must still exist: a process running 1.0.0 has those pages mapped, and on macOS
+        // replacing a mapped binary kills it rather than deferring the unlink.
+        assert.ok(fs.existsSync(path.join(bin, 'chaos-1.0.0')));
+        assert.deepStrictEqual(fs.readFileSync(path.join(bin, 'chaos-1.1.0')), v2.bytes);
+    } finally { cleanup(root); }
+});
+
+test('re-installing the same version does not rewrite the file', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const first = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin, verifyInstalled: true,
+        });
+        const mtime = fs.statSync(first.versionedPath).mtimeMs;
+        const again = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin, verifyInstalled: true,
+        });
+        assert.ok(again.ok, JSON.stringify(again));
+        assert.strictEqual(again.replacedInstalled, false);
+        assert.strictEqual(fs.statSync(first.versionedPath).mtimeMs, mtime);
+    } finally { cleanup(root); }
+});
+
+test('verifyInstalled rewrites an installed file that was changed under us', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const first = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        fs.writeFileSync(first.versionedPath, Buffer.from('somebody edited the installed binary'));
+        const again = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin, verifyInstalled: true,
+        });
+        assert.ok(again.ok, JSON.stringify(again));
+        assert.strictEqual(again.replacedInstalled, true);
+        assert.deepStrictEqual(fs.readFileSync(first.versionedPath), pkg.bytes);
+    } finally { cleanup(root); }
+});
+
+test('an existing file that disagrees is rewritten even by the caller that does not verify', () => {
+    // Both entry points self-heal: this function is only reached when the canonical name is
+    // supposed to resolve to verified bytes, so a versioned file that disagrees is repaired
+    // whoever is asking. What the flag actually changes is the unreadable-record case below.
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const first = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        fs.writeFileSync(first.versionedPath, Buffer.from('edited'));
+        const again = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(again.ok, JSON.stringify(again));
+        assert.strictEqual(again.replacedInstalled, true);
+        assert.deepStrictEqual(fs.readFileSync(first.versionedPath), pkg.bytes);
+    } finally { cleanup(root); }
+});
+
+test('an unreadable record stops the installer but not a binary that is already installed', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const first = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(first.ok, JSON.stringify(first));
+        fs.rmSync(path.join(pkg.dir, 'bin', INTEGRITY_FILE));
+
+        const installer = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin, verifyInstalled: true,
+        });
+        assert.strictEqual(installer.ok, false);
+        assert.strictEqual(installer.reason, 'integrity');
+
+        const launcher = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(launcher.ok, `a lost record must not break a working install: ${JSON.stringify(launcher)}`);
+        assert.deepStrictEqual(fs.readFileSync(first.versionedPath), pkg.bytes);
+    } finally { cleanup(root); }
+});
+
+test('an old-style plain canonical file is replaced by the versioned link', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        fs.mkdirSync(bin, { recursive: true });
+        fs.writeFileSync(path.join(bin, 'chaos'), 'installed by install.sh once upon a time');
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(result.ok, JSON.stringify(result));
+        assert.strictEqual(fs.readlinkSync(path.join(bin, 'chaos')), 'chaos-1.0.0');
+    } finally { cleanup(root); }
+});
+
+test('a dangling link left by a deleted version is replaced, not followed', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        fs.mkdirSync(bin, { recursive: true });
+        fs.symlinkSync('chaos-0.9.0', path.join(bin, 'chaos'));
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(result.ok, JSON.stringify(result));
+        assert.strictEqual(fs.readlinkSync(path.join(bin, 'chaos')), 'chaos-1.0.0');
+        assert.ok(fs.existsSync(path.join(bin, 'chaos')));
+    } finally { cleanup(root); }
+});
+
+test('the swap leaves no temporary link behind', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(result.ok, JSON.stringify(result));
+        const strays = fs.readdirSync(bin).filter((n) => n.includes('.link.') || n.includes('.tmp.'));
+        assert.deepStrictEqual(strays, []);
+    } finally { cleanup(root); }
+});
+
+console.log('\nintegrity: every way the bytes can stop being the bytes');
+
+test('a package with no record installs nothing', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        fs.rmSync(path.join(pkg.dir, 'bin', INTEGRITY_FILE));
+        const bin = path.join(root, 'bin');
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'integrity');
+        assert.match(result.detail, /does not exist/);
+        assert.ok(!fs.existsSync(path.join(bin, 'chaos')), 'a refused install must not leave a link');
+        assert.ok(!fs.existsSync(path.join(bin, 'chaos-1.0.0')), 'a refused install must not leave a binary');
+    } finally { cleanup(root); }
+});
+
+test('a record for another schema is not this package\'s record', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.schema = 'chaos-npm-integrity/0'; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'integrity');
+        assert.match(result.detail, /chaos-npm-integrity\/0/);
+    } finally { cleanup(root); }
+});
+
+test('a tampered archive is refused with both digests in the message', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        tamperArchive(pkg.dir, 'chaos');
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'digest');
+        assert.match(result.label, /compressed/);
+        assert.strictEqual(result.expected, pkg.record.compressed.sha256);
+        assert.match(result.actual, /^[0-9a-f]{64}$/);
+        assert.notStrictEqual(result.actual, result.expected);
+    } finally { cleanup(root); }
+});
+
+test('a record whose binary digest no bytes hash to is refused on the decompressed half', () => {
+    // The archive still matches here, so a check that stopped at the archive would wave this
+    // through -- and this is the exact record a package could carry while its installer rejects it.
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.binary.sha256 = '0'.repeat(64); });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'digest');
+        assert.match(result.label, /decompressed/);
+        assert.strictEqual(result.actual, lib.sha256Hex(pkg.bytes));
+    } finally { cleanup(root); }
+});
+
+test('a record that understates the binary length is refused on size', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.binary.bytes = r.binary.bytes + 1; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'size');
+        assert.strictEqual(result.actual, String(pkg.bytes.length));
+    } finally { cleanup(root); }
+});
+
+test('a record describing a different binary name cannot be used to install this one', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.binary.name = 'grok'; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'integrity');
+        assert.match(result.detail, /"grok"/);
+    } finally { cleanup(root); }
+});
+
+test('a digest that is not 64 lowercase hex is not a digest', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.binary.sha256 = '0'.repeat(63); });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'integrity');
+    } finally { cleanup(root); }
+});
+
+test('a record with no usable binary length is a bad record, not a size mismatch', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.binary.bytes = 0; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        // 'size' would mean the bytes disagreed with a usable claim; here the claim itself is the
+        // broken thing, and reading those two differently is why the record is validated first.
+        assert.strictEqual(result.reason, 'integrity', JSON.stringify(result));
+        assert.match(result.detail, /positive integer binary\.bytes/);
+    } finally { cleanup(root); }
+});
+
+test('a record with no usable compressed length is refused the same way', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.compressed.bytes = '36'; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'integrity', JSON.stringify(result));
+        assert.match(result.detail, /positive integer compressed\.bytes/);
+    } finally { cleanup(root); }
+});
+
+test('a record that does not name its version and platform is not this build', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { delete r.platform; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'integrity', JSON.stringify(result));
+        assert.match(result.detail, /version and platform/);
+    } finally { cleanup(root); }
+});
+
+test('a compressed digest the record cannot state is a bad record, not a mismatch', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        editRecord(pkg.dir, 'chaos', (r) => { r.compressed.sha256 = 'abc'; });
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        // Without the shape check the comparison further down still refuses, but reports the
+        // package as altered -- 'digest' names an expected value that was never a digest --
+        // instead of saying the record itself is unusable.
+        assert.strictEqual(result.reason, 'integrity', JSON.stringify(result));
+        assert.match(result.detail, /compressed sha256/);
+    } finally { cleanup(root); }
+});
+
+test('a truncated archive is refused rather than half-installed', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const file = path.join(pkg.dir, 'bin', 'chaos.br');
+        const bytes = fs.readFileSync(file);
+        // Keep the compressed digest true and break the payload: that is the case where only the
+        // decompression can tell, and it must not produce a usable-looking file.
+        editRecord(pkg.dir, 'chaos', (r) => {
+            r.compressed.sha256 = lib.sha256Hex(bytes.subarray(0, bytes.length - 4));
+            r.compressed.bytes = bytes.length - 4;
+        });
+        fs.writeFileSync(file, bytes.subarray(0, bytes.length - 4));
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.ok(['digest', 'decompress'].includes(result.reason), JSON.stringify(result));
+        assert.ok(!fs.existsSync(path.join(root, 'bin', 'chaos-1.0.0')));
+    } finally { cleanup(root); }
+});
+
+test('an uncompressed binary beside the record is held to the same digest', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const rawFile = path.join(pkg.dir, 'bin', 'chaos');
+        fs.writeFileSync(rawFile, pkg.bytes);
+        fs.rmSync(path.join(pkg.dir, 'bin', 'chaos.br'));
+        const bin = path.join(root, 'bin');
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin,
+        });
+        assert.ok(result.ok, JSON.stringify(result));
+        assert.deepStrictEqual(fs.readFileSync(result.versionedPath), pkg.bytes);
+
+        fs.writeFileSync(rawFile, Buffer.from('substituted after the record was written'));
+        const root2 = makeTmpDir();
         try {
-            const probe = path.join(home, 'probe.js');
-            fs.writeFileSync(probe, [
-                `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });`,
-                `Object.defineProperty(process, 'arch', { value: ${JSON.stringify(arch)} });`,
-                `require(${JSON.stringify(path.join(pkgRoot, 'bin', 'chaos'))});`,
-            ].join('\n'));
-            const res = spawnSync(process.execPath, [probe], {
-                encoding: 'utf8',
-                env: { ...process.env, CHAOS_HOME: home, GROK_HOME: '' },
+            const refused = lib.installVersionedBinary({
+                sourceDir: pkg.dir, binName: 'chaos', version: '2.0.0', canonicalDir: path.join(root2, 'bin'),
             });
-            return { status: res.status, stderr: res.stderr || '' };
-        } finally {
-            cleanup(home);
-        }
+            assert.strictEqual(refused.ok, false);
+            assert.strictEqual(refused.reason, 'digest');
+        } finally { cleanup(root2); }
+    } finally { cleanup(root); }
+});
+
+test('a package with neither an archive nor a binary says so', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        fs.rmSync(path.join(pkg.dir, 'bin', 'chaos.br'));
+        const result = installFrom(pkg, { canonicalDir: path.join(root, 'bin') });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.reason, 'missing');
+    } finally { cleanup(root); }
+});
+
+test('readIntegrity refuses a record that is not JSON instead of treating it as absent', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        fs.writeFileSync(path.join(pkg.dir, 'bin', INTEGRITY_FILE), '{ "schema": ');
+        const read = lib.readIntegrity(pkg.dir, 'chaos');
+        assert.strictEqual(read.ok, false);
+        assert.match(read.problem, /not readable JSON/);
+    } finally { cleanup(root); }
+});
+
+console.log('\nWindows: the same install through a copy');
+
+test('the versioned name carries .exe and the canonical name is a copy, not a link', () => {
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'), { binName: 'chaos.exe' });
+        const bin = path.join(root, 'bin');
+        const result = lib.installVersionedBinary({
+            sourceDir: pkg.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin, isWindows: true,
+        });
+        assert.ok(result.ok, JSON.stringify(result));
+        assert.strictEqual(result.versionedName, 'chaos-1.0.0.exe');
+        assert.strictEqual(path.basename(result.canonicalPath), 'chaos.exe');
+        assert.deepStrictEqual(fs.readFileSync(result.canonicalPath), pkg.bytes);
+        assert.strictEqual(fs.lstatSync(result.canonicalPath).isSymbolicLink(), false);
+    } finally { cleanup(root); }
+});
+
+test('a Windows swap removes the .old sidecar it made on the way out', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = path.join(root, 'bin');
+        const v1 = makePackage(path.join(root, 'p1'), { binName: 'chaos.exe', version: '1.0.0' });
+        const v2 = makePackage(path.join(root, 'p2'), { binName: 'chaos.exe', version: '1.1.0' });
+        lib.installVersionedBinary({
+            sourceDir: v1.dir, binName: 'chaos', version: '1.0.0', canonicalDir: bin, isWindows: true,
+        });
+        const second = lib.installVersionedBinary({
+            sourceDir: v2.dir, binName: 'chaos', version: '1.1.0', canonicalDir: bin, isWindows: true,
+        });
+        assert.ok(second.ok, JSON.stringify(second));
+        assert.deepStrictEqual(fs.readFileSync(path.join(bin, 'chaos.exe')), v2.bytes);
+        assert.ok(!fs.existsSync(path.join(bin, 'chaos.exe.old')));
+    } finally { cleanup(root); }
+});
+
+test('a destination that cannot be written is reported, not swallowed', () => {
+    // npm can run under a home that is read-only (a container with a mounted store), and the
+    // launcher's fallback path depends on this returning a reason instead of throwing.
+    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+        return; // root ignores the mode bits below, so the case cannot be made here
     }
-
-    test('a platform with no published sibling is reported, not silently ignored', () => {
-        // win32-x64 is the case that matters: npm holds chaos-code-win32-x64 under a
-        // security placeholder, so `npm install -g chaos-code` succeeds there and every
-        // later `chaos` run lands on this branch.
-        if (!pinned || !pinned['chaos-code-win32-x64']) {
-            throw new Error('package.json no longer pins chaos-code-win32-x64; update this test');
+    const root = makeTmpDir();
+    try {
+        const pkg = makePackage(path.join(root, 'pkg'));
+        const locked = path.join(root, 'locked');
+        fs.mkdirSync(locked);
+        fs.chmodSync(locked, 0o500);
+        try {
+            const result = lib.writeVerifiedBinary(pkg.dir, 'chaos', path.join(locked, 'chaos'));
+            assert.strictEqual(result.ok, false);
+            assert.strictEqual(result.reason, 'write');
+            assert.ok(result.detail, 'the refusal has to carry the OS reason');
+        } finally {
+            fs.chmodSync(locked, 0o700);
         }
-        const out = runLauncherAs('win32', 'x64');
-        assert.strictEqual(out.status, 1, `launcher must fail, got ${out.status}: ${out.stderr}`);
-        assert.ok(out.stderr.includes('no platform binary installed for win32-x64'),
-            `stderr must name the platform: ${out.stderr}`);
-        assert.ok(out.stderr.includes(`chaos-code-win32-x64@${pinned['chaos-code-win32-x64']}`),
-            `stderr must name the pinned version so an unpublished sibling is distinguishable: ${out.stderr}`);
-        assert.ok(out.stderr.includes('npm view chaos-code-win32-x64 versions'),
-            `stderr must give the command that settles it: ${out.stderr}`);
-        assert.ok(!out.stderr.includes('    at '),
-            `must be a written message, not a stack trace: ${out.stderr}`);
-    });
+    } finally { cleanup(root); }
+});
 
-    test('an unpublished platform reaches the same report with the same exit', () => {
-        // Control: a platform that can never resolve, so the branch is exercised even if
-        // a real win32 sibling is ever vendored into this tree.
-        const out = runLauncherAs('plan9', 'riscv64');
-        assert.strictEqual(out.status, 1, `launcher must fail, got ${out.status}`);
-        assert.ok(out.stderr.includes('no platform binary installed for plan9-riscv64'),
-            out.stderr);
-    });
+console.log('\nresolveChaosHome: the same rule the Rust side uses');
+
+test('$CHAOS_HOME wins over $GROK_HOME', () => {
+    assert.strictEqual(
+        lib.resolveChaosHome({ CHAOS_HOME: '/tmp/a', GROK_HOME: '/tmp/b' }, '/home/u'), '/tmp/a');
+});
+
+test('$GROK_HOME is still honoured on its own', () => {
+    assert.strictEqual(lib.resolveChaosHome({ GROK_HOME: '/tmp/b' }, '/home/u'), '/tmp/b');
+});
+
+test('an existing ~/.chaos is preferred over a legacy ~/.grok', () => {
+    const root = makeTmpDir();
+    try {
+        fs.mkdirSync(path.join(root, '.chaos'));
+        fs.mkdirSync(path.join(root, '.grok'));
+        assert.strictEqual(lib.defaultChaosHome(root), path.join(root, '.chaos'));
+    } finally { cleanup(root); }
+});
+
+test('a legacy ~/.grok is used when there is no ~/.chaos', () => {
+    const root = makeTmpDir();
+    try {
+        fs.mkdirSync(path.join(root, '.grok'));
+        assert.strictEqual(lib.defaultChaosHome(root), path.join(root, '.grok'));
+    } finally { cleanup(root); }
+});
+
+test('with neither, the default is ~/.chaos', () => {
+    const root = makeTmpDir();
+    try {
+        assert.strictEqual(lib.defaultChaosHome(root), path.join(root, '.chaos'));
+    } finally { cleanup(root); }
+});
+
+test('a symlinked home resolves to the directory the link points at', () => {
+    const root = makeTmpDir();
+    try {
+        const real = path.join(root, 'real');
+        const link = path.join(root, 'link');
+        fs.mkdirSync(real);
+        fs.symlinkSync('real', link);
+        assert.strictEqual(lib.defaultChaosHome(link), path.join(fs.realpathSync(real), '.chaos'));
+    } finally { cleanup(root); }
+});
+
+console.log('\ncleanupOldVersions: keeping what a running process may still need');
+
+function seedBin(root, names) {
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    for (const name of names) fs.writeFileSync(path.join(bin, name), name);
+    return bin;
 }
 
-// ─── Summary ───────────────────────────────────────────────────────────
+test('the current version and the newest older one survive, the rest go', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, ['chaos-1.0.0', 'chaos-0.9.0', 'chaos-0.8.0', 'chaos-0.7.0']);
+        const { removed, kept } = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '1.0.0' });
+        assert.deepStrictEqual(removed, ['chaos-0.8.0', 'chaos-0.7.0']);
+        assert.deepStrictEqual(kept, ['chaos-0.9.0', 'chaos-1.0.0']);
+        assert.ok(fs.existsSync(path.join(bin, 'chaos-0.9.0')));
+    } finally { cleanup(root); }
+});
+
+test('a single older version is kept, because it may be mapped by a running process', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, ['chaos-1.0.0', 'chaos-0.9.0']);
+        const { removed } = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '1.0.0' });
+        assert.deepStrictEqual(removed, []);
+    } finally { cleanup(root); }
+});
+
+test('cleanup with no older versions is a no-op, not an error', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, ['chaos-1.0.0']);
+        const { removed, kept } = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '1.0.0' });
+        assert.deepStrictEqual(removed, []);
+        assert.deepStrictEqual(kept, ['chaos-1.0.0']);
+    } finally { cleanup(root); }
+});
+
+test('a missing bin directory is nothing to clean', () => {
+    const root = makeTmpDir();
+    try {
+        const { removed } = lib.cleanupOldVersions({
+            canonicalDir: path.join(root, 'nope'), binName: 'chaos', version: '1.0.0',
+        });
+        assert.deepStrictEqual(removed, []);
+    } finally { cleanup(root); }
+});
+
+test('in-flight .tmp. and .link. files are not cleanup targets', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, [
+            'chaos-1.0.0', 'chaos-0.9.0', 'chaos-0.8.0',
+            'chaos-0.8.0.tmp.4242', 'chaos.link.4242',
+        ]);
+        const { removed } = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '1.0.0' });
+        assert.deepStrictEqual(removed, ['chaos-0.8.0']);
+        assert.ok(fs.existsSync(path.join(bin, 'chaos-0.8.0.tmp.4242')));
+    } finally { cleanup(root); }
+});
+
+test('cleaning chaos-* leaves chaos-pager-* alone, and the other way round', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, [
+            'chaos-2.0.0', 'chaos-1.0.0', 'chaos-0.9.0', 'chaos-0.8.0',
+            'chaos-pager-2.0.0', 'chaos-pager-1.0.0', 'chaos-pager-0.9.0', 'chaos-pager-0.8.0',
+        ]);
+        const chaos = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '2.0.0' });
+        assert.deepStrictEqual(chaos.removed, ['chaos-0.9.0', 'chaos-0.8.0']);
+        for (const name of ['chaos-pager-2.0.0', 'chaos-pager-1.0.0', 'chaos-pager-0.9.0', 'chaos-pager-0.8.0']) {
+            assert.ok(fs.existsSync(path.join(bin, name)), `${name} must survive a chaos cleanup`);
+        }
+        const pager = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos-pager', version: '2.0.0' });
+        assert.deepStrictEqual(pager.removed, ['chaos-pager-0.9.0', 'chaos-pager-0.8.0']);
+        assert.ok(fs.existsSync(path.join(bin, 'chaos-2.0.0')), 'chaos-2.0.0 must survive a pager cleanup');
+    } finally { cleanup(root); }
+});
+
+test('files that are not versioned binaries are never touched', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, ['chaos-2.0.0', 'chaos-1.0.0', 'config.toml', 'chaos-pager']);
+        const { removed } = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '2.0.0' });
+        assert.deepStrictEqual(removed, []);
+        assert.ok(fs.existsSync(path.join(bin, 'chaos-pager')));
+        assert.ok(fs.existsSync(path.join(bin, 'config.toml')));
+    } finally { cleanup(root); }
+});
+
+console.log('\nnames and ordering');
+
+test('version sorting crosses the digit boundary and the major boundary', () => {
+    const names = ['chaos-0.1.9', 'chaos-0.1.10', 'chaos-1.0.0', 'chaos-0.2.0'];
+    assert.deepStrictEqual(
+        [...names].sort(lib.byVersionDescending('chaos-')),
+        ['chaos-1.0.0', 'chaos-0.2.0', 'chaos-0.1.10', 'chaos-0.1.9']);
+});
+
+test('cleanup sorts by version, not by name', () => {
+    const root = makeTmpDir();
+    try {
+        const bin = seedBin(root, ['chaos-0.10.0', 'chaos-0.9.0', 'chaos-0.2.0', 'chaos-1.0.0']);
+        const { kept } = lib.cleanupOldVersions({ canonicalDir: bin, binName: 'chaos', version: '1.0.0' });
+        assert.deepStrictEqual(kept, ['chaos-0.10.0', 'chaos-1.0.0']);
+    } finally { cleanup(root); }
+});
+
+test('versionOfVersionedName reads the version out of the name the link points at', () => {
+    assert.strictEqual(lib.versionOfVersionedName('chaos-0.4.2', 'chaos'), '0.4.2');
+    assert.strictEqual(lib.versionOfVersionedName('chaos-0.4.2.exe', 'chaos', true), '0.4.2');
+    assert.strictEqual(lib.versionOfVersionedName('chaos-pager-1.0.0', 'chaos'), null);
+    assert.strictEqual(lib.versionOfVersionedName('chaos-latest', 'chaos'), null);
+    assert.strictEqual(lib.versionOfVersionedName('chaos-0.4.2', 'chaos', true), null);
+});
+
+test('sha256HexOfFile matches sha256Hex across the chunk boundary', () => {
+    const root = makeTmpDir();
+    try {
+        const file = path.join(root, 'big');
+        const bytes = Buffer.alloc((4 << 20) + 12345, 7);
+        for (let i = 0; i < bytes.length; i += 4093) bytes[i] = (bytes[i] + i) & 0xff;
+        fs.writeFileSync(file, bytes);
+        assert.strictEqual(lib.sha256HexOfFile(file), lib.sha256Hex(bytes));
+    } finally { cleanup(root); }
+});
+
+console.log('\nthe shipped entry points');
+
+test('bin/chaos is still the node launcher that hands off to the bootstrap', () => {
+    const entry = fs.readFileSync(path.join(__dirname, '..', 'bin', 'chaos'), 'utf8');
+    assert.match(entry, /require\('\.\/chaos-bootstrap\.js'\)/);
+});
+
+test('both entry points go through install-lib rather than carrying their own copy', () => {
+    for (const file of ['postinstall.js', 'chaos-bootstrap.js']) {
+        const text = fs.readFileSync(path.join(__dirname, '..', 'bin', file), 'utf8');
+        assert.match(text, /require\('\.\/install-lib\.js'\)/, `${file} must use the shared module`);
+        assert.ok(
+            !/brotliDecompressSync/.test(text),
+            `${file} must not decompress on its own; that is where the digest check lives`,
+        );
+    }
+});
+
+test('the installer refuses by exiting non-zero, so a broken package cannot look installed', () => {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'bin', 'postinstall.js'), 'utf8');
+    assert.match(text, /if \(!installBinary\('chaos', platformDir\)\) \{\n    process\.exit\(1\);/);
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+process.exit(failed ? 1 : 0);

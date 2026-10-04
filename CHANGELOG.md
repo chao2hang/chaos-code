@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+### 门禁：npm 平台包开始为自己交付的字节写摘要，而第一个能被长度骗过的地方在装配失败之后
+
+`npm install -g chaos-code` 把 70-150 MB 的二进制搬进 `$CHAOS_HOME/bin`，而这条路上此前没有任何
+一处知道「这个平台包应当包含哪些字节」：assembler 压缩完就发布，`bin/postinstall.js` 解包就写盘，
+`bin/chaos` 启动时只比一下长度。一次截断的上传、一个损坏的 npm 缓存、以及「release 里那个 artifact
+与 registry 里这个包是不是同一坨字节」，三种情形都不需要谁做错什么就能发生，而事后没有任何一处回答
+得了。
+
+写的人只有一个：`assemble-platform-packages.js` 打包每个平台包时顺手写 `bin/integrity.json`
+（schema `chaos-npm-integrity/1`）——压缩后 archive 的摘要与长度、解压出来二进制的摘要与长度、
+version 与 platform，再加一个 `release_artifact`，也就是 release 里那个 artifact 的名字。读的人有
+三个，共用同一份实现 `bin/install-lib.js`（本轮新增，此前两个入口各自揣着一份 copy-and-chmod）：
+安装器 `bin/postinstall.js`、启动器 `bin/chaos`（经 `bin/chaos-bootstrap.js`），以及发布前站在外面
+把整棵树读一遍的 `scripts/ci/check-npm-integrity.py`。guard 是六条规则，第六条把包自己声称的摘要
+对到 `release-bins/SHA256SUMS` 那一行上——那条是六道里唯一一条答案来自包外面的。
+
+量出来的数：49 条单测、45 例 guard 夹具、端到端那套 30 条 `ok:`，变异矩阵 79 发，78 死 1 活，每发
+之后源文件逐字节还原并 `cmp` 验证。上一轮矩阵留下 6 发存活，本轮打死其中 5 发，剩下 1 发记在下面。
+这 5 种的坏法互不相干，值得一种一种写。
+
+第一发把安装器的 `verifyInstalled: true` 改成 `false`：装到已有二进制的 home 上时，安装器不再核验
+在位的那个文件。它活了，因为夹具从来没有在同一个 home 上装过两次——每次都是全新目录，那条分支根本
+跑不到。现在有一行专门「装好、删掉 record、再装一次」，期望非零且已在位的文件一个字节都没动。第二发
+删掉启动器里「record 读不出来就直接用已装好的二进制」那一行，它活的方式更能说明契约：它不是不变，是
+当场崩在一句 `integrity.record.binary.bytes` 上，而契约是 record 缺失不许阻止一个已经装好的二进制
+运行——packaging 事故不该让用户的 shell 起不来。
+
+第三发是 6 发里最值得记的一处。「archive 摘要不符」会让安装失败，而安装失败之后启动器 fall
+through 到平台包里那个未压缩的 `bin/chaos`，那里唯一的检查是长度。于是夹具把一个假二进制补到记录里
+那个长度（53 字节）放回包里，再把 archive 弄坏：加上新那一行断言之后，未改动的代码拒绝它，而把
+`INTEGRITY_REFUSALS` 那一行去掉的变异体立刻把它跑了起来——长度对得上，就没人再看内容。此前没有任何
+夹具碰得到这条路径。修法不是给那条路径补一次哈希（每装一次多算 150 MB 不是我们要的），而是让
+fall-through 由安装结果把守，并把「长度恰好相符也照样错」单独钉成一行。
+
+另外两发是同一种错法的两个方向。L24 去掉 `compressed.sha256` 的形状检查之后仍然拒绝安装，但理由从
+「这份 record 不可用」变成「摘要不符」——它会告诉用户这个包被动过，而它拿去比较的那个 `expected`
+本身就不是一条摘要；所以断言里 reason 与措辞两样都要钉。G02 是 guard 开始接受 schema 的下一个拼法
+`chaos-npm-integrity/2`，原因只是那条断言原先只试 `/0` 一个错误值：只试一个错误值的断言，测的是那个
+值，不是那条规则；现在 `/0` 与 `/2` 各一条。
+
+留下来的那一发是 `install-lib.js` 里 `dangling` 那条后置检查：swap 之后 `bin/chaos` 若指向一个不存在
+的名字就报失败。`swapCanonical` 要么留下一个能解析的链接或副本，要么抛错并被报成 `swap`，而它指过去
+的版本化文件在每一条走到 swap 的路径上都已经存在，所以没有调用方能让它成立。检查留着——它是给「对
+一次写入报告成功但其实没写」的文件系统准备的，网络和 FUSE 挂载就干这种事——`installVersionedBinary`
+的注释也这么写了；但夹具要触发它只能假造文件系统，而对着假文件系统测不出真文件系统的行为，所以这一发
+记作未覆盖，而不是通过。
+
+两处不对称是刻意的，写在这里免得下一个人当 bug 修：record 读不出来时，安装器 refusal、启动器放行，
+因为「再装一次」还有机会核对而「运行」没有；启动器的长度检查只对已经装好的文件负责，一个从别的路径进
+了 chaos home 的、长度恰好相符的错文件它看不见。整套东西是 tamper-evident 而不是 tamper-proof：
+record 和验它的代码在同一个 tarball 里，能改二进制的人也能改 record，真正的锚在 npm 外面——
+`release-bins/SHA256SUMS` 与每个 artifact 的 ed25519 `.sig`，由 `scripts/verify-release-signature.sh`
+验。npm 侧这条链唯一不能被镜像在途中改写的环节就是那次对账。
+
+接入位置：`ci.yml` 的 `npm package scripts` job 里五步（五个入口各一次 `node --check`、
+`npm integrity record guards` 端到端、新增的 `npm integrity guard fixtures`、`npm integrity records
+in the tree`），`release.yml` 的 `package` job 在 assemble 之后一步
+`check-npm-integrity.py --sha256sums release-bins/SHA256SUMS`，`scripts/ci/publish-npm.sh` 在任何
+`npm publish` 之前先跑一次 guard（要发布时带 `--require-assembled`），容器侧门禁 `npm package
+guards` 的总数仍是 39。
+
+（2026-10-05；`crates/codegen/xai-grok-pager/npm/chaos/bin/install-lib.js`、
+`crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js`、
+`crates/codegen/xai-grok-pager/npm/chaos/bin/chaos-bootstrap.js`、
+`crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js`、
+`scripts/ci/check-npm-integrity.py`、`scripts/ci/test-check-npm-integrity.py`、
+`scripts/ci/test-assemble-integrity.sh`、
+`crates/codegen/xai-grok-pager/npm/chaos/scripts/test-postinstall.js`、`scripts/ci/publish-npm.sh`、
+`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`CONTRIBUTING.md`、
+`docs/verification/npm-integrity-2026-10-05.log`）
+
 ### 门禁：SBOM 接进 CI 与 release，而它对真实 workspace 交出的第一个依赖边数是 0
 
 第三方 notices 那一轮回答的是人读的问题：这份我们签字的许可证文件还覆盖实际构建的东西吗。机器读

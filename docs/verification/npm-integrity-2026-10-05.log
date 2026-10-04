@@ -1,0 +1,339 @@
+# npm integrity records: what the packages claim about their own bytes, 2026-10-05
+
+Every package this project publishes for npm now carries a machine-readable statement of
+what its own bytes hash to, `bin/integrity.json`, and three readers hold the package to it:
+the assembler that writes it, `bin/postinstall.js`, and `bin/chaos` (via
+`bin/chaos-bootstrap.js`). `scripts/ci/check-npm-integrity.py` is the fourth reader, the one
+that runs before anything is uploaded. This log is the transcript of those four disagreeing
+with a tampered tree.
+
+Sections 2 to 10 come from one driver: it builds a six-package tree at the depth the
+assembler expects, installs it into a node_modules layout, and then breaks it. The same
+sequence, with more cases, is what `scripts/ci/test-assemble-integrity.sh` runs on every CI
+run and in the container, so nothing below is only reproducible from this session.
+
+== 1. the four npm suites, on the host
+
+The four suites this batch ships or extends. `test-postinstall.js` drives the shipped
+install library in-process, one assertion per way bytes can fail to be the bytes.
+`test-check-npm-integrity.py` builds one real six-package tree with the shipped assembler
+and breaks exactly one thing per case, so a refusal can only come from the thing the case
+changed. `test-assemble-integrity.sh` is the end-to-end one: assembler, guard, installer,
+launcher, repair. `test-publish-npm.sh` covers the publish script's refusal to upload what
+it cannot check.
+
+    $ node crates/codegen/xai-grok-pager/npm/chaos/scripts/test-postinstall.js | tail -1
+        49 passed, 0 failed
+
+    $ python3 scripts/ci/test-check-npm-integrity.py | tail -1
+        test-check-npm-integrity: OK (45 cases against the guard)
+
+    $ bash scripts/ci/test-assemble-integrity.sh | tail -1
+        assemble-integrity guards: OK (assembler, records, the guard's eight refusals, install, launch, repair)
+
+    $ bash scripts/ci/test-publish-npm.sh | tail -1
+        publish-npm guards: OK (empty, partial and complete platform sets, and the digest refusals)
+
+== 2. the assembler, on six synthetic release binaries
+
+Six synthetic release binaries -- shell scripts with distinct bytes, so no digest can be
+accidentally shared between two targets -- through the shipped assembler. The record shown
+is linux-x64's. Both digests reproduce with `sha256sum` against the files on disk, which is
+the claim every section after this one leans on. `release_artifact` is the name
+`release.yml` uploads the build under; `test-assemble-integrity.sh` compares that field
+against the workflow's own matrix, and rule 6 of the guard uses it to look the bytes up in
+`SHA256SUMS`.
+
+    $ CHAOS_LINUX_X64=<release binary> … CHAOS_ROOT=<scratch repo> node <scratch>/npm/chaos/scripts/assemble-platform-packages.js
+        [assemble] THIRD_PARTY_NOTICES.md: 1 KB written to 8 file(s) from THIRD-PARTY-NOTICES + crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md
+        [assemble] chaos-code-darwin-arm64@9.9.9: 0.0 MB -> 0.0 MB (chaos-darwin-arm64/bin/chaos.br, binary sha256 9267521bcb03, chaos-darwin-arm64/bin/integrity.json)
+        [assemble] chaos-code-darwin-x64@9.9.9: 0.0 MB -> 0.0 MB (chaos-darwin-x64/bin/chaos.br, binary sha256 a0a4615b6023, chaos-darwin-x64/bin/integrity.json)
+        [assemble] chaos-code-linux-x64@9.9.9: 0.0 MB -> 0.0 MB (chaos-linux-x64/bin/chaos.br, binary sha256 6029bfd30285, chaos-linux-x64/bin/integrity.json)
+        [assemble] chaos-code-linux-arm64@9.9.9: 0.0 MB -> 0.0 MB (chaos-linux-arm64/bin/chaos.br, binary sha256 5f57e5ca3b4a, chaos-linux-arm64/bin/integrity.json)
+        [assemble] chaos-code-win32-x64@9.9.9: 0.0 MB -> 0.0 MB (chaos-win32-x64/bin/chaos.exe.br, binary sha256 4069c4905bdf, chaos-win32-x64/bin/integrity.json)
+        [assemble] chaos-code-win32-arm64@9.9.9: 0.0 MB -> 0.0 MB (chaos-win32-arm64/bin/chaos.exe.br, binary sha256 c0235c5c6ed5, chaos-win32-arm64/bin/integrity.json)
+        [assemble] 6 per-platform package(s) assembled at version 9.9.9 (all targets).
+
+    $ sha256sum /tmp/npm-integrity-evidence-v74ge5e9/src/linux-x64 /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm/chaos-linux-x64/bin/chaos.br
+        6029bfd302856bf6ae666dbb3c4fe7e30d811f79aab854e7b6a3c63b35f4b20f  /tmp/npm-integrity-evidence-v74ge5e9/src/linux-x64
+        37fd0e9371cbd5eb41923759f9cc55a2fbc88a3bc2f084fb8bdd40bad676e9c9  /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm/chaos-linux-x64/bin/chaos.br
+
+    $ cat /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm/chaos-linux-x64/bin/integrity.json
+        {
+          "schema": "chaos-npm-integrity/1",
+          "version": "9.9.9",
+          "platform": "linux-x64",
+          "release_artifact": "chaos-linux-x64",
+          "binary": {
+            "name": "chaos",
+            "sha256": "6029bfd302856bf6ae666dbb3c4fe7e30d811f79aab854e7b6a3c63b35f4b20f",
+            "bytes": 53
+          },
+          "compressed": {
+            "name": "chaos.br",
+            "sha256": "37fd0e9371cbd5eb41923759f9cc55a2fbc88a3bc2f084fb8bdd40bad676e9c9",
+            "bytes": 57
+          },
+          "generated_by": "crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js"
+        }
+
+== 3. the guard on that tree, cross-checked against a SHA256SUMS
+
+The default invocation, plus `--sha256sums`, which is what `release.yml` runs in the
+`package` job: the archive digest, the digest of the bytes it decompresses to (node's own
+brotli decoder, not the assembler's), the two lengths, the platform and version, and finally
+the same artifact's line in `release-bins/SHA256SUMS`. The count in the OK line is packages
+whose bytes were actually hashed, not packages examined.
+
+    $ python3 scripts/ci/check-npm-integrity.py --npm-root /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm --sha256sums /tmp/npm-integrity-evidence-v74ge5e9/SHA256SUMS
+        check-npm-integrity: OK (6 of 6 package(s) where the archive and decompressed bytes both match the record, cross-checked against SHA256SUMS)
+
+== 4. one byte flipped in one archive
+
+One byte at the middle of one archive. Both halves are reported: the archive no longer
+hashes to the record, and the bytes it decompresses to are not the binary either. The second
+finding is the one that matters for the install path -- it is what `readVerifiedBytes` stops
+on -- and the guard names it without being told, because it decompresses rather than
+trusting.
+
+    $ python3 scripts/ci/check-npm-integrity.py --npm-root /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm --sha256sums /tmp/npm-integrity-evidence-v74ge5e9/SHA256SUMS
+        check-npm-integrity: /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm/chaos-linux-x64/bin/chaos.br: sha256 is caacc3f0ae48b5b62d9818533bb2b4d5be6fc52a71a8f35d3b03c015cf3ad282, the record says 37fd0e9371cbd5eb41923759f9cc55a2fbc88a3bc2f084fb8bdd40bad676e9c9
+        check-npm-integrity: /tmp/npm-integrity-evidence-v74ge5e9/repo/crates/codegen/xai-grok-pager/npm/chaos-linux-x64/bin/chaos.br: decompresses to bytes hashing 11e2639d2b980c7badc477af59a716a45269d744e15114ae354badfe273f9d7f, but the record calls the binary 6029bfd302856bf6ae666dbb3c4fe7e30d811f79aab854e7b6a3c63b35f4b20f; the installer hashes these same bytes and will stop on this
+        check-npm-integrity: 2 problem(s) across 6 package(s)
+        exit=1
+
+== 5. a checkout, where nothing is assembled
+
+A checkout, where nothing is assembled. Without `--require-assembled` that is not a failure,
+because `release.yml` assembles in the `package` job and CI runs this before then; the OK
+line then refuses to overstate itself and says 0 of 6. With the flag it is a refusal, which
+is what `publish-npm.sh` passes when it is about to upload, so an empty or half-assembled
+`npm/` tree cannot be published.
+
+    $ python3 scripts/ci/check-npm-integrity.py --require-assembled
+        check-npm-integrity: /home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager/npm/chaos-darwin-arm64/bin/chaos.br: nothing assembled for chaos-darwin-arm64
+        check-npm-integrity: /home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager/npm/chaos-darwin-x64/bin/chaos.br: nothing assembled for chaos-darwin-x64
+        check-npm-integrity: /home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager/npm/chaos-linux-arm64/bin/chaos.br: nothing assembled for chaos-linux-arm64
+        check-npm-integrity: /home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager/npm/chaos-linux-x64/bin/chaos.br: nothing assembled for chaos-linux-x64
+        check-npm-integrity: /home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager/npm/chaos-win32-arm64/bin/chaos.exe.br: nothing assembled for chaos-win32-arm64
+        check-npm-integrity: /home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager/npm/chaos-win32-x64/bin/chaos.exe.br: nothing assembled for chaos-win32-x64
+        check-npm-integrity: 6 problem(s) across 6 package(s)
+        exit=1
+
+    $ python3 scripts/ci/check-npm-integrity.py
+        check-npm-integrity: OK (0 of 6 package(s) where the archive and decompressed bytes both match the record)
+
+== 6. install and launch, through the shipped entry points (linux-x64)
+
+Everything above checks claims on disk. This drives the two programs a user runs.
+`postinstall.js` writes `chaos-9.9.9` byte-identical to the release binary, links the
+unversioned name to it, and replaces the package's own `bin/chaos` with a verified copy
+beside the package -- which is why the entry point below runs the fixture binary with no
+node in sight. Restoring the node launcher afterwards is the other half of the picture: that
+is the code path taken when npm's shim or the postinstall link is not there.
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home npm_config_user_agent=npm/10.9.0 node node_modules/chaos-code/bin/postinstall.js
+        chaos 9.9.9 installed to /tmp/npm-integrity-evidence-v74ge5e9/home/bin/chaos -> chaos-9.9.9
+        Tip: chaos completions bash > ~/.local/share/bash-completion/completions/chaos
+             chaos completions zsh  > ~/.zsh/completions/_chaos
+
+    $ ls -l /tmp/npm-integrity-evidence-v74ge5e9/home/bin
+        total 4
+        lrwxrwxrwx 1 chaos chaos 11 Oct  5 06:32 chaos -> chaos-9.9.9
+        -rwxr-xr-x 1 chaos chaos 53 Oct  5 06:32 chaos-9.9.9
+
+    $ cmp /tmp/npm-integrity-evidence-v74ge5e9/src/linux-x64 /tmp/npm-integrity-evidence-v74ge5e9/home/bin/chaos-9.9.9 && echo identical
+        identical
+
+    $ readlink /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code/bin/chaos
+        ./chaos-native
+
+    $ /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code/bin/chaos entry-check
+        chaos-fixture linux-x64 entry-check
+
+    $ cp crates/codegen/xai-grok-pager/npm/chaos/bin/chaos /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code/bin/chaos
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home node node_modules/chaos-code/bin/chaos launch-check
+        chaos-fixture linux-x64 launch-check
+
+== 7. the installed binary truncated to eight bytes
+
+The failure this design exists for: a download or an update that stopped halfway. The
+launcher's pre-launch check is a `stat` on size, not a hash -- 150 MB on every invocation is
+not a price worth paying for a check an attacker with write access to the home could undo by
+editing the record too -- and the size alone is enough to notice. The message names the
+length it expected and which package said so, then re-installs from the package before
+running.
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home node node_modules/chaos-code/bin/chaos after-truncate
+        chaos-code: /tmp/npm-integrity-evidence-v74ge5e9/home/bin/chaos is 8 bytes, not the 53 chaos-code-linux-x64 records; re-installing from the package
+        chaos-fixture linux-x64 after-truncate
+
+    $ cmp /tmp/npm-integrity-evidence-v74ge5e9/src/linux-x64 /tmp/npm-integrity-evidence-v74ge5e9/home/bin/chaos-9.9.9 && echo identical
+        identical
+
+== 8. one archive byte flipped in the package, with an install already in place
+
+Two different positions, and the design separates them. A package whose archive no longer
+matches must not produce a new install (first command, and the `find | wc -l` is there
+because `ls` on an empty directory is silent whether or not anything was written), and a
+fresh launch out of that package must refuse (last command). An install that was already
+verified does still run: its bytes were checked when they were written, and the package has
+no authority to invalidate them by being broken afterwards.
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home2 npm_config_user_agent=npm/10.9.0 node node_modules/chaos-code/bin/postinstall.js
+        chaos-code: refusing to install chaos-code-linux-x64: chaos.br (compressed) does not match bin/integrity.json
+          file:     /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/chaos.br
+          expected: 37fd0e9371cbd5eb41923759f9cc55a2fbc88a3bc2f084fb8bdd40bad676e9c9
+          actual:   caacc3f0ae48b5b62d9818533bb2b4d5be6fc52a71a8f35d3b03c015cf3ad282
+          These are not the bytes the release build hashed. Re-run the install after
+          `npm cache clean --force`; if it repeats, the package you received was
+          altered, so please report it instead of installing around it.
+        exit=1
+
+    $ find /tmp/npm-integrity-evidence-v74ge5e9/home2/bin -type f | wc -l
+        0
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home node node_modules/chaos-code/bin/chaos installed-install-is-untouched
+        chaos-fixture linux-x64 installed-install-is-untouched
+
+    $ cmp /tmp/npm-integrity-evidence-v74ge5e9/src/linux-x64 /tmp/npm-integrity-evidence-v74ge5e9/home/bin/chaos-9.9.9 && echo unchanged
+        unchanged
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home5 node node_modules/chaos-code/bin/chaos from-the-broken-package
+        chaos-code: refusing to run chaos-code-linux-x64: chaos.br (compressed) does not match bin/integrity.json
+          file:     /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/chaos.br
+          expected: 37fd0e9371cbd5eb41923759f9cc55a2fbc88a3bc2f084fb8bdd40bad676e9c9
+          actual:   caacc3f0ae48b5b62d9818533bb2b4d5be6fc52a71a8f35d3b03c015cf3ad282
+          Re-install with `npm install -g chaos-code` after `npm cache clean --force`,
+          and report the package if the mismatch repeats.
+        exit=1
+
+== 9. the package's own record deleted
+
+The record is the root of trust, and its absence is a position rather than a pass. A fresh
+install refuses. A reinstall over a home that already holds the binary refuses too -- the
+file in place is only checkable through the record, so an installer that could not read it
+has no evidence to offer and says so instead of reporting success. The launcher still runs
+that installed binary: refusing there would mean a packaging accident stops a shell that
+works.
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home3 npm_config_user_agent=npm/10.9.0 node node_modules/chaos-code/bin/postinstall.js
+        chaos-code: refusing to install chaos-code-linux-x64: /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/integrity.json does not exist
+          The package does not say which bytes it is meant to contain, so there is
+          nothing to check them against. Re-install from the registry; a package
+          assembled without bin/integrity.json must not be published.
+        exit=1
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home npm_config_user_agent=npm/10.9.0 node node_modules/chaos-code/bin/postinstall.js
+        chaos-code: refusing to install chaos-code-linux-x64: /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/integrity.json does not exist
+          The package does not say which bytes it is meant to contain, so there is
+          nothing to check them against. Re-install from the registry; a package
+          assembled without bin/integrity.json must not be published.
+        exit=1
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home node node_modules/chaos-code/bin/chaos record-gone-but-installed
+        chaos-fixture linux-x64 record-gone-but-installed
+
+== 10. a wrong plain file of exactly the recorded length, beside a broken archive
+
+The one place where the launcher's cheap check could have been the only check. A failed
+install makes the launcher fall back to the plain file beside the archive, and the only
+thing compared there is its length. A wrong file padded to exactly the recorded 53 bytes
+therefore has to be stopped by the digest that failed, not survive on the strength of its
+size. It is: the fall-through is guarded by the install result, and `INTEGRITY_REFUSALS` is
+the set of reasons that must not fall through.
+
+    $ stat -c '%s bytes %n' /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/chaos
+        53 bytes /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/chaos
+
+    $ CHAOS_HOME=/tmp/npm-integrity-evidence-v74ge5e9/home4 node node_modules/chaos-code/bin/chaos must-not-run
+        chaos-code: refusing to run chaos-code-linux-x64: chaos.br (compressed) does not match bin/integrity.json
+          file:     /tmp/npm-integrity-evidence-v74ge5e9/node_modules/chaos-code-linux-x64/bin/chaos.br
+          expected: 37fd0e9371cbd5eb41923759f9cc55a2fbc88a3bc2f084fb8bdd40bad676e9c9
+          actual:   caacc3f0ae48b5b62d9818533bb2b4d5be6fc52a71a8f35d3b03c015cf3ad282
+          Re-install with `npm install -g chaos-code` after `npm cache clean --force`,
+          and report the package if the mismatch repeats.
+        exit=1
+
+    scratch=/tmp/npm-integrity-evidence-v74ge5e9
+
+== 11. mutation: 79 single-occurrence patches to the shipped files
+
+Each mutant is one textual patch applied to one shipped file, with the four suites re-run
+afterwards, the file restored and compared byte-for-byte against its backup, and the battery
+aborting if any restore differs or if the baseline was not green first. The 79 are spread
+over six files: `check-npm-integrity.py` (34), `install-lib.js` (24, a file this batch
+creates), `assemble-platform-packages.js` (9), `publish-npm.sh` (5), `chaos-bootstrap.js`
+(4), `postinstall.js` (3). A surviving mutant is a claim in the code that no test would
+notice being wrong, so survivors are listed rather than rounded away.
+
+    Baseline, before any mutant:
+    guard: exit=0 :: ['test-check-npm-integrity: OK (45 cases against the guard)']
+    assemble: exit=0 :: ["assemble-integrity guards: OK (assembler, records, the guard's eight refusals, install, launch, repair)"]
+    unit: exit=0 :: ['49 passed, 0 failed']
+    publish: exit=0 :: ['publish-npm guards: OK (empty, partial and complete platform sets, and the digest refusals)']
+
+    Full battery:
+    == 78 killed, 1 survived, 79 mutants, every restore byte-identical ==
+
+    The one survivor:
+    L12  SURVIVED  unit=GREEN  [install-lib.js] a canonical name that resolves to nothing is reported as installed
+
+L12 removes the post-condition that reports `dangling` when the canonical name does not
+resolve after the swap. No caller can reach it: `swapCanonical` either leaves a link or a
+copy that resolves, or throws and is reported as `swap`, and the versioned file it points at
+exists on every path that reaches the swap. The check stays -- it is the guard against a
+filesystem that reports success for a write it did not make, which is what network and FUSE
+mounts do -- and the docstring on `installVersionedBinary` now says so explicitly. It is
+recorded here as untested, not passed: pinning it would mean faking the filesystem, and a
+test against a fake filesystem proves nothing about the real one.
+
+== 12. the same gate inside the container
+
+`scripts/verify-in-docker.sh` runs the container copy of the gate, which is the four suites
+plus `node --check` on the five shipped JS entry points. The tree line names the last
+commit, but the listing behind the checksum is `git ls-files -co --exclude-standard`, so it
+covers this working tree -- the five new files included -- rather than `07d51c8c`'s committed
+tree. The run first drafted for this section counted 4067 files and ran before this log
+existed; the one quoted below is a later run over the tree as it is committed, and this file
+is the difference between the two counts.
+
+    $ scripts/verify-in-docker.sh --only 'npm package guards'
+    == source tree: /home/chaos/hunt/dev/projects/chaos-code at 07d51c8c: 4068 files, checksum 358711722 (path set 118163370)
+    == --only is in effect: 1 of 39 gates selected, this is not a sweep
+    ...
+    ok: with no meta manifest there is nothing to compare versions against
+    ok: an unreadable meta manifest is refused
+    ok: a meta manifest with no name cannot vouch for the platform names
+    test-check-npm-integrity: OK (45 cases against the guard)
+    check-npm-integrity: OK (0 of 6 package(s) where the archive and decompressed bytes both match the record)
+
+    selected gates passed in chaos-verify:local
+      --only was in effect: 1 of 39 gates ran, so this is not a full sweep
+
+== 13. what none of the above proves
+
+Integrity here is tamper-evident, not tamper-proof. The record and the code that verifies it
+ship inside the same tarball, so anyone who can rewrite the package can rewrite both; the
+digests are signed nowhere. What the checks buy is the accident class -- a truncated upload,
+a corrupted cache, a half-written install, an artifact that is not the one the release
+hashed -- failing loudly at the first reader instead of producing a binary that runs wrong.
+
+The trust anchor for a release lives outside npm: `release-bins/SHA256SUMS`, and the ed25519
+`.sig` sidecar signed for each artifact and verified by
+`scripts/verify-release-signature.sh`. The `release_artifact` field is what points a
+package's record at that file. Rule 6 of the guard proves the record and that digest list
+agree on one hash, and the signature step proves the digest list was signed with the release
+key; nothing here says anything about the key or whoever holds it.
+
+Nothing was published to produce this log. The 6-of-6 line came from six synthetic binaries
+in a temporary directory; the real `npm/` tree in the repository has no archives, which is
+why the in-tree gate prints `0 of 6`. `chaos-code-win32-x64` and `chaos-code-win32-arm64`
+are still npm's `0.0.1-security` placeholder names and cannot be published as-is, which is a
+separate open row.
+
+The launcher's pre-launch check is a size comparison and a re-bootstrap, by design. It is
+not a second digest verification of the installed binary, and a file of the recorded length
+that is not the recorded file will run if it got into the chaos home by some path other than
+these installers.

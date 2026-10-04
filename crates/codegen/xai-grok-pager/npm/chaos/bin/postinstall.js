@@ -9,27 +9,20 @@
 // Versioned files ensure running processes are never disrupted on macOS
 // (replacing a binary that a running process has mmap'd causes SIGKILL
 // because the kernel can no longer verify the code signature).
+//
+// The install itself lives in `./install-lib.js`, which `./chaos-bootstrap.js`
+// also uses. That shared module is where the digests in the platform package's
+// `bin/integrity.json` are checked: nothing is written under the chaos home
+// unless the bytes hash to what the release build recorded for them.
+'use strict';
+
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
-const zlib = require('zlib');
 const { execSync } = require('child_process');
 const TOML = require('@iarna/toml');
+const lib = require('./install-lib.js');
 
-// Chaos home, matching the Rust grok_home(): $CHAOS_HOME, else $GROK_HOME,
-// else an existing ~/.chaos, else legacy ~/.grok, else ~/.chaos. A symlinked
-// $HOME resolves the same way.
-function defaultChaosHome() {
-    const home = os.homedir();
-    let real;
-    try { real = fs.realpathSync(home); } catch { real = home; }
-    const chaos = path.join(real, '.chaos');
-    const grok = path.join(real, '.grok');
-    try { if (fs.existsSync(chaos)) return chaos; } catch {}
-    try { if (fs.existsSync(grok)) return grok; } catch {}
-    return chaos;
-}
-const GROK_HOME = process.env.CHAOS_HOME ?? process.env.GROK_HOME ?? defaultChaosHome();
+const GROK_HOME = lib.resolveChaosHome(process.env);
 const CANONICAL_DIR = path.join(GROK_HOME, 'bin');
 
 const key = `${process.platform}-${process.arch}`;
@@ -71,117 +64,66 @@ const EXE = IS_WINDOWS ? '.exe' : '';
 
 fs.mkdirSync(CANONICAL_DIR, { recursive: true });
 
-function writeVendorBinary(brotliPath, binaryPath, destPath) {
-    const tmp = destPath + `.tmp.${process.pid}`;
-    try {
-        if (fs.existsSync(brotliPath)) {
-            fs.writeFileSync(tmp, zlib.brotliDecompressSync(fs.readFileSync(brotliPath)));
-        } else if (fs.existsSync(binaryPath)) {
-            fs.copyFileSync(binaryPath, tmp);
-        } else {
-            return false;
-        }
-        if (!IS_WINDOWS) fs.chmodSync(tmp, 0o755);
-        fs.renameSync(tmp, destPath);
+/**
+ * One message per way an install can fail.
+ *
+ * A digest refusal is the one that must not read like a bug in this package: the user's options
+ * are to fetch the package again or to report it, never to install around it. `integrity` is the
+ * adjacent case -- the file that vouches for the bytes is missing or malformed, which is the same
+ * position as a digest mismatch as far as the install is concerned.
+ */
+function reportInstallFailure(pkgName, result) {
+    if (result.reason === 'digest') {
+        console.error(`chaos-code: refusing to install ${pkgName}: ${result.label} does not match bin/${lib.INTEGRITY_FILE}`);
+        console.error(`  file:     ${result.path}`);
+        console.error(`  expected: ${result.expected}`);
+        console.error(`  actual:   ${result.actual}`);
+        console.error('  These are not the bytes the release build hashed. Re-run the install after');
+        console.error('  `npm cache clean --force`; if it repeats, the package you received was');
+        console.error('  altered, so please report it instead of installing around it.');
+        return;
+    }
+    if (result.reason === 'integrity') {
+        console.error(`chaos-code: refusing to install ${pkgName}: ${result.detail}`);
+        console.error('  The package does not say which bytes it is meant to contain, so there is');
+        console.error('  nothing to check them against. Re-install from the registry; a package');
+        console.error('  assembled without bin/integrity.json must not be published.');
+        return;
+    }
+    if (result.reason === 'missing') {
+        console.error(`chaos-code: missing binary in ${pkgName}: ${result.detail}`);
+        return;
+    }
+    if (result.reason === 'swap') {
+        console.error(`chaos-code: failed to update ${result.path}: ${result.detail}`);
+        console.error('Close all running chaos processes and try again.');
+        return;
+    }
+    console.error(`chaos-code: could not install ${pkgName} (${result.reason}): ${result.detail || result.path}`);
+}
+
+function installBinary(binName, sourceDir) {
+    const result = lib.installVersionedBinary({
+        sourceDir,
+        binName,
+        version,
+        canonicalDir: CANONICAL_DIR,
+        isWindows: IS_WINDOWS,
+        verifyInstalled: true,
+    });
+    if (result.ok) {
+        console.log(`${binName} ${version} installed to ${result.canonicalPath} -> ${result.versionedName}`);
         return true;
-    } catch {
-        return false;
-    } finally {
-        try { fs.unlinkSync(tmp); } catch {}
     }
-}
-
-function installBinary(binName, sourceDir, vendorSubpath) {
-    const brotliPath = path.join(sourceDir, 'bin', vendorSubpath + '.br');
-    const binaryPath = path.join(sourceDir, 'bin', vendorSubpath);
-
-    const versionedName = `${binName}-${version}${EXE}`;
-    const versionedPath = path.join(CANONICAL_DIR, versionedName);
-    const canonicalName = `${binName}${EXE}`;
-    const canonicalPath = path.join(CANONICAL_DIR, canonicalName);
-
-    // Skip if this exact version is already installed.
-    if (!fs.existsSync(versionedPath) && !writeVendorBinary(brotliPath, binaryPath, versionedPath)) {
-        console.error(`chaos-code: missing binary at ${brotliPath}`);
-        return false;
-    }
-
-    if (IS_WINDOWS) {
-        // Symlinks need elevation on Windows; copy instead. If the exe is
-        // locked by a running process, rename it aside then retry.
-        const oldPath = canonicalPath + '.old';
-        try { fs.unlinkSync(oldPath); } catch {} // stale backup from prior update
-        try {
-            try { fs.unlinkSync(canonicalPath); } catch {}
-            fs.copyFileSync(versionedPath, canonicalPath);
-        } catch (e) {
-            try {
-                fs.renameSync(canonicalPath, oldPath);
-                try {
-                    fs.copyFileSync(versionedPath, canonicalPath);
-                } catch (copyErr) {
-                    // Rollback: restore the old binary so the install isn't broken.
-                    try { fs.renameSync(oldPath, canonicalPath); } catch {}
-                    throw copyErr;
-                }
-            } catch (e2) {
-                console.error(`chaos-code: failed to update ${canonicalPath}: ${e2.message}`);
-                console.error('Close all running chaos processes and try again.');
-                return false;
-            }
-        }
-    } else {
-        // Atomic symlink swap.
-        const tmpLink = canonicalPath + `.link.${process.pid}`;
-        try { fs.unlinkSync(tmpLink); } catch {}
-        fs.symlinkSync(versionedName, tmpLink);
-        fs.renameSync(tmpLink, canonicalPath);
-    }
-
-    // Don't report a broken wire-up as success.
-    if (!fs.existsSync(canonicalPath)) {
-        console.error(`chaos-code: ${canonicalName} did not resolve after install`);
-        return false;
-    }
-
-    console.log(`${binName} ${version} installed to ${canonicalPath} -> ${versionedName}`);
-    return true;
-}
-
-// Comparator: sort "<prefix>X.Y.Z" filenames by version, newest first.
-function byVersionDescending(prefix) {
-    return (a, b) => {
-        const pa = a.slice(prefix.length).split('.').map(Number);
-        const pb = b.slice(prefix.length).split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-            if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
-        }
-        return 0;
-    };
+    reportInstallFailure(path.basename(sourceDir), result);
+    return false;
 }
 
 // Best-effort cleanup of old versioned binaries for a given binary name.
 // Keeps the current version and the previous one (in case a process is still
 // running the old binary and hasn't fully loaded all pages yet).
-// Uses an exact prefix match + hyphen + digit to avoid grok-* matching chaos-pager-*.
 function cleanupOldVersions(binName) {
-    try {
-        const prefix = `${binName}-`;
-        const currentVersioned = `${binName}-${version}${EXE}`;
-        const entries = fs.readdirSync(CANONICAL_DIR);
-        const versionedBinaries = entries
-            .filter(e => {
-                if (!e.startsWith(prefix)) return false;
-                if (e.includes('.tmp.') || e.includes('.link.')) return false;
-                if (e === currentVersioned) return false;
-                const suffix = e.slice(prefix.length);
-                return /^\d/.test(suffix);
-            })
-            .sort(byVersionDescending(prefix));
-        for (const old of versionedBinaries.slice(1)) {
-            try { fs.unlinkSync(path.join(CANONICAL_DIR, old)); } catch {}
-        }
-    } catch {}
+    lib.cleanupOldVersions({ canonicalDir: CANONICAL_DIR, binName, version, isWindows: IS_WINDOWS });
 }
 
 const platformDir = resolvePlatformPackageDir();
@@ -195,20 +137,21 @@ if (!platformDir) {
 // Point the bin entry at a binary extracted beside it: launches become one
 // process, and the link can only dangle if the package itself is broken.
 // Windows keeps the node launcher; npm generates its command shims from it.
-function installBinLink(platformDir) {
+function installBinLink(binSourceDir) {
     if (IS_WINDOWS) return;
     // Other package managers wrap the entry's `#!` line in their own launchers.
     if (!(process.env.npm_config_user_agent ?? '').startsWith('npm/')) return;
-    const brotliPath = path.join(platformDir, 'bin', `chaos${EXE}.br`);
-    const binaryPath = path.join(platformDir, 'bin', `chaos${EXE}`);
     const nativePath = path.join(__dirname, 'chaos-native');
     const entryPath = path.join(__dirname, 'chaos');
     const tmp = entryPath + `.link.${process.pid}`;
+    const written = lib.writeVerifiedBinary(binSourceDir, `chaos${EXE}`, nativePath, { isWindows: IS_WINDOWS });
+    if (!written.ok) {
+        // The versioned install above reports the same failure with the full message; this link
+        // is only a latency optimisation, so it stays quiet here.
+        return;
+    }
     try {
-        if (!writeVendorBinary(brotliPath, binaryPath, nativePath)) {
-            return;
-        }
-        try { fs.unlinkSync(tmp); } catch {}
+        try { fs.unlinkSync(entryPath); } catch {}
         fs.symlinkSync('./chaos-native', tmp);
         fs.renameSync(tmp, entryPath);
     } catch (e) {
@@ -218,9 +161,10 @@ function installBinLink(platformDir) {
     }
 }
 
-if (installBinary('chaos', platformDir, `chaos${EXE}`)) {
-    installBinLink(platformDir);
+if (!installBinary('chaos', platformDir)) {
+    process.exit(1);
 }
+installBinLink(platformDir);
 cleanupOldVersions('chaos');
 // Legacy upstream installs may still carry these names.
 cleanupOldVersions('grok');

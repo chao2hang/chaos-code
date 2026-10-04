@@ -696,6 +696,8 @@ jobs:
         run: |
           node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js
           node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js
+          node --check crates/codegen/xai-grok-pager/npm/chaos/bin/install-lib.js
+          node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos-bootstrap.js
           node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos
 
       - name: publish-npm.sh guards
@@ -708,6 +710,27 @@ jobs:
       # being written fails here instead of in the tarball someone installs.
       - name: notices bundle assembly guards
         run: bash scripts/ci/test-assemble-notices.sh
+
+      # Each published package carries `bin/integrity.json`, and the installer and the launcher
+      # refuse bytes that do not hash to it. These fixtures run the real assembler over six fake
+      # binaries, then drive the real `postinstall.js`, the real `bin/chaos` and the real Windows
+      # copy path against the packages it produced -- including a truncated install being repaired
+      # from the package and a tampered archive refusing both entry points.
+      - name: npm integrity record guards
+        run: bash scripts/ci/test-assemble-integrity.sh
+
+      # The digest guard is the last thing standing between a corrupted archive and a user's
+      # machine, so its own fixtures refuse 39 forgeries of the record and of the tree it reads.
+      # Without this the guard could silently stop noticing a tampered archive and every check
+      # above would still be green, because they all ask the guard whether the tree is fine.
+      - name: npm integrity guard fixtures
+        run: python3 scripts/ci/test-check-npm-integrity.py
+
+      # Nothing is assembled in a normal checkout, so this is a shape check on the tree: a stale
+      # archive or a half-written record left in a working tree would otherwise be published by a
+      # release that assembled around it.
+      - name: npm integrity records in the tree
+        run: python3 scripts/ci/check-npm-integrity.py
 
   workflows-present:
     name: workflows present

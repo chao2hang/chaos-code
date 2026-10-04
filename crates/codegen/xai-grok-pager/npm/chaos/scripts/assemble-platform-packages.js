@@ -5,6 +5,9 @@
 //   1. Brotli-compresses the built binary into `../chaos-<platform>/bin/<bin>.br`
 //   2. Stamps the sub-package's version to match the meta package
 //   3. Writes the assembled third-party notices into every package directory
+//   4. Records the SHA-256 of the binary and of the archive in that sub-package's
+//      `bin/integrity.json`, which is what the installer and the launcher check
+//      the bytes against before installing or running anything
 //
 // Each per-platform package is its own npm publish target. The meta package
 // (`chaos-code`) lists all six as `optionalDependencies` pinned to
@@ -20,6 +23,7 @@
 // the default cargo target dirs for local testing.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { promisify } = require('util');
 const zlib = require('zlib');
 
@@ -156,6 +160,39 @@ function writeNoticesBundles(targets) {
     return bundle;
 }
 
+const INTEGRITY_FILE = 'integrity.json';
+const INTEGRITY_SCHEMA = 'chaos-npm-integrity/1';
+
+function sha256Hex(buffer) {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * The claim a platform package makes about its own bytes.
+ *
+ * npm verifies the tarball it downloads, extracts it, and then nothing anywhere said what the
+ * binary inside should hash to. That left `bin/postinstall.js` copying 150 MB into the user's
+ * chaos home, and the launcher exec'ing it, with no way to notice a truncated mirror response, a
+ * damaged cache entry, or a substituted file. This record is the thing they check against.
+ *
+ * It is tamper-evident, not tamper-proof: whoever can replace the binary can rewrite this file
+ * too. The anchor is one step out, and `release_artifact` is what reaches it -- the same bytes are
+ * published as that GitHub Release asset, `release.yml` refuses to package a tarball whose digest
+ * here differs from the digest in `SHA256SUMS`, and that entry's `.sig` sidecar is what the
+ * release key covers. A user can settle it with `scripts/verify-release-signature.sh`.
+ */
+function buildIntegrityRecord({ platform, arch, binName, version, raw, compressed }) {
+    return {
+        schema: INTEGRITY_SCHEMA,
+        version,
+        platform: `${platform}-${arch}`,
+        release_artifact: `chaos-${platform}-${arch}`,
+        binary: { name: binName, sha256: sha256Hex(raw), bytes: raw.length },
+        compressed: { name: `${binName}.br`, sha256: sha256Hex(compressed), bytes: compressed.length },
+        generated_by: 'crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js',
+    };
+}
+
 async function packPlatform({ platform, arch, envVar, defaultSource, binName }) {
     const pkgDir = path.join(npmRoot, `chaos-${platform}-${arch}`);
     const pkgJsonPath = path.join(pkgDir, 'package.json');
@@ -185,10 +222,14 @@ async function packPlatform({ platform, arch, envVar, defaultSource, binName }) 
         params: { [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY },
     });
     fs.writeFileSync(outBr, compressed);
+    const record = buildIntegrityRecord({ platform, arch, binName, version: VERSION, raw, compressed });
+    const outIntegrity = path.join(pkgDir, 'bin', INTEGRITY_FILE);
+    fs.writeFileSync(outIntegrity, JSON.stringify(record, null, 2) + '\n');
     console.log(
         `[assemble] ${META_NAME}-${platform}-${arch}@${VERSION}: ` +
         `${(raw.length / 1048576).toFixed(1)} MB -> ${(compressed.length / 1048576).toFixed(1)} MB ` +
-        `(${path.relative(npmRoot, outBr)})`
+        `(${path.relative(npmRoot, outBr)}, binary sha256 ${record.binary.sha256.slice(0, 12)}, ` +
+        `${path.relative(npmRoot, outIntegrity)})`
     );
     return true;
 }
@@ -294,9 +335,17 @@ async function main() {
     );
 }
 
-// Exported so `scripts/ci/test-assemble-notices.sh` can drive the bundle builder directly;
-// requiring this module must never assemble anything or touch the working tree.
-module.exports = { buildNoticesBundle, writeNoticesBundles, NOTICES_NAME };
+// Exported so `scripts/ci/test-assemble-notices.sh` and `scripts/ci/test-assemble-integrity.sh`
+// can drive the bundle builder and the record builder directly; requiring this module must never
+// assemble anything or touch the working tree.
+module.exports = {
+    buildNoticesBundle,
+    writeNoticesBundles,
+    buildIntegrityRecord,
+    NOTICES_NAME,
+    INTEGRITY_FILE,
+    INTEGRITY_SCHEMA,
+};
 
 if (require.main === module) {
     main().catch((err) => { console.error(err); process.exit(1); });

@@ -1048,6 +1048,61 @@ What is in it, and what is deliberately not:
 - no npm copy. The assembler that builds the npm package directories runs in a job with no Rust
   toolchain, and the SBOM is derived from `Cargo.lock`; the release asset is where a user finds it.
 
+## The npm packages say what their own bytes hash to
+
+A release is signed and `SHA256SUMS` covers each artifact, but nobody installs an artifact. They
+install an npm package whose `bin/chaos.br` is a brotli copy of it, and nothing between the release
+build and the executed file used to assert anything: `npm` verifies the tarball it downloads,
+extracts it, and that is the whole chain. `scripts/assemble-platform-packages.js` now writes a
+`bin/integrity.json` into each of the six platform packages, shaped like this (a sample build over a
+34-byte script, so the digests are real but meaningless):
+
+```json
+{
+  "schema": "chaos-npm-integrity/1",
+  "version": "0.4.2",
+  "platform": "linux-x64",
+  "release_artifact": "chaos-linux-x64",
+  "binary":     { "name": "chaos",    "sha256": "7945410e…bba47", "bytes": 34 },
+  "compressed": { "name": "chaos.br", "sha256": "23757aa9…20f719", "bytes": 36 },
+  "generated_by": "crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js"
+}
+```
+
+Three readers, deliberately three different programs:
+
+- `bin/postinstall.js` and `bin/chaos-bootstrap.js` both call into `bin/install-lib.js`, which
+  writes nothing under the chaos home unless the archive hashes to `compressed.sha256` and what it
+  decompresses to hashes to `binary.sha256`. Before this the install logic existed twice (once per
+  entry point) and a third time inside the test suite, which is how the three drifted apart.
+- `bin/chaos-bootstrap.js` also makes the one byte-level check cheap enough to run before every
+  launch: when the installed link names exactly this package's version, the file's size must equal
+  `binary.bytes`. Hashing a 150 MB binary on every invocation is not a check anyone would keep, and
+  size is what a truncated download or an interrupted update breaks. When the link names a
+  *different* version the launcher leaves it alone -- that is how `chaos update` and `install.sh`
+  are allowed to win over the npm copy -- so integrity is what runs on the install path, not on
+  every launch.
+- `scripts/ci/check-npm-integrity.py` reads the whole tree from the outside before publication, and
+  with `--sha256sums release-bins/SHA256SUMS` it holds each record to the release's own digest of
+  the artifact named in `release_artifact`. `publish-npm.sh` refuses to publish without it passing,
+  and `release.yml` runs it against the `SHA256SUMS` whose per-artifact `.sig` is verified by
+  `scripts/verify-release-signature.sh`.
+
+Integrity buys evidence, not protection: whoever can replace a binary can rewrite the record beside
+it. `release_artifact` plus `SHA256SUMS` is the one claim that reaches outside the package, which is
+why that workflow step matters and why the guard's fixtures include a record that is internally
+consistent and still lies about the decompressed bytes -- the archive digest alone cannot see that
+one, so the guard decompresses (with the same `zlib` call the installer uses) unless told not to
+with `--no-decompress`.
+
+```sh
+node crates/codegen/xai-grok-pager/npm/chaos/scripts/test-postinstall.js  # install-lib's decisions
+bash scripts/ci/test-assemble-integrity.sh      # assembler, records, install, launch, self-heal
+python3 scripts/ci/test-check-npm-integrity.py  # 41 forgeries the guard must not miss
+python3 scripts/ci/check-npm-integrity.py       # the tree as it stands (nothing assembled: 0 of 6)
+bash scripts/ci/test-publish-npm.sh             # publication refuses what the guard refuses
+```
+
 ## Licensing of this source
 
 By downloading or using this source, you agree that your use is governed by

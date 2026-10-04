@@ -7,6 +7,8 @@
 #   DRY_RUN=1                    — npm pack --dry-run only
 #   PUBLISH_EXISTING_ONLY=1      — skip platforms without binaries; meta publish still requires all six
 #   PUBLISH_NPM_ALLOW_PARTIAL=1   — explicitly publish available platform packages only, never the meta package
+#   CHAOS_SHA256SUMS              — SHA256SUMS file; each package's claimed digest must be the one
+#                                   this file records for its release artifact
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -42,6 +44,7 @@ has_bin() {
 }
 
 NOTICES_NAME="THIRD_PARTY_NOTICES.md"
+INTEGRITY_GUARD="$ROOT/scripts/ci/check-npm-integrity.py"
 
 # The tarball is the only copy of the third-party notices most users ever receive, and a
 # package with no notices still installs, still runs, and still ships code whose licenses
@@ -83,6 +86,23 @@ publish_one() {
 }
 
 PUBLISHED=0
+
+# What the installer refuses to write into a user's chaos home is decided by `bin/integrity.json`,
+# and what ties a tarball to the signed release artifact is the digest recorded in SHA256SUMS.
+# npm publishes whatever is in the directory, so this is the last place where a package whose
+# bytes and record disagree can still be stopped from reaching a registry.
+INTEGRITY_ARGS=(--npm-root "$NPM_ROOT")
+if [[ -n "${CHAOS_SHA256SUMS:-}" ]]; then
+  INTEGRITY_ARGS+=(--sha256sums "$CHAOS_SHA256SUMS")
+fi
+if [[ "$EXISTING_ONLY" != "1" ]]; then
+  INTEGRITY_ARGS+=(--require-assembled)
+fi
+if ! python3 "$INTEGRITY_GUARD" "${INTEGRITY_ARGS[@]}"; then
+  echo "error: refusing to publish: the digest check above failed" >&2
+  exit 1
+fi
+
 for p in \
   chaos-darwin-arm64 \
   chaos-darwin-x64 \

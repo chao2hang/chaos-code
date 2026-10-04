@@ -7,29 +7,28 @@
 //      an unwritable home)
 //
 // Binaries ship brotli-compressed to stay under npm's tarball size limit.
+//
+// Step 1 is also what lets `chaos update` and `scripts/install.sh` move the binary out from under
+// npm: whoever wrote last is what runs, even when that is a different version than this package
+// shipped. That is deliberate -- a self-update has to take effect without waiting for an npm
+// publish -- and it is why this file cannot vouch for the bytes on that path. The digests in the
+// platform package describe this package's own binary, not whatever replaced it. Two things are
+// still checked here: when the link names exactly this version, the file's size has to be the size
+// the package recorded, which catches a truncated or swapped-in file for the price of one `stat`
+// and re-bootstraps it from the package; and anything this file writes in steps 2 and 3 goes
+// through `install-lib.js`, which refuses bytes that do not hash to `bin/integrity.json`.
+'use strict';
+
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
-const zlib = require('zlib');
+const lib = require('./install-lib.js');
 
 const pkgName = 'chaos-code';
 const IS_WINDOWS = process.platform === 'win32';
 const EXE = IS_WINDOWS ? '.exe' : '';
 const BIN_NAME = `chaos${EXE}`;
-// Chaos home, matching the Rust grok_home(): $CHAOS_HOME, else $GROK_HOME,
-// else an existing ~/.chaos, else legacy ~/.grok, else ~/.chaos.
-function defaultChaosHome() {
-    const home = os.homedir();
-    let real;
-    try { real = fs.realpathSync(home); } catch { real = home; }
-    const chaos = path.join(real, '.chaos');
-    const grok = path.join(real, '.grok');
-    try { if (fs.existsSync(chaos)) return chaos; } catch {}
-    try { if (fs.existsSync(grok)) return grok; } catch {}
-    return chaos;
-}
-const GROK_HOME = process.env.CHAOS_HOME ?? process.env.GROK_HOME ?? defaultChaosHome();
+const GROK_HOME = lib.resolveChaosHome(process.env);
 const CANONICAL_DIR = path.join(GROK_HOME, 'bin');
 const CANONICAL_PATH = path.join(CANONICAL_DIR, BIN_NAME);
 
@@ -48,7 +47,7 @@ function readOptionalDependencyVersion(platformPkg) {
 // Returns null when npm skipped the matching optional dependency
 // (unsupported platform, or --no-optional).
 function resolvePlatformPackageDir() {
-    const platformPkg = `chaos-code-${process.platform}-${process.arch}`;
+    const platformPkg = `${pkgName}-${process.platform}-${process.arch}`;
     try {
         return path.dirname(require.resolve(`${platformPkg}/package.json`));
     } catch {
@@ -56,70 +55,58 @@ function resolvePlatformPackageDir() {
     }
 }
 
-function writeVendorBinary(brotliPath, binaryPath, destPath) {
-    const tmp = destPath + `.tmp.${process.pid}`;
-    try {
-        if (fs.existsSync(brotliPath)) {
-            fs.writeFileSync(tmp, zlib.brotliDecompressSync(fs.readFileSync(brotliPath)));
-        } else if (fs.existsSync(binaryPath)) {
-            fs.copyFileSync(binaryPath, tmp);
-        } else {
-            return false;
-        }
-        if (!IS_WINDOWS) fs.chmodSync(tmp, 0o755);
-        fs.renameSync(tmp, destPath);
-        return true;
-    } catch {
-        return false;
-    } finally {
-        try { fs.unlinkSync(tmp); } catch {}
-    }
+/** The version the canonical link names, or null for a plain file or a foreign name. */
+function canonicalVersion() {
+    let target;
+    try { target = fs.readlinkSync(CANONICAL_PATH); } catch { return null; }
+    return lib.versionOfVersionedName(path.basename(target), 'chaos', IS_WINDOWS);
 }
 
-function swapCanonical(versionedName, versionedPath) {
-    if (!IS_WINDOWS) {
-        const tmpLink = CANONICAL_PATH + `.link.${process.pid}`;
-        try { fs.unlinkSync(tmpLink); } catch {}
-        fs.symlinkSync(versionedName, tmpLink);
-        fs.renameSync(tmpLink, CANONICAL_PATH);
+/**
+ * The one byte-level check worth making before every launch.
+ *
+ * A hash of a 150 MB binary would be paid by every `chaos` invocation, for a check the install
+ * already made and that an attacker with write access to the chaos home could undo by editing the
+ * digests too. Size is free, and it is the thing that breaks when a download or an update is
+ * interrupted.
+ */
+function recordedSizeMismatch(file, integrity, sourceName) {
+    let size;
+    try { size = fs.statSync(file).size; } catch { return `${file} cannot be stat'd`; }
+    if (size === integrity.record.binary.bytes) return null;
+    return `${file} is ${size} bytes, not the ${integrity.record.binary.bytes} ${sourceName} records`;
+}
+
+/** A digest refusal stops the launch: running the bytes anyway is the outcome being prevented. */
+function refuseUnverifiedBytes(sourceDir, result) {
+    if (result.reason === 'digest') {
+        console.error(`${pkgName}: refusing to run ${path.basename(sourceDir)}: ${result.label} does not match bin/${lib.INTEGRITY_FILE}`);
+        console.error(`  file:     ${result.path}`);
+        console.error(`  expected: ${result.expected}`);
+        console.error(`  actual:   ${result.actual}`);
+        console.error(`  Re-install with \`npm install -g ${pkgName}\` after \`npm cache clean --force\`,`);
+        console.error('  and report the package if the mismatch repeats.');
         return;
     }
-    const oldPath = CANONICAL_PATH + '.old';
-    try { fs.unlinkSync(oldPath); } catch {}
-    try {
-        try { fs.unlinkSync(CANONICAL_PATH); } catch {}
-        fs.copyFileSync(versionedPath, CANONICAL_PATH);
-    } catch {
-        fs.renameSync(CANONICAL_PATH, oldPath);
-        try {
-            fs.copyFileSync(versionedPath, CANONICAL_PATH);
-        } catch {
-            try { fs.renameSync(oldPath, CANONICAL_PATH); } catch {}
-            throw new Error('locked');
-        }
-    }
+    console.error(`${pkgName}: refusing to run ${path.basename(sourceDir)} (${result.reason}): ${result.detail || result.path}`);
 }
 
-function bootstrapCanonical(brotliPath, binaryPath, version) {
-    try {
-        fs.mkdirSync(CANONICAL_DIR, { recursive: true });
-        const versionedName = `chaos-${version}${EXE}`;
-        const versionedPath = path.join(CANONICAL_DIR, versionedName);
-        if (!fs.existsSync(versionedPath) && !writeVendorBinary(brotliPath, binaryPath, versionedPath)) {
-            return null;
-        }
-        swapCanonical(versionedName, versionedPath);
-        // null on a broken wire-up so the caller falls back to in-place launch.
-        return fs.existsSync(CANONICAL_PATH) ? CANONICAL_PATH : null;
-    } catch {
-        return null;
-    }
-}
+const INTEGRITY_REFUSALS = new Set(['digest', 'integrity', 'size', 'decompress']);
 
 function resolveBinary() {
-    if (fs.existsSync(CANONICAL_PATH)) return CANONICAL_PATH;
-
+    const version = readLocalVersion();
     const platformDir = resolvePlatformPackageDir();
+
+    if (fs.existsSync(CANONICAL_PATH)) {
+        if (!version || !platformDir) return CANONICAL_PATH;
+        const integrity = lib.readIntegrity(platformDir, BIN_NAME);
+        if (!integrity.ok) return CANONICAL_PATH;
+        if (canonicalVersion() !== version) return CANONICAL_PATH;
+        const mismatch = recordedSizeMismatch(CANONICAL_PATH, integrity, path.basename(platformDir));
+        if (!mismatch) return CANONICAL_PATH;
+        console.error(`${pkgName}: ${mismatch}; re-installing from the package`);
+    }
+
     if (!platformDir) {
         // npm skips an optional dependency it cannot resolve instead of failing the
         // install, so `npm install` can report success with no binary present. Naming the
@@ -139,18 +126,41 @@ function resolveBinary() {
         process.exit(1);
     }
 
-    const binaryPath = path.join(platformDir, 'bin', BIN_NAME);
-    const brotliPath = binaryPath + '.br';
-    const version = readLocalVersion();
-
     if (version) {
-        const bootstrapped = bootstrapCanonical(brotliPath, binaryPath, version);
-        if (bootstrapped) return bootstrapped;
+        const installed = lib.installVersionedBinary({
+            sourceDir: platformDir,
+            binName: 'chaos',
+            version,
+            canonicalDir: CANONICAL_DIR,
+            isWindows: IS_WINDOWS,
+        });
+        if (installed.ok) return installed.canonicalPath;
+        if (INTEGRITY_REFUSALS.has(installed.reason)) {
+            refuseUnverifiedBytes(platformDir, installed);
+            process.exit(1);
+        }
+        // An unwritable home or a locked binary is not a reason to refuse to run: fall through to
+        // the copy beside the package, which needs neither.
     }
 
-    if (!fs.existsSync(binaryPath) && !writeVendorBinary(brotliPath, binaryPath, binaryPath)) {
-        console.error(`${pkgName}: missing binary at ${binaryPath}`);
-        process.exit(1);
+    const binaryPath = path.join(platformDir, 'bin', BIN_NAME);
+    if (!fs.existsSync(binaryPath)) {
+        const written = lib.writeVerifiedBinary(platformDir, BIN_NAME, binaryPath, { isWindows: IS_WINDOWS });
+        if (!written.ok) {
+            refuseUnverifiedBytes(platformDir, written);
+            process.exit(1);
+        }
+    } else {
+        // Something is beside the package. If the package says what those bytes should be, hold
+        // them to it; without a record there is nothing here to check them against.
+        const integrity = lib.readIntegrity(platformDir, BIN_NAME);
+        if (integrity.ok) {
+            const mismatch = recordedSizeMismatch(binaryPath, integrity, path.basename(platformDir));
+            if (mismatch) {
+                refuseUnverifiedBytes(platformDir, { reason: 'size', path: binaryPath, detail: mismatch });
+                process.exit(1);
+            }
+        }
     }
     return binaryPath;
 }
