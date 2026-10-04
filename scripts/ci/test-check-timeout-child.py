@@ -17,6 +17,8 @@ Decisions pinned here, in the order the cases appear:
   claim that `ProcessScope::enroll` needs a `&Child` that `.output()` never hands out.
 - the rule is timeout-shaped: a `.spawn()` whose `Child` is enrolled and never abandoned by a
   timeout is left alone, and the same command behind a timeout without the flag is not.
+  `timeout_at` counts like `timeout` -- the future it abandons is the same object -- so both
+  spellings are pinned, which is what keeps the `_at` branch of the matcher load-bearing.
 - the flag is read, not the token: `kill_on_drop(true)` on the chain answers it, and
   `kill_on_drop(false)` is a finding of its own, because that is the default.
 - a mutator or a builder is read from its body, which is how most correct sites in this
@@ -261,6 +263,32 @@ async fn check() -> std::io::Result<()> {
 }
 """
         self.red({"app/src/lib.rs": source}, "no-kill-on-drop", "Command::new(\"git\").status()")
+
+    def test_timeout_at_abandons_the_same_future(self) -> None:
+        """`timeout_at(deadline, cmd.output())` is the same defect with the clock moved out."""
+        source = HEAD + """
+async fn check(deadline: tokio::time::Instant) -> std::io::Result<()> {
+    let _ = tokio::time::timeout_at(deadline, Command::new("git").status()).await;
+    Ok(())
+}
+"""
+        self.red({"app/src/lib.rs": source}, "src/lib.rs:4", "no-kill-on-drop",
+                 "app/src/lib.rs::check", "kill_on_drop(true)")
+
+    def test_timeout_at_answers_to_the_flag_too(self) -> None:
+        source = HEAD + """
+async fn check(deadline: tokio::time::Instant) -> std::io::Result<()> {
+    let _ = tokio::time::timeout_at(
+        deadline,
+        Command::new("git").arg("rev-parse").kill_on_drop(true).output(),
+    )
+    .await;
+    Ok(())
+}
+"""
+        out = self.green({"app/src/lib.rs": source})
+        self.assertIn("1 timeout-abandoned output/status site(s), 1 kill their child on drop",
+                      out)
 
 
 class Helpers(Tree):

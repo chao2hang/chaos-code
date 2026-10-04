@@ -1,0 +1,240 @@
+# The full container run at 8a52ff0a: 34 gates, 2 red, and both reds were mine (2026-10-04)
+
+`scripts/verify-in-docker.sh --full` was run end to end against the committed tree at
+`8a52ff0a`, the commit that added the `timeout children` gate and the test that installs a
+`git` shim. It failed: `FAILED gates: cargo clippy cargo test`, exit 1. Both failures were
+defects in the test shipped by that same commit, one of which could only be seen by this run.
+This log records the verdict, the two failures as printed, what the green parts of the run
+still establish, and why the CI run of the same push did not reach the second failure.
+
+The tree here is not the fixed tree. The fixes are in the commit that follows and are recorded
+in their own log; nothing below should be read as the state of `main`.
+
+The full 3.0 MB / 35 837-line transcript is not committed. Every line quoted below is copied
+out of it, and section 6 gives the commands to reproduce it and to re-measure the counts.
+
+== 0. Why the run sits in its own clone
+
+Same arrangement as `docs/verification/verify-in-docker-full-a04e91a7-2026-10-04.log` section
+0, for the same reason: the script bind-mounts the repository root it was invoked from and
+fingerprints the working tree before and after, so the run went to a self-contained clone
+rather than to a checkout being edited underneath it.
+
+    $ git clone <this repository> /var/tmp/verify-frozen-a04e91a7
+    $ cd /var/tmp/verify-frozen-a04e91a7 && git checkout --detach 8a52ff0a
+    $ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full \
+          > /var/tmp/verify-full-8a52ff0a.log 2>&1; echo "DOCKER-FULL-EXIT=$?" \
+          > /var/tmp/verify-full-8a52ff0a.exit
+
+The clone's `git status --porcelain` printed nothing before the run and prints nothing after
+it, which is what makes the checksum below a claim about `8a52ff0a`. The clone directory is
+named after the commit it was cut for (`a04e91a7`) and was re-detached onto `8a52ff0a` for
+this run; a clone carries its own object store, so the preflight accepts it.
+
+== 1. The verdict, as printed
+
+    == building chaos-verify:frozen from docker.io/library/debian:bookworm-slim
+    == preparing cargo cache volumes
+    == source tree: 4001 files, checksum 1801880867
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == toolchain matches the pin
+    rustc 1.94.0 (4a4ef493e 2026-03-02)
+    cargo 1.94.0 (85eff7c80 2026-01-15)
+
+    == pinned protoc launcher
+    libprotoc 29.3
+
+    ...
+
+    GUI protocol types are up to date
+
+    FAILED gates: cargo clippy cargo test
+
+and the exit code, from the `echo` appended to the command rather than from the script:
+
+    $ cat /var/tmp/verify-full-8a52ff0a.exit
+    DOCKER-FULL-EXIT=1
+
+The run did not print `UNATTRIBUTABLE`. The script recomputes the same checksum after the last
+gate and prints that sentence only on a mismatch, so its absence is the statement that all 34
+gates, red and green alike, belong to the tree whose checksum is 1801880867 and that no file
+moved while they ran:
+
+    $ grep -c UNATTRIBUTABLE /var/tmp/verify-full-8a52ff0a.log
+    0
+
+Elapsed time was 1 410 seconds (23 minutes 30 seconds), from the transcript's creation to its
+last write, measured from the file's own timestamps rather than from the transcript:
+
+    $ stat -c 'birth=%w mtime=%y' /var/tmp/verify-full-8a52ff0a.log
+
+That is not a cold-cache figure and it is not a baseline. The cargo registry, the cargo git
+checkouts and `target/` live in three named volumes that earlier runs had already filled, and
+the image layers were reused. A run that stops early also costs less than one that runs every
+leg to completion, so 23 minutes here is not comparable with 25 minutes for the green run.
+
+== 2. What ran, and what the green part still establishes
+
+`bash scripts/verify-gates.sh --list` in that clone prints 34 gate names, which is the
+`gates=()` array of `scripts/verify-in-docker.sh` at that commit. The transcript carries 41
+`== ` lines: the 34 gates, 4 preamble lines printed before the array is entered (`building
+chaos-verify:frozen`, `preparing cargo cache volumes`, `source tree:`, `preflight:`) and 3
+sub-headings that two gates print for themselves. Two of the 34 went red; the other 32 passed,
+and `--no-fail-fast` at the gate level is what let them all be measured in one pass instead of
+the sweep stopping at the first red.
+
+Three of the green gates print a count worth recording, because they are the ones that read the
+whole tree:
+
+    ignored-test baseline: 429 total, 0 approved bare, 0 new
+    ignored-tests: all 429 ignored attributes carry a reason
+    ignored-tests: baseline matches; 429 ignored attributes total
+    metric labels hold: 83 registrations, 155 label-value call sites, 0 recorded
+
+and the gate added by this very commit passed, including its own fixtures:
+
+    == timeout children
+    ...
+    Ran 36 tests in 28.573s
+
+    OK (skipped=2)
+    timeout children hold: 12 timeout-abandoned output/status site(s), 12 kill their child on drop, 0 are std commands, 0 recorded
+
+That line is the claim the gate exists to make: every `tokio::time::timeout(.., cmd.output())`
+or `.status()` site in the tree marks its child `kill_on_drop(true)`. It passed here, and it
+passes on the fixed tree, and it is independent of both red legs.
+
+== 3. First red: `cargo clippy`, two lints in the test added by this commit
+
+`== cargo clippy` runs `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`-D warnings` turned two style lints into build errors. Both are in
+`goal_classifier_tests.rs`, in the test this commit added:
+
+    error: this `if` statement can be collapsed
+        --> crates/codegen/xai-grok-shell/src/session/goal_classifier_tests.rs:3680:9
+    ...
+         = note: `-D clippy::collapsible-if` implied by `-D warnings`
+
+    error: this loop could be written as a `while let` loop
+        --> crates/codegen/xai-grok-shell/src/session/goal_classifier_tests.rs:3695:5
+    ...
+         = note: `-D clippy::while-let-loop` implied by `-D warnings`
+
+    error: could not compile `xai-grok-shell` (lib test) due to 2 previous errors
+
+`== cargo check`, the leg before it, had passed on the same source:
+
+    == cargo check
+    ...
+        Finished `dev` profile [unoptimized] target(s) in 2m 06s
+
+so this is not a build problem and not a type error; it is that the code compiles and does not
+satisfy the lint set, which only the clippy leg applies. The host sweep does not run clippy
+without `--with-build`, which is exactly the gap recorded in `docs/ci-test-debt.md`.
+
+== 4. Second red: `cargo test`, one failure, and it was my own test poisoning the binary
+
+The test leg is `cargo test --workspace --locked --no-fail-fast`, and across its 386
+`test result:` blocks it came to one failure:
+
+    $ grep -c '^test result:' /var/tmp/verify-full-8a52ff0a.log
+    386
+    $ grep -c '^test result: FAILED' /var/tmp/verify-full-8a52ff0a.log
+    1
+    $ grep -oE "^test result: (ok|FAILED)\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored" \
+          /var/tmp/verify-full-8a52ff0a.log | awk -F'[ ;]+' \
+          '{p+=$4; f+=$6; i+=$8} END {print "passed:", p, " failed:", f, " ignored:", i}'
+    passed: 31593  failed: 1  ignored: 485
+
+The failure, verbatim, and note that the name in the panic is not the name of the test that
+caused it:
+
+    test session::goal_classifier::evidence::tests::changed_files_complete_when_git_diff_exceeds_byte_cap ... FAILED
+
+    thread 'session::goal_classifier::evidence::tests::changed_files_complete_when_git_diff_exceeds_byte_cap' (94157) panicked at crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:1917:9:
+    test premise: the diff must exceed the byte cap
+
+    test result: FAILED. 6876 passed; 1 failed; 32 ignored; 0 measured; 0 filtered out; finished in 33.23s
+
+    error: test failed, to rerun pass `-p xai-grok-shell --lib`
+    ...
+    error: 1 target failed:
+        `-p xai-grok-shell --lib`
+
+The transcript keeps those lines unwrapped, and they are quoted here as it has them, which is
+why they run past the width the rest of this file keeps.
+
+The test that caused it, `baseline_capture_timeout_kills_the_git_it_abandoned` in
+`session::goal_classifier::tests`, is green in this very run:
+
+    test session::goal_classifier::tests::baseline_capture_timeout_kills_the_git_it_abandoned ... ok
+
+It set the process-global `GIT_BIN_PATH` to a shim that hung on the call it was aiming at and,
+because the shim was not a pass-through, answered every other `git` invocation in the same test
+binary for about a second. `git add`, `git commit` and `git diff` then returned exit 0 with
+empty stdout, so the victim test built a repository whose diff was zero bytes and its own
+premise assertion fired. The mechanism, the reproduction counts and the judgement rule that
+came out of it are in `docs/ci-test-debt.md`.
+
+What matters for how to read this section is the pairing: the broken test passed and an
+unrelated test failed. A reader who only looked at the name in the failure message would have
+fixed the wrong file.
+
+== 5. The CI run of the same push never reached the second failure
+
+`78066cc1` was pushed and CI run `37172407376` went red on the job
+`rust check / clippy / test`, for the clippy half of the above:
+
+    error: could not compile `xai-grok-shell` (lib test) due to 2 previous errors
+
+It never ran the tests. In `.github/workflows/ci.yml` clippy is its own step (line 106) and
+`cargo test --workspace --locked --no-fail-fast` is a later step (line 146); a failed step ends
+the job, so the test step was skipped, and the failure log contains no test results at all:
+
+    $ gh run view 37172407376 --log-failed 2>&1 | grep -cE 'test result: '
+    0
+
+`--no-fail-fast` keeps cargo from stopping at the first red test; it does nothing about the
+order of workflow steps. The pollution defect was therefore only visible in the container run,
+where `cargo clippy` and `cargo test` are two entries in the same `gates=()` array and the
+runner keeps going after one of them fails. That is the concrete difference between "CI is
+green" and "the container sweep passed" on this repository, and it cuts both ways: here the
+container caught something CI could not see.
+
+== 6. Reproducing it, and what this record is not
+
+    $ git clone <this repository> /var/tmp/verify-frozen-8a52ff0a
+    $ cd /var/tmp/verify-frozen-8a52ff0a && git checkout --detach 8a52ff0a
+    $ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full
+
+The clippy leg can be reproduced on its own in that tree with the command the gate runs:
+
+    $ cargo clippy --workspace --all-targets --locked -- -D warnings
+
+and the test leg's failure is a race, so it needs the whole `--lib` binary running together.
+`cargo test -p xai-grok-shell --lib -- --test-threads=1 --exact` on the two tests named above
+passes even on the broken tree; the two tests run concurrently in one binary is the premise.
+
+What this record does not cover:
+
+- It is not the fixed tree. `cargo fmt` and the 32 other gates passed here, but clippy and
+  `cargo test` did not, and the two defects were fixed afterwards. Read this as the measurement
+  that found them, not as a verdict on the current `main`.
+- Four fixtures inside this run declined to check anything, and all four are about a dependency
+  the image does not carry: the workflow-yaml cross-check against a real YAML parser
+  (`PyYAML is not installed on this host`), the metric-label premise that reads the `unwrap` out
+  of the vendored crate (`the prometheus source is not vendored on this host`), and the two
+  `timeout children` fixtures that cite the pinned tokio source (`the pinned tokio source is
+  not vendored on this machine`). Each is stated with its reason rather than left inside an
+  `OK (skipped=1)`, and the equivalent green runs where the dependency is present are recorded
+  in `docs/verification/verify-in-docker-full-a04e91a7-2026-10-04.log` section 5 and
+  `docs/verification/timeout-child-2026-10-04.log`.
+- Linux only. The entry point is a Debian bookworm-slim container; the macOS and Windows
+  conclusions come from their own runners, recorded in
+  `docs/verification/platform-ci-2026-10-02.log` and
+  `docs/verification/windows-test-failures-2026-10-04.log`.
+- No browser. Nothing in the 34 gates drives a UI, and the image has no node_modules and no
+  browser binary.

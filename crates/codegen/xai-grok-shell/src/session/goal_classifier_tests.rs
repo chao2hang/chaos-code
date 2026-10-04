@@ -3636,6 +3636,15 @@ async fn baseline_capture_returns_none_outside_git_repo() {
 /// below records its own pid and then blocks, so the assertion is about the process the
 /// shipped function really started, not about a flag in its source.
 ///
+/// The shim passes through rather than replaces. `GIT_BIN_PATH` is process-global and
+/// [`EnvVarGuard`](crate::env::EnvVarGuard) only serialises the tests that take a guard,
+/// so every other test in this binary keeps resolving git while this one runs; the first
+/// version of this test answered every call with a hang, and an unrelated git test in the
+/// same binary read a pid file as its `git diff`. So only the invocation this test aims at
+/// hangs, recognised by the `rev-parse HEAD` arguments plus a marker file in the caller's
+/// directory, and every other call goes to the real git. The second repository, run
+/// through the same override, is what pins that hand-off.
+///
 /// Linux rather than `cfg(unix)` because `/proc/<pid>/stat` is the observation: on a
 /// platform without it every check below would pass for the wrong reason.
 #[cfg(target_os = "linux")]
@@ -3652,35 +3661,85 @@ async fn baseline_capture_timeout_kills_the_git_it_abandoned() {
     // Bounded on purpose: a run that fails this assertion must not leave a process
     // behind for the rest of the session.
     const SHIM_LIFETIME_SECS: u64 = 8;
+    // Only a `rev-parse HEAD` run in a directory holding this file hangs, so the one
+    // repository the shim aims at is chosen by the fixture, not by the argument list.
+    const HANG_MARKER: &str = ".chaos-abandoned-git-here";
 
-    let dir = tempfile::TempDir::new().expect("tempdir for the git shim");
-    let pid_path = dir.path().join("shim.pid");
-    let shim = dir.path().join("hanging-git");
+    xai_test_utils::require_git!();
+
+    let probe = tempfile::TempDir::new().expect("tempdir for the git shim");
+    let aimed = tempfile::TempDir::new().expect("tempdir for the aimed-at repository");
+    let unrelated = tempfile::TempDir::new().expect("tempdir for the second repository");
+    let aimed_repo = xai_test_utils::git::seed_repo(aimed.path());
+    let unrelated_repo = xai_test_utils::git::seed_repo(unrelated.path());
+
+    // Real git, no override yet: the fixture really is a repository the shipped function
+    // can read, so every `None` below can only come from the abandoned child.
+    let aimed_sha = xai_test_utils::git::run_git(&aimed_repo, &["rev-parse", "HEAD"]);
+    let unrelated_sha = xai_test_utils::git::run_git(&unrelated_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        capture_git_baseline(&aimed_repo).await.as_deref(),
+        Some(aimed_sha.as_str()),
+        "capture_git_baseline must answer for a seeded repository"
+    );
+
+    // What the shipped resolver picks without this override, i.e. the git the rest of the
+    // suite talks to. Passed to the shim through a file so no path quoting is involved.
+    let real_git = crate::util::subprocess::git_bin()
+        .to_string_lossy()
+        .into_owned();
+    let pid_file = probe.path().join("shim.pid");
+    let real_git_file = probe.path().join("real-git");
+    for path in [&pid_file, &real_git_file] {
+        let raw = path.to_string_lossy();
+        assert!(!raw.contains('\''), "the shim quotes {raw} for sh");
+    }
+    let pid_file = pid_file.display().to_string();
+    let real_git_file = real_git_file.display().to_string();
+    std::fs::write(&real_git_file, format!("{real_git}\n")).expect("record the real git");
+
+    let shim = probe.path().join("hanging-git");
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\necho $$ > '{}'\nexec sleep {SHIM_LIFETIME_SECS}\n",
-            pid_path.display()
+            r#"#!/bin/sh
+# Pass-through git: the invocation below hangs, everything else is the real git, so the
+# process-global override this test installs cannot answer for another test's git.
+if [ "$1" = rev-parse ] && [ "$2" = HEAD ] && [ -f {HANG_MARKER} ]; then
+    echo $$ > '{pid_file}'
+    exec sleep {SHIM_LIFETIME_SECS}
+fi
+exec "$(cat '{real_git_file}')" "$@"
+"#
         ),
     )
     .expect("write the git shim");
     std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
         .expect("make the git shim executable");
-
-    let _guard = crate::env::EnvVarGuard::set("GIT_BIN_PATH", &shim.to_string_lossy());
+    std::fs::write(aimed_repo.join(HANG_MARKER), b"").expect("aim the shim at one repository");
 
     let started = Instant::now();
-    let baseline = capture_git_baseline(dir.path()).await;
+    let baseline = {
+        let _guard = crate::env::EnvVarGuard::set("GIT_BIN_PATH", &shim.to_string_lossy());
+        assert_eq!(
+            capture_git_baseline(&unrelated_repo).await.as_deref(),
+            Some(unrelated_sha.as_str()),
+            "while the override is installed, another repository must still get the real \
+             git's answer; a shim that answers every call breaks unrelated git tests"
+        );
+        capture_git_baseline(&aimed_repo).await
+    };
     assert!(
         baseline.is_none(),
         "a git that never answers must yield no baseline, got {baseline:?}"
     );
 
     let pid = loop {
-        if let Ok(raw) = std::fs::read_to_string(&pid_path) {
-            if let Ok(pid) = raw.trim().parse::<u32>() {
-                break pid;
-            }
+        if let Some(pid) = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+        {
+            break pid;
         }
         assert!(
             started.elapsed() < Duration::from_secs(5),
@@ -3689,28 +3748,32 @@ async fn baseline_capture_timeout_kills_the_git_it_abandoned() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
 
+    /// The state letter of `/proc/<pid>/stat`, or `None` once the pid is gone from
+    /// `/proc` altogether, which is the reaped case.
+    fn child_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // The format is `pid (comm) state ...`, and `comm` may itself hold spaces and
+        // parentheses, so the field boundary is the last `)` rather than the first.
+        let after_comm = stat.rsplit(')').next().unwrap_or("");
+        let state = after_comm
+            .split_whitespace()
+            .next()
+            .expect("a state field after the comm field");
+        state.chars().next()
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
     // Gone from /proc means reaped; state `Z` means the kill landed and only the
     // runtime's background reap is outstanding. Either one is a dead child.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let state = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            Ok(stat) => stat
-                .rsplit(')')
-                .next()
-                .and_then(|rest| rest.split_whitespace().next())
-                .unwrap_or("?")
-                .to_string(),
-            Err(_) => break,
-        };
-        if state == "Z" {
-            break;
-        }
+    let mut state = child_state(pid);
+    while !matches!(state, None | Some('Z')) {
         assert!(
             Instant::now() < deadline,
-            "the abandoned git shim (pid {pid}) was still in state {state} {:?} after \
+            "the abandoned git shim (pid {pid}) was still in state {state:?} {:?} after \
              the capture budget expired",
             started.elapsed(),
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
+        state = child_state(pid);
     }
 }

@@ -1,0 +1,247 @@
+# Gate runner: --only, the container's environment, and a verdict that never printed (2026-10-04)
+
+Two changes to the verification runners and two defects found in them while making the
+changes. The runners are the instrument every other measurement in `docs/verification/` is
+taken with, so a defect here is a defect in the reading of everything else:
+`scripts/verify-gates.sh` runs the gate list on the host, `scripts/verify-in-docker.sh` runs
+it in a container, and the host runner extracts its gate list from the container one rather
+than keeping a second copy.
+
+Test names are kept on one line each, wider than the prose, because they are quoted output.
+
+== 1. The host runner copied the container's command line but not its environment
+
+`--with-build` makes the host runner include the build gates (cargo check, clippy, the
+workspace test, the GUI protocol types). It ran the container's `cargo test` line verbatim and
+reproduced a failure that had nothing to do with the tree:
+
+$ scripts/verify-gates.sh --with-build
+    PASS  secret scan
+    PASS  cargo check
+    PASS  cargo clippy
+    FAIL  cargo test (exit 101)
+    (the failing target's own test output, 30+ lines, elided here)
+        error: 1 target failed:
+            `-p xai-grok-shell --lib`
+    PASS  GUI protocol types
+
+    FAILED gates: cargo test
+    34 gate(s) run, 0 skipped, 1 failed
+
+The same command with the container's stack size set by hand is green, over the same tree, in
+858 s. The status is read from `PIPESTATUS` because a pipeline's `$?` would be `tee`'s, which
+is the same mistake `check-evidence-commands.py` describes in its own docstring:
+
+$ RUST_MIN_STACK=16777216 cargo test --workspace --locked --no-fail-fast 2>&1 | tee cargo-test.log
+$ echo "${PIPESTATUS[0]}"
+    0
+
+$ grep -c 'test result:' cargo-test.log
+    386
+
+$ grep -o 'test result: [a-z]*' cargo-test.log | sort | uniq -c
+        386 test result: ok
+
+$ awk '/^test result:/{for(i=1;i<=NF;i++){if($i=="passed;")p+=$(i-1);if($i=="failed;")f+=$(i-1);if($i=="ignored;")g+=$(i-1)}}END{printf "passed: %d failed: %d ignored: %d\n", p, f, g}' cargo-test.log
+    passed: 31594 failed: 0 ignored: 485
+
+The missing piece is `--env RUST_MIN_STACK=16777216` in the container runner's `run_args`.
+Some of `xai-grok-shell`'s current-thread actor tests overflow the harness default stack; that
+is why the container sets it at all, and `docs/architecture/todo-open-item-classification.md`
+records the CI run where it was first measured. The host runner had copied the command and
+left the environment behind, so a green container and a red host were both correct.
+
+The fix mirrors the variable, and the header now prints what it mirrored so a filtered or
+overridden run cannot be mistaken for a plain sweep:
+
+    RUST_MIN_STACK_DEFAULT=16777216
+    export RUST_MIN_STACK="${RUST_MIN_STACK:-${RUST_MIN_STACK_DEFAULT}}"
+
+After it, the same leg through the runner, with the variable unset in the caller's environment
+so the mirror is what does the work (871 s):
+
+$ env -u RUST_MIN_STACK scripts/verify-gates.sh --with-build --only "cargo test"
+    == gates extracted from /home/chaos/hunt/dev/projects/chaos-code/scripts/verify-in-docker.sh
+       host run: the ${bootstrap} prefix is dropped, build gates are included
+       env: RUST_MIN_STACK=16777216 (mirrors the container's --env; set it to override)
+       --only is in effect (1 pattern(s)); this is a filtered run, not a sweep
+    PASS  cargo test
+
+    all gates passed on the host (1 run, 0 skipped, 1 of 34 selected by --only)
+
+The constant is not duplicated a second time: the self-test reads it back out of the container
+runner, so the two cannot drift apart silently.
+
+    container_stack="$(sed -n 's/.*--env RUST_MIN_STACK=\([0-9][0-9]*\).*/\1/p' \
+      "${repo_root}/scripts/verify-in-docker.sh")"
+
+== 2. --only, because a full sweep is not always the question being asked
+
+Both runners had one mode: everything. Reproducing one defect meant either a 23-minute
+container `--full` or a 25-minute host sweep, and neither could be pointed at a single gate
+without an edit to a tracked file. `--only <label-substring>` filters in both, repeatable, and
+a pattern that names no gate is an error rather than an empty run:
+
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "no such gate anywhere"
+    == preparing cargo cache volumes
+    == source tree: 4002 files, checksum 3813834475
+       10 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    --only no such gate anywhere: no gate label matches it.
+               labels are listed by: scripts/verify-gates.sh --list
+               (cargo test and GUI protocol types are appended by --full)
+$ echo "EXIT=$?"
+    EXIT=2
+
+The banner above the error is the container startup that had already happened; the pattern is
+rejected before any gate is selected, so nothing runs.
+
+The cost of the misreading is the reason the summary line changes. A filtered pass says so,
+counts what ran against what exists, and the host runner adds a guard for the case where every
+selected gate was skipped, which used to print as an all-clear over zero gates:
+
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "cargo fmt" --only "secret scan"
+    == cargo fmt
+
+    == secret scan
+    secret-scan: clean (4001 files)
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 2 of 32 gates ran, so this is not a full sweep
+
+Measured with the filter, in the frozen image: `--only "cargo fmt"` 13 s, the two-gate run
+above 11 s, `--only "cargo test"` on the host 871 s. Unfiltered, the container `--full` sweep
+is 1410 s (see `verify-in-docker-full-8a52ff0a-2026-10-04.log`) and the host `--with-build`
+sweep 1509 s.
+
+`verify-in-docker.sh` deliberately has no `--list` of its own; both runners point at
+`scripts/verify-gates.sh --list`, which prints all 34 labels, so there is one list to keep
+correct.
+
+== 3. The self-test grew from 24 to 47 cases, and five mutations were used to check it
+
+The `--only` rules are behavioural, so they are pinned with generated gate lists in the
+runner's own `--self-test`. The fixtures include a pair where the excluded middle gate exits
+7, which is what proves the filter excludes rather than merely selects:
+
+$ scripts/verify-gates.sh --self-test
+    verify-gates self-test: 47/47 cases pass
+
+Each number below is the count of `not ok` lines reported against the mutated runner, so a
+count that matches the new `--only` cases exactly means the rest of the runner is unaffected
+by it:
+
+  - filter matching removed, so the run takes every gate anyway: 10 cases fail
+  - the pre-validation of `--only` patterns removed, so a typo selects nothing and passes: 2 fail
+  - the "nothing ran" guard removed: 4 fail
+  - `RUST_MIN_STACK_DEFAULT` changed to 8388608, so the mirrored size is wrong: 1 fails
+  - the export deleted outright (first attempt): 28 fail, but that run is confounded and was redone
+
+The last one is worth writing down. Replacing the export with `:  # MUTATION` killed the
+runner at startup, before any case ran, because the header banner read `${RUST_MIN_STACK}`
+under `set -u` and an unbound variable there is fatal. The mutation was confounded by the very
+line added in section 1, so the banner was changed to `${RUST_MIN_STACK:-unset}` and the
+mutation re-run: the environment-mirror case fails alone, 1 `not ok`, 46 pass. Every mutated
+file was restored with a plain `cp` and verified with `cmp` before the final 47/47 run.
+
+== 4. The container runner died before printing its own verdict
+
+`--only "cargo clippy"` in the frozen image ran 164 s, printed clippy's completion, and
+stopped. No `PASS`, no `FAILED gates:` line, nothing:
+
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "cargo clippy"
+    (clippy's 400+ Checking lines elided here)
+        Checking xai-grok-pager v0.4.2 (/src/crates/codegen/xai-grok-pager)
+        Checking xai-grok-pager-minimal v0.1.0 (/src/crates/codegen/xai-grok-pager-minimal)
+        Finished `dev` profile [unoptimized] target(s) in 2m 40s
+
+It reproduced with the tree at rest, which ruled out the gate. The runner compares a
+fingerprint of the source tree before and after the gates, and if the tree moved it lists what
+changed and declares the run unattributable. That comparison was:
+
+    moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u)"
+
+`diff` exits 1 when the two files differ, which is exactly the case the branch exists to
+report. In a `set -euo pipefail` script a plain assignment inherits its command substitution's
+status, so the script ended inside the assignment. The four-line isolation:
+
+$ bash -c 'set -euo pipefail
+      printf "a\n" > /tmp/pf-demo/before; printf "b\n" > /tmp/pf-demo/after
+      moved="$(diff /tmp/pf-demo/before /tmp/pf-demo/after | sed -n "s/^[<>] //p" | sort -u)"
+      echo "reached: ${moved}"'
+$ echo "EXIT=$?"
+    EXIT=1
+
+$ bash -c 'set -euo pipefail
+      moved="$(diff /tmp/pf-demo/before /tmp/pf-demo/after | sed -n "s/^[<>] //p" | sort -u || true)"
+      echo "reached: ${moved}"'
+    reached: a
+    b
+    EXIT=0
+
+So the failure had one author and one victim: any tracked file touched while the gates ran (an
+edit in the second window, a formatter hook) turned the runner into a process that exits 1
+having said nothing about why. The gate results were already lost by the time it died, because
+the verdict is printed after the fingerprint comparison.
+
+Reproduction of the whole shape, in the frozen image, editing one tracked file from a second
+window while the gate runs, then putting it back:
+
+$ bak="$(mktemp)" && cp docs/ci-test-debt.md "${bak}"
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "timeout children"
+$ sleep 14 && printf '<!-- mid-run probe -->\n' >> docs/ci-test-debt.md
+$ cp "${bak}" docs/ci-test-debt.md && cmp "${bak}" docs/ci-test-debt.md && echo RESTORE-IDENTICAL
+    RESTORE-IDENTICAL
+
+Before the fix (the gate itself had passed, and the report this function exists to produce was
+the thing that never ran):
+
+    Ran 38 tests in 30.726s
+
+    OK (skipped=2)
+    timeout children hold: 12 timeout-abandoned output/status site(s), 12 kill their child on
+    drop, 0 are std commands, 0 recorded
+$ echo "EXIT=$?"
+    EXIT=1
+
+After the fix, same probe, same exit code, and this time the reader is told what happened:
+
+    timeout children hold: 12 timeout-abandoned output/status site(s), 12 kill their child on
+    drop, 0 are std commands, 0 recorded
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 32 gates ran, so this is not a full sweep
+
+    UNATTRIBUTABLE: the source tree changed while the gates ran.
+      checksum 1937944216 -> 4088590097; these paths differ:
+        docs/ci-test-debt.md
+      nothing in this run can be attributed to a commit; re-run it with the tree at rest.
+$ echo "EXIT=$?"
+    EXIT=1
+
+The probe file was restored with `cp` and verified with `cmp` (RESTORE-IDENTICAL) after both
+runs.
+
+== 5. What was not done here, and why
+
+`verify-in-docker.sh` has no automated fixture for this verdict path. There is no seam: the
+fingerprint is taken inside `main` around the gate loop, and the honest reproduction is the
+`--only "cargo fmt"` plus mid-run tracked-file edit shown above, which costs 13 s plus a
+probe. The host runner's equivalent logic does have fixtures, in `--self-test`.
+
+The same assignment shape is written elsewhere in the tracked shell scripts too. The scan, the
+list of what is left, and why each remaining site is correct to stop rather than report, are
+in `shell-pipefail-silent-report-2026-10-04.log`. In short: there the substitution's output is
+the thing being tested, and it fails only on a genuine error (a `sha256sum` over a tunnel that
+is not up, a host that cannot answer `uname`), where stopping is the right answer and there is
+no report to lose.
+
+== 6. Reproduce it
+
+$ scripts/verify-gates.sh --self-test
+$ scripts/verify-gates.sh --list
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "cargo fmt"
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "no such gate anywhere"
+$ scripts/verify-gates.sh --with-build --only "cargo test"
+
+The last one is 15 minutes and needs the workspace build cache; it is the check that the
+mirrored stack size is the one `xai-grok-shell` needs.

@@ -303,7 +303,13 @@ download_github() {
       curl "${curl_args[@]}" -o "$dest" -w '%{http_code}' "$cand" 2>/dev/null
     )" || http_code="000"
     if [[ "$http_code" == "200" ]]; then
-      size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]')"
+      # `|| true` keeps the `size=0` fallback below reachable: under `set -euo pipefail`
+      # a failing `wc` propagates out of the assignment and ends the script, so the
+      # candidate-skipping this loop exists to do would never happen. Measured on
+      # 2026-10-04 with a `wc` that exits 1: install.sh died inside the mirror loop with
+      # no "download failed" report. A broken size probe should mean "too small, try the
+      # next mirror", which is exactly what the fallback encodes.
+      size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]' || true)"
       [[ -n "$size" ]] || size=0
       if [[ "$size" -lt "$min_bytes" ]]; then
         last_err="too small (${size} bytes) from ${cand}"

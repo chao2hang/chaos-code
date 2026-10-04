@@ -88,7 +88,12 @@ while read -r name ver; do
     report_mismatch "$NPM_DIR/chaos/package.json optionalDependencies[\"$name\"]" "$ver"
 done <<<"$declared"
 
-declared_names="$(grep -v '^$' <<<"$declared" | cut -d' ' -f1 | sort)"
+# `sed '/^$/d'` rather than `grep -v '^$'`: an empty `optionalDependencies` is the
+# state check 5 exists to report, and `grep` exits 1 when no line matches, which under
+# `set -euo pipefail` propagates out of the assignment and ends the script. Measured on
+# 2026-10-04 with the field deleted: exit 1, stdout left at the first informational
+# line, stderr empty. The gate died holding the only report of the breakage.
+declared_names="$(sed '/^$/d' <<<"$declared" | cut -d' ' -f1 | sort)"
 pkg_names="$(node -p "
   require('fs').readdirSync('$NPM_DIR', { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -101,9 +106,11 @@ pkg_names="$(node -p "
 ")"
 
 if [[ "$declared_names" != "$pkg_names" ]]; then
+  # Either side can be the empty one, and a blank list under a heading reads like a
+  # formatting glitch rather than "this side has no packages at all".
   printf 'check-versions: MISMATCH platform package set\n' >&2
-  printf '  optionalDependencies names:\n%s\n' "$declared_names" >&2
-  printf '  package.json names on disk:\n%s\n' "$pkg_names" >&2
+  printf '  optionalDependencies names:\n%s\n' "${declared_names:-  (none declared)}" >&2
+  printf '  package.json names on disk:\n%s\n' "${pkg_names:-  (none on disk)}" >&2
   status=1
 fi
 

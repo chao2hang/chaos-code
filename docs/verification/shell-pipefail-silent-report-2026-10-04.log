@@ -1,0 +1,224 @@
+# Two shell gates that exited 1 without saying why (2026-10-04)
+
+`scripts/verify-in-docker.sh` was found dying before it printed its verdict, because a bare
+`name="$(pipeline)"` assignment inherits the pipeline's status and `set -euo pipefail` ends
+the script on it. The same shape was then looked for in the other shell scripts that report
+something. Two of them had it, and in both the code that should have caught the problem was
+written on the line directly after the one that died. Details of the runner case are in
+`gate-runner-only-and-env-2026-10-04.log`.
+
+Both defects are in the "the gate knows and says nothing" class: the exit code was already
+correct, so nothing upstream complained, and only the words were missing. Captured output is
+quoted verbatim, including its own punctuation, and test names are kept on one line each.
+
+== 1. scripts/ci/check-versions.sh could not report an empty optionalDependencies
+
+The gate compares the Cargo package version against six npm package versions and, in check 5,
+compares the `optionalDependencies` names in `npm/chaos/package.json` against the platform
+package directories on disk. `release.yml` resolves the release version from that file and
+stamps the platform packages from it, so an emptied `optionalDependencies` is the breakage
+check 5 is specific about. Drive it in a copy of the tree with the field deleted:
+
+$ node -e 'const fs=require("fs");const p="crates/codegen/xai-grok-pager/npm/chaos/package.json";
+    const j=JSON.parse(fs.readFileSync(p,"utf8"));delete j.optionalDependencies;
+    fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")'
+$ bash scripts/ci/check-versions.sh > out.txt 2> err.txt
+$ echo "EXIT=$?"
+    EXIT=1
+$ cat out.txt
+    check-versions: Cargo crates/codegen/xai-grok-pager-bin/Cargo.toml -> 0.4.2
+$ wc -c < err.txt
+    0
+
+Against the same tree with the field present, for contrast, the baseline is green:
+
+$ bash scripts/ci/check-versions.sh
+    check-versions: Cargo crates/codegen/xai-grok-pager-bin/Cargo.toml -> 0.4.2
+    check-versions: OK — Cargo and all npm packages agree on 0.4.2
+
+The cause was `declared_names="$(grep -v '^$' <<<"$declared" | cut -d' ' -f1 | sort)"`. `grep`
+exits 1 when no line is left to print, and an empty declared set is precisely the state where
+nothing is left to print. Check 4 upstream of it had already passed silently, because its loop
+runs once per declared entry and there were none.
+
+The fix removes the failure mode rather than suppressing its status. `sed '/^$/d'` deletes
+empty lines and has no "no lines matched" exit status, so the comparison downstream runs, and
+the empty side of the comparison is now labelled in words:
+
+$ bash scripts/ci/check-versions.sh
+    check-versions: Cargo crates/codegen/xai-grok-pager-bin/Cargo.toml -> 0.4.2
+    check-versions: MISMATCH platform package set
+      optionalDependencies names:
+      (none declared)
+      package.json names on disk:
+    chaos-code-darwin-arm64
+    chaos-code-darwin-x64
+    chaos-code-linux-arm64
+    chaos-code-linux-x64
+    chaos-code-win32-arm64
+    chaos-code-win32-x64
+    check-versions: FAILED
+
+== 2. scripts/ci/test-check-versions.py, 6 cases, 2 of which fail without the fix
+
+The fixture copies the gate, `Cargo.toml` and the npm tree into a temporary directory and runs
+the copied script, so the mutations land on the copy and the repository is never touched.
+Every failing case asserts on stderr as well as the exit code, because the exit code was
+already 1 while the gate was broken.
+
+$ python3 scripts/ci/test-check-versions.py
+    test_cargo_version_drift_is_named (__main__.CheckVersionsReportTests) ... ok
+    test_faithful_copy_passes (__main__.CheckVersionsReportTests) ... ok
+    test_one_dropped_pin_names_the_package (__main__.CheckVersionsReportTests) ... ok
+    test_optional_dependencies_empty_object_reports_too (__main__.CheckVersionsReportTests) ... ok
+    test_optional_dependencies_removed_reports_the_package_set (__main__.CheckVersionsReportTests) ... ok
+    test_platform_package_version_drift_is_named (__main__.CheckVersionsReportTests) ... ok
+
+    Ran 6 tests in 1.348s
+
+    OK
+
+Against the pre-fix gate, exactly the two empty-set cases fail. The other four stay green,
+which is what shows they are pinning something else (the version comparison, the non-empty set
+comparison) rather than being satisfied by the fix:
+
+    test_optional_dependencies_empty_object_reports_too (__main__.CheckVersionsReportTests) ... FAIL
+    test_optional_dependencies_removed_reports_the_package_set (__main__.CheckVersionsReportTests) ... FAIL
+
+    Ran 6 tests in 1.368s
+
+    FAILED (failures=2)
+
+The mutated file was restored with a plain `cp` and verified with `cmp`.
+
+== 3. scripts/install.sh died inside the mirror loop it exists to run
+
+`download_github` tries each candidate URL, refuses a body smaller than `min_bytes` or an HTML
+error page served with status 200, moves to the next candidate, and if all of them fail prints
+one `why:` line per distinct reason plus the `CHAOS_GITHUB_MIRROR` tip. Its size probe was:
+
+    size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]')"
+    [[ -n "$size" ]] || size=0
+
+The `2>/dev/null` and the `|| size=0` on the next line both say the author expected `wc` to be
+able to fail. It cannot: the failing substitution ends the script first, so the fallback is
+unreachable, and the loop whose whole job is to fall back across mirrors dies part-way through
+it, with no reason printed.
+
+Driven by extracting the shipped function verbatim into a harness, against a local HTTP
+endpoint on 127.0.0.1 serving a 4 KiB body, with a `wc` that exits 1 stood in front of `PATH`
+to mimic an unreadable body. The only stub is the candidate list, because the real one
+resolves github.com.
+
+Healthy control, same function, real `wc`:
+
+    CASE=healthy-fixed EXIT=0 dest_exists=4096
+    http://127.0.0.1:8099/artifact.bin
+      try: http://127.0.0.1:8099/artifact.bin
+
+Broken `wc`, the function as it now stands:
+
+    CASE=broken-fixed EXIT=1 dest_exists=no
+      try: http://127.0.0.1:8099/artifact.bin
+      try: http://127.0.0.1:8099/artifact.bin?mirror=1
+    error: download failed for http://127.0.0.1:8099/artifact.bin
+      why: too small (0 bytes) from http://127.0.0.1:8099/artifact.bin
+      why: too small (0 bytes) from http://127.0.0.1:8099/artifact.bin?mirror=1
+      last: too small (0 bytes) from http://127.0.0.1:8099/artifact.bin?mirror=1
+      tip: set CHAOS_GITHUB_MIRROR=https://ghfast.top  or  CHAOS_CN=1
+
+Broken `wc`, the function at `HEAD` before the fix. Both candidates were offered; one `try:`
+line appeared; there was no `error:` line and no reason:
+
+    CASE=broken-before EXIT=1 dest_exists=no
+      try: http://127.0.0.1:8099/artifact.bin
+
+== 4. scripts/ci/test-installer-download-size.py, 5 cases, 1 of which fails without the fix
+
+The same harness, as a fixture: a threaded `http.server` on an ephemeral port, the function
+extracted from `install.sh` by its own closing brace at column 0, and the four reasons the
+loop can produce, so the file is not proving only the branch it was written for.
+
+$ python3 scripts/ci/test-installer-download-size.py
+    test_full_body_is_accepted_and_the_url_is_reported (__main__.DownloadGithubSizeTests) ... ok
+    test_html_error_page_is_refused_by_name (__main__.DownloadGithubSizeTests) ... ok
+    test_missing_object_reports_the_status_code (__main__.DownloadGithubSizeTests) ... ok
+    test_short_body_reports_the_size_it_measured (__main__.DownloadGithubSizeTests) ... ok
+    test_unreadable_size_reports_a_reason_instead_of_dying (__main__.DownloadGithubSizeTests) ... ok
+
+    Ran 5 tests in 2.643s
+
+    OK
+
+Against the pre-fix `install.sh`, only the case named for the defect fails, and the three
+cases that share the same report path stay green, so `too small (0 bytes)` is not a constant
+the fixture could be reading from its own setup:
+
+    test_unreadable_size_reports_a_reason_instead_of_dying (__main__.DownloadGithubSizeTests) ... FAIL
+
+    Ran 5 tests in 2.607s
+
+    FAILED (failures=1)
+
+Restored with `cp`, verified with `cmp`, and `git diff --stat scripts/install.sh` afterwards
+showed only the intended 7 added and 1 removed lines.
+
+== 5. How much of the shape is left, and what the scan misses
+
+The line-based scan for it is this. It reports 142 single-line command substitutions assigned
+to a plain variable, of which 9 have a pipe inside and no `|| true` to absorb the status:
+
+$ git grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\(' -- '*.sh' | wc -l
+    142
+
+$ git grep -nE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*="\$\([^"]*\|' -- '*.sh' | grep -v '|| true'
+    crates/codegen/xai-grok-pager/scripts/install-enterprise.sh:164:    sysctl_bin="$(command -v sysctl || echo /usr/sbin/sysctl)"
+    crates/codegen/xai-grok-pager/scripts/install.sh:193:    sysctl_bin="$(command -v sysctl || echo /usr/sbin/sysctl)"
+    scripts/install.sh:175:  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    scripts/remote-acceptance-in-docker.sh:549:remote_digest="$(on_host 'sha256sum /lab/workspace/notes.txt' | cut -c1-64)"
+    scripts/remote-acceptance-in-docker.sh:550:fetched_digest="$(on_dev 'sha256sum /lab/local/fetched.txt' | cut -c1-64)"
+    scripts/remote-acceptance-in-docker.sh:995:tokens_before="$(on_dev 'wc -l </shared/token' | tr -d ' ')"
+    scripts/remote-acceptance-in-docker.sh:1013:tokens_after="$(on_dev 'wc -l </shared/token' | tr -d ' ')"
+    scripts/remote-acceptance-in-docker.sh:1337:fetched_digest="$(on_dev 'sha256sum /lab/local/through-the-forward.bin' | cut -c1-64)"
+    scripts/remote-acceptance-in-docker.sh:1338:served_digest="$(on_host 'sha256sum /lab/service/payload.bin' | cut -c1-64)"
+
+All nine were read and left alone. The two `sysctl_bin` lines end in `|| echo`, so the status
+assigned is 0 whatever `command -v` answers; and both of those files run `set -e` without
+`pipefail` at script scope (one sets it inside a single subshell elsewhere), so a middle
+stage's status would not reach the assignment either. `os="$(uname -s | tr ...)"` runs before
+anything exists to report, and a host that cannot answer `uname` should stop. The six in
+`scripts/remote-acceptance-in-docker.sh` compare a `sha256sum` computed on one side of a
+tunnel against one computed on the other: if either fails, the equality assertion below them
+is meaningless, and stopping there is the correct reading of the script.
+
+The scan is a floor, not a census, and its blind spot is the reason this file exists at all:
+the expression `[^"]*` stops at the first quote, so a substitution that quotes something
+before its pipe is invisible to it. That is how both fixed lines escaped it,
+`check-versions.sh` with `<<<"$declared"` and `install.sh` with `"$dest"`. The two were found
+by reading the runner defect's shape into the other reporting scripts, not by the scan.
+
+== 6. Wiring and reproduction
+
+Both fixtures run in both roots, on the executable lines rather than in prose, which is what
+`check-guard-wiring.py` requires. The container image builds `nodejs` and `curl`, so neither
+fixture silently skips there; the run below shows 6 and 5 tests actually executing inside it:
+
+$ IMAGE_TAG=chaos-verify:frozen scripts/verify-in-docker.sh --only "version lockstep" --only "installer guards"
+    == version lockstep
+    Ran 6 tests in 3.885s
+    OK
+    check-versions: OK — Cargo and all npm packages agree on 0.4.2
+    7 check(s), 0 failure(s)
+    == installer guards
+    Ran 14 tests in 0.329s
+    Ran 8 tests in 0.002s
+    Ran 5 tests in 2.657s
+    OK
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 2 of 32 gates ran, so this is not a full sweep
+
+$ python3 scripts/ci/test-check-versions.py
+$ python3 scripts/ci/test-installer-download-size.py
+$ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (59 files in scripts/ci/, 58 reachable, 54 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)

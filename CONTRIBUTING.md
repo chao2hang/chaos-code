@@ -235,6 +235,7 @@ drift from the other.
 ```sh
 scripts/verify-gates.sh              # the cheap gates, in array order
 scripts/verify-gates.sh --list       # what would run, running nothing
+scripts/verify-gates.sh --only fmt   # only the gates whose label contains "fmt"
 scripts/verify-gates.sh --verbose    # stream every gate's output, not just failures
 scripts/verify-gates.sh --with-build # plus cargo check/clippy/test and GUI types
 scripts/verify-gates.sh --self-test  # the runner's own fixture suite
@@ -252,6 +253,22 @@ is what makes that guard fail rather than silently skip a target.
 pins the shapes that would otherwise rot quietly: the appended `gates+=(...)` entries of
 full mode are found, a failing gate is named and changes the exit code, and a source the
 extractor cannot parse exits 2 instead of reporting an empty pass.
+
+`--only <label>` filters the list, repeatable, matching a label exactly or as a fragment. It
+exists because the expensive question is usually about one gate: the lint set that the host
+run only applies under `--with-build` can be asked of the container directly with
+`scripts/verify-in-docker.sh --only 'cargo clippy'`, which costs about three minutes with warm
+cargo volumes instead of the 23 to 25 minutes of a `--full` sweep. Three rules keep a filtered
+run from being quoted back as a sweep. A pattern matching no label exits 2 and names the
+pattern, so a typo cannot select nothing and print a verdict about nothing. A filtered summary
+carries the counts (`K of T selected by --only` on the host, `--only was in effect: K of M
+gates ran` in the container), while an unfiltered host sweep says
+`all gates passed on the host (30 run, 4 skipped)` and only that. And the filter does not
+unlock the build gates: `--only 'cargo test'` on the host still prints `SKIP` unless
+`--with-build` is also given, because a fragment that happens to match a build gate should not
+turn a fast loop into a workspace rebuild. `--self-test` pins all three, including the negative
+half of each selection case, which asserts that the line of the gate that must not have run is
+absent.
 
 The other labs (`install-sh-in-docker.sh`, `install-integrity-in-docker.sh`,
 `npm-install-in-docker.sh`, `remote-acceptance-in-docker.sh`) start their containers

@@ -631,10 +631,20 @@ jobs:
       # `CARGO_PKG_VERSION`. Nothing compared the two, so a one-sided bump would
       # ship a `chaos --version` that disagrees with the package that installed it.
       - name: version consistency (Cargo vs npm)
-        run: ./scripts/ci/check-versions.sh
+        run: |
+          python3 scripts/ci/test-check-versions.py
+          ./scripts/ci/check-versions.sh
 
       - name: installer signature policy
         run: python3 scripts/ci/test-installer-signature-policy.py
+
+      # install.sh refuses a truncated body, an HTML proxy page and a short mirror
+      # response, then moves to the next candidate and prints one reason per distinct
+      # failure. The size probe used to end the script instead of skipping a candidate,
+      # so the report nobody saw was the one that named the reason. Fixtures, against a
+      # local endpoint: no release artifact is fetched here.
+      - name: installer download size floor
+        run: python3 scripts/ci/test-installer-download-size.py
 
       - name: stamp-version dry run
         run: |

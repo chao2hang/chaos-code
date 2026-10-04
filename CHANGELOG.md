@@ -2,6 +2,174 @@
 
 ## Unreleased
 
+### 修复：`install.sh` 的体积探测一失败就把整个镜像回退循环杀死，而它下一行就写着失败时该怎么办
+
+`download_github` 逐个试候选 URL：正文小于 `min_bytes`、或者 200 后面跟的是 HTML 代理页，就换下一个，
+全部失败时按「一个原因一行」打印 `why:` 并给出 `CHAOS_GITHUB_MIRROR` 提示。它的尺寸探测是
+`size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]')"`，而 `2>/dev/null` 与下一行的
+`[[ -n "$size" ]] || size=0` 都说明作者预期 `wc` 会失败——但在 `set -euo pipefail` 下这个裸赋值继承
+命令替换的状态，`set -e` 先一步结束脚本，那行兜底永远不可达。
+
+实测：把函数原样抽进夹具，对着 127.0.0.1 上真实 HTTP 端点取的 4 KiB 正文，再把一个总是 exit 1 的假
+`wc` 挡在 `PATH` 前面（唯一被桩掉的是候选列表，因为真的那份要解析 github.com）。修复前两个候选都递
+上去了，却只打印一行 `try:`，没有 `error:` 也没有原因；修复后两个候选都试完，两条
+`why: too small (0 bytes)` 都在。改法是给赋值加 `|| true`，让「量不出大小」正是兜底已经写好的含义：
+太小，换下一个镜像。
+
+新夹具 `scripts/ci/test-installer-download-size.py` 5 例：完整正文被接受（端点或夹具自己坏了的话，
+下面四条会因错误的原因变绿）、`min_bytes` 之上时报出实测字节数、HTML 代理页按名字拒绝、404 报出状态
+码，以及本缺陷本身。对着 `HEAD` 的 `install.sh` 只有最后一条红，另外三条共用同一条报告路径却仍绿，
+这说明 `too small (0 bytes)` 不是夹具从自己的 setup 里读出来的常数。变异后 `cp` 还原、`cmp` 字节一致。
+
+（2026-10-04；`scripts/install.sh`、`scripts/ci/test-installer-download-size.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh` 的 installer guards、
+`docs/verification/shell-pipefail-silent-report-2026-10-04.log`）
+
+### 修复：版本一致性门禁碰到被清空的 `optionalDependencies` 时 exit 1，却一个字都不说
+
+`scripts/ci/check-versions.sh` 的第 5 项把 `npm/chaos/package.json` 里的 `optionalDependencies`
+名字集与磁盘上的平台包目录对着比；`release.yml` 正是从这份文件解析发布版本再逐个盖章，所以「这张表
+被清空」恰好是这项最该报的事。把那个字段删掉实测：exit 1，stdout 停在第一行信息行，stderr 空。原因
+不在比较，而在 `declared_names="$(grep -v '^$' <<<"$declared" | cut -d' ' -f1 | sort)"`——`grep`
+没有行可打时 exit 1，而「没有行可打」正是声明集为空的状态，`set -euo pipefail` 下这个裸赋值把状态
+交给脚本，它就在比较的前一句死了。它上游的第 4 项此前已经静默通过：那个循环按声明条目跑，条目数为零。
+
+改法是去掉失败模式，而不是压掉它的状态：换成 `sed '/^$/d'`，它删空行且没有「一行都没匹配上」这个
+退出码。同一条变异重跑，报告整个打出来并以 `check-versions: FAILED` 收尾，空的那一侧现在用人话写着
+`(none declared)`。新夹具 `scripts/ci/test-check-versions.py` 6 例，把门禁、`Cargo.toml` 与 npm 树
+拷进临时目录再跑副本，仓库本身一个字都不改；每条失败用例都同时断言 stderr，因为门禁坏着的时候退出码
+本来就对，缺的只是字。对着 `HEAD` 版门禁恰好两条空集用例红，其余四条仍绿，它们钉的是版本比较与非空
+集合比较。
+
+（2026-10-04；`scripts/ci/check-versions.sh`、`scripts/ci/test-check-versions.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh` 的 version lockstep、
+`docs/verification/shell-pipefail-silent-report-2026-10-04.log`）
+
+### 修复：容器 runner 在树被中途改动时，连自己的判决都不打印
+
+`scripts/verify-in-docker.sh` 在门禁前后各取一次源码树指纹，树动了就列出差异并宣布这次运行不可归因。
+那次比较写的是 `moved="$(diff … | sed -n … | sort -u)"`：`diff` 在两份文件不同时 exit 1，而「不同」
+正是这个分支存在的唯一理由，于是 `set -euo pipefail` 下脚本死在这句赋值里。撞上它的是
+`--only "cargo clippy"`：164 s 之后 clippy 只打完 `Finished \`dev\` profile … in 2m 40s`，再没有别的
+输出，没有 `PASS`，也没有 `FAILED gates:`；四行最小化脚本确认与那条门本身无关。
+
+复现（容器里，第二个窗口在门跑到一半时改一个被跟踪文件）：修复前 `EXIT=1`，被选中的那条门自己打完了
+`Ran 38 tests … OK (skipped=2)`，判决一行都没有；修复后同样是 exit 1，但打印
+`UNATTRIBUTABLE: the source tree changed while the gates ran.`、变更的路径、以及「让树静止再跑一
+遍」。判决本来就排在指纹比较之后，死在那里意味着这一轮的门禁结果一起丢了。这条路径没有自动夹具（指纹
+取在 `main` 里面，没有接缝），诚实的重现法就是 `--only "cargo fmt"`（静止时 13 s）配一次中途改文件。
+
+（2026-10-04；`scripts/verify-in-docker.sh`、
+`docs/verification/gate-runner-only-and-env-2026-10-04.log`）
+
+### 修复：宿主 runner 抄了容器的命令行，没抄容器的那个环境变量，`--with-build` 因此自己红
+
+上一轮修完之后 `scripts/verify-gates.sh --with-build` 仍然红：`34 gate(s) run, 0 skipped, 1 failed`，
+红的是 `cargo test`，报 `error: 1 target failed: \`-p xai-grok-shell --lib\``。同一条命令在宿主上
+多一个环境变量就跑完：
+
+    RUST_MIN_STACK=16777216 cargo test --workspace --locked --no-fail-fast
+    386 个 test result 块，passed: 31594  failed: 0  ignored: 485，exit 0，858 s
+
+那一份变量在 `scripts/verify-in-docker.sh` 的 `run_args` 里（`--env RUST_MIN_STACK=16777216`，
+注释写明 `xai-grok-shell` 的 current-thread actor 测试会撑爆 harness 默认栈，并指向 CI run
+`36165469964`），`.github/workflows/ci.yml` 的两条 test step 也各自设了它。三个执行环境里三个都设了，
+只有宿主 runner 没设：它的设计是「只从 `gates=()` 抄命令行，别的都不动」，而环境正是被这句「别的」
+漏掉的一块。
+
+现在它自己导出这个变量（调用者已设的值优先，与容器一致），表头把实际取值打出来，`--self-test`
+24 → 47 例把它钉住：一个 fixture 门把 `${RUST_MIN_STACK}` 读回来，预期值由 `sed` 从容器那句 `--env`
+现读，而不是在测试里再抄一份数字；另一个用例钉「显式设的值不被默认值覆盖」。变异：默认值改成
+`8388608` → 恰好一条 `not ok`（46 passed / 1 FAILED），`cmp` 还原后 47/47。顺带记一条 `set -u` 的
+教训：把 `export` 换成 no-op 之后 28 条断言一起红，因为表头 `echo` 读了未设的变量直接让脚本以 1
+死掉，一次让整套夹具塌掉的变异定位不了任何东西，表头因此改成 `${RUST_MIN_STACK:-unset}`。全过程与
+判据（镜像另一个 runner 要镜像命令行、环境变量与工作目录的整体，抄来的常量必须回到被抄处比对）记在
+`docs/ci-test-debt.md`。
+
+（2026-10-04；`scripts/verify-gates.sh`、`scripts/verify-in-docker.sh`、`docs/ci-test-debt.md`、
+`docs/architecture/todo-open-item-classification.md`）
+
+### 改进：两个 runner 都能只跑一条门了，而「跑了三条」不再可能被引用成「全量绿」
+
+`scripts/verify-gates.sh` 与 `scripts/verify-in-docker.sh` 新增 `--only <label>`（可重复，标签精确
+匹配或作片段匹配）。动机是本仓库最贵的问题通常只关一条门：lint 集在宿主上只有带 `--with-build` 才
+跑，而带它跑一轮全量实测 25 分 10 秒（1509 s）；容器一侧 `--full` 一轮实测 23 分 30 秒。现在
+`scripts/verify-in-docker.sh --only 'cargo clippy'` 可以直接问那一条。
+
+三条规则防止被过滤的运行被当成全量：匹配不到任何标签的 pattern 直接 exit 2 并点名它（而不是选中零
+条、再打印一条关于零条的判决）；被过滤过的运行在摘要里带计数（宿主 `K of T selected by --only`，
+容器 `--only was in effect: K of M gates ran`），没被过滤的宿主全量仍然只说
+`all gates passed on the host (30 run, 4 skipped)`；`--only` 不解锁 build 门 —— 宿主上
+`--only 'cargo test'` 照旧打 `SKIP`，因为一个恰好命中 build 门的片段不该把快循环变成整仓重建，此时
+这一轮什么都没测到，于是打 `nothing ran` 并 exit 1 而不是 0。
+
+`--self-test` 从 24 例加到 44 例（本轮再加环境那 3 例，共 47），其中每个选择用例都配了一条新的
+`reject_line`，断言「没被选中的那条没跑」——只 grep 跑了哪条的测试无法区分过滤器与全量。为此加了一个
+专用夹具：两条标签共享一个片段、中间夹一条 `exit 7`，过滤器只要多看一眼就会红。三个变异分别被 10、
+2、4 条断言杀掉（`matches_only` 恒真 / 删掉 pattern 预检 / 摘要去掉 scope），逐字节 `cmp` 还原。容器
+侧实测：`--only "no such gate anywhere"` 退出 2；`--only "secret scan" --only "cargo fmt"` 跑两条门
+退出 0 并打 `selected gates passed in chaos-verify:frozen`。`--help` 顺手改成打印到第一条非注释行为
+止，不再维护手写的行号范围。`CONTRIBUTING.md` 的「Fast local gate loop」写了用法与这三条规则。
+
+（2026-10-04；`scripts/verify-gates.sh`、`scripts/verify-in-docker.sh`、`CONTRIBUTING.md`）
+
+### 修复：一条测试把 `GIT_BIN_PATH` 指向会应答一切调用的壳脚本，等于换掉了整个测试二进制的 git
+
+`8a52ff0a` 在容器里跑 `scripts/verify-in-docker.sh --full`，34 条门禁红两条，两条都是它自己
+带进来的，而红掉的名字里没有一条是肇事者。
+
+- `cargo clippy`：新测试里 `collapsible_if` 与 `while_let_loop` 各一处，`-D warnings` 把两者判
+  死。同一份源码 `cargo check` 是绿的（`Finished ... in 2m 06s`），所以这不是编译问题，是只有
+  clippy 那条腿才施加的那套 lint；宿主扫描不带 `--with-build` 根本不跑它。
+- `cargo test`：386 个 `test result:` 块合计 31,593 绿 1 红。红的是
+  `changed_files_complete_when_git_diff_exceeds_byte_cap`，报 `test premise: the diff must
+  exceed the byte cap`；肇事的那条 `baseline_capture_timeout_kills_the_git_it_abandoned` 在同
+  一次运行里是 `... ok`。
+
+机制在进程全局的环境变量上。那条测试把 `GIT_BIN_PATH` 指向一个壳脚本，脚本对**每一次**调用都
+应答：瞄准的那一次挂住，其余一律退出 0 且 stdout 为空。`EnvVarGuard` 只串行化其他 guard 的持有
+者，而 `util::subprocess::git_bin()` 是每次调用现读环境变量，于是同一 `--lib` 二进制里旁人的
+`git add`、`git commit`、`git diff` 全部「成功」而输出为空，那个受害者测试搭出来的仓库 diff 是
+零字节，它自己的前提断言于是开火。测试自己绿，别人红。
+
+修法是把壳改成 pass-through：只有瞄准的那一次 `rev-parse HEAD`（用工作树里一个标记文件认出
+来）挂住，其余 `exec` 真 git；guard 装上之后立刻断言另一个仓库照样拿到真 git 的答案；pid 文件
+只在瞄准分支里写，观察对象不再可能被受害者的壳抢走。变异复核：把壳的判断改成无条件命中，新断言
+当场红（`left: None`）且 byte-cap 那条再次红，8.06 s；改回原样 `47 passed; 0 failed in 1.07s`，
+逐字节 `cmp` 确认还原。旧写法的抖动也量过：单独跑（`--test-threads=1 --exact`）绿，与受害者配对
+跑 5/5 全红、每次红 2 到 5 条。
+
+CI 看不见第二条：`.github/workflows/ci.yml` 里 clippy 是独立 step（`:106`），`cargo test` 在
+`:146`，clippy 一红 job 就结束，失败日志里 `test result:` 出现 0 次。`--no-fail-fast` 管的是
+cargo 内部，不是 step 顺序；容器里两者是同数组里的两个门，一个红另一个照跑，这条缺陷才现形。
+全过程记在 `docs/verification/verify-in-docker-full-8a52ff0a-2026-10-04.log`，判据（注入的壳必须
+pass-through、必须真断言无关仓库仍看到真 git、pid 文件只在瞄准分支写）记在 `docs/ci-test-debt.md`。
+
+（2026-10-04；`crates/codegen/xai-grok-shell/src/session/goal_classifier_tests.rs`、
+`docs/ci-test-debt.md`、`docs/verification/verify-in-docker-full-8a52ff0a-2026-10-04.log`、
+`scripts/ci/platform-gated-tests.tsv`、`.github/workflows/ci.yml`）
+
+### 门禁：`timeout_at` 与 `timeout` 放弃的是同一个 future，matcher 里那条 `?` 之前没有用例跑过
+
+`scripts/ci/check-timeout-child.py` 的匹配器写作 `timeout(?:_at)?\s*\(`，理由是两者丢弃的是同
+一个 future，被放弃的子进程形状完全一致。理由写进了注释，可 36 例 fixture 里没有任何一条用
+`timeout_at`，那个 `(?:_at)?` 分支从写下那天起一次也没被执行过：把它改成只认 `timeout`，全绿。
+
+补两条用例，红绿成对。`test_timeout_at_abandons_the_same_future` 让
+`timeout_at(deadline, Command::new("git").status())` 在没有 `kill_on_drop` 时必须报
+`no-kill-on-drop`；`test_timeout_at_answers_to_the_flag_too` 是同一形状写上
+`kill_on_drop(true)` 之后必须绿，并且计数行必须真的数到那一条（`1 timeout-abandoned
+output/status site(s), 1 kill their child on drop`），否则前一条绿是因为什么都没看见。
+
+fixture 36 → 38 例，`Ran 38 tests in 47.442s / OK`。非空洞性由变异给出：把匹配器收窄成
+`r"\b(?:[A-Za-z_]\w*::)*timeout\s*\("`，恰好这两条红（`AssertionError: 0 != 1 : timeout
+children hold: 0 ...`）、其余 36 条全绿，改回原样逐字节 `cmp` 复核一致。门禁对真仓库的结论未
+变：`timeout children hold: 12 timeout-abandoned output/status site(s), 12 kill their child on
+drop, 0 are std commands, 0 recorded`。匹配器那条注释同步改写成两种拼写都算的理由。
+
+（2026-10-04；`scripts/ci/check-timeout-child.py`、`scripts/ci/test-check-timeout-child.py`、
+`TODO.md`）
+
 ### 改进：审计报告那张 unsafe 位置表换了口径重测，420 正式作废，全仓确实少了一处生产 unsafe
 
 `docs/audit-followup-report.md` §1.8 的 top 10 是 2026-10-02 在 `fa9c1358` 那棵树上配**当时的**

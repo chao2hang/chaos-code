@@ -10,7 +10,15 @@
 # Usage:
 #   scripts/verify-in-docker.sh              # quick gates (fmt, guards, check, clippy)
 #   scripts/verify-in-docker.sh --full       # quick gates plus cargo test --workspace
+#   scripts/verify-in-docker.sh --only <label>  # only gates whose label matches (repeatable)
 #   scripts/verify-in-docker.sh --shell      # interactive shell in the same image
+#
+# --only exists because a full sweep costs ~25 minutes here while a change usually needs one
+# gate re-checked. Labels come from `scripts/verify-gates.sh --list`; a pattern matches a label
+# exactly or as a fragment. A pattern that matches no label is an error rather than a green
+# run, and a filtered run prints `K of M gates` in its verdict so it cannot be quoted back as a
+# full sweep. cargo test and GUI protocol types are appended by --full and so are named only
+# by a run that passes it.
 #
 # Environment:
 #   BASE_IMAGE   base image for docker/verify.Dockerfile (default rust:1-bookworm)
@@ -30,20 +38,33 @@ set -euo pipefail
 BASE_IMAGE="${BASE_IMAGE:-docker.io/library/debian:bookworm-slim}"
 IMAGE_TAG="${IMAGE_TAG:-chaos-verify:local}"
 MODE="quick"
+ONLY=()
 
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --full) MODE="full" ;;
     --shell) MODE="shell" ;;
+    --only)
+      if [ $# -lt 2 ] || [ -z "$1" ]; then
+        # An empty pattern matches every label, which would make `--only ""` a full sweep.
+        echo "--only needs a gate label (list them with: scripts/verify-gates.sh --list)" >&2
+        exit 2
+      fi
+      shift
+      ONLY+=("$1")
+      ;;
     -h | --help)
-      sed -n '2,25p' "$0"
+      # The header up to the first non-comment line, so --help cannot drift as lines are
+      # added above it.
+      awk 'NR > 1 { if ($0 !~ /^#/) exit; print }' "$0"
       exit 0
       ;;
     *)
-      echo "unknown argument: $arg (expected --full, --shell or --help)" >&2
+      echo "unknown argument: $1 (expected --full, --only <label>, --shell or --help)" >&2
       exit 2
       ;;
   esac
+  shift
 done
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -177,11 +198,11 @@ gates=(
   # when a target named in the table is unavailable, and an image without the
   # tier-2 targets installed would otherwise turn it into a Linux-only no-op.
   "load-bearing features: ${bootstrap}; rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin && python3 scripts/ci/test-check-load-bearing-features.py && python3 scripts/ci/check-load-bearing-features.py"
-  "version lockstep: bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py"
+  "version lockstep: python3 scripts/ci/test-check-versions.py && bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py"
   # The recon record is named by date + upstream tip, so a second same-day run used to
   # overwrite the first; these fixtures drive the shipped script and pin that it cannot.
   "upstream recon: python3 scripts/ci/test-upstream-recon.py"
-  "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py"
+  "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py && python3 scripts/ci/test-installer-download-size.py"
   "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && bash scripts/ci/test-publish-npm.sh"
   "docs localization: ${bootstrap}; bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"
   "localization guard self-tests: python3 scripts/l10n-guard-selftest.py && python3 scripts/check-doc-l10n-selftest.py"
@@ -198,6 +219,40 @@ if [ "${MODE}" = "full" ]; then
   # chaos-engine added to a run that otherwise stops at check/clippy, which is the
   # whole reason quick mode is quick.
   gates+=("GUI protocol types: ${bootstrap}; bash scripts/ci/check-gui-protocol.sh")
+fi
+
+# --only filters the array; it never reorders it and never adds to it. The check runs before
+# the first gate, so a pattern naming no label is refused instead of coming back as a run that
+# selected nothing and printed a verdict about nothing.
+total_gates="${#gates[@]}"
+if [ "${#ONLY[@]}" -gt 0 ]; then
+  for pattern in "${ONLY[@]}"; do
+    hits=0
+    for gate in "${gates[@]}"; do
+      case "${gate%%: *}" in
+        "${pattern}" | *"${pattern}"*) hits=$((hits + 1)) ;;
+      esac
+    done
+    if [ "${hits}" -eq 0 ]; then
+      echo "--only ${pattern}: no gate label matches it." >&2
+      echo '           labels are listed by: scripts/verify-gates.sh --list' >&2
+      echo '           (cargo test and GUI protocol types are appended by --full)' >&2
+      exit 2
+    fi
+  done
+  selected=()
+  for gate in "${gates[@]}"; do
+    for pattern in "${ONLY[@]}"; do
+      case "${gate%%: *}" in
+        "${pattern}" | *"${pattern}"*)
+          selected+=("${gate}")
+          break
+          ;;
+      esac
+    done
+  done
+  gates=("${selected[@]}")
+  echo "== --only is in effect: ${#gates[@]} of ${total_gates} gates selected, this is not a sweep"
 fi
 
 # Preflight: the instrument before the measurements. Several gates read the repo
@@ -241,14 +296,25 @@ moved=""
 if [ "${fingerprint_ok}" != "yes" ]; then
   moved="(the tree could not be checksummed: a path appeared, disappeared or was renamed mid-run)"
 elif ! cmp -s "${tree_before}" "${tree_after}"; then
-  moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u)"
+  # `diff` exits 1 when the two files differ, which is precisely the case this branch exists
+  # for, and under `set -euo pipefail` that status propagates out of the assignment and ends
+  # the script. Measured on 2026-10-04: a gate that passed, a tree that moved mid-run, exit 1,
+  # and no verdict printed at all -- the report this function exists to give was the thing
+  # that never ran. The listing is what is wanted here, not the exit status.
+  moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u || true)"
 fi
 
 echo
 if [ -n "${failed}" ]; then
   echo "FAILED gates:${failed}"
+elif [ "${#gates[@]}" -ne "${total_gates}" ]; then
+  # The unfiltered wording is reserved for an unfiltered run.
+  echo "selected gates passed in ${IMAGE_TAG}"
 else
   echo "all gates passed in ${IMAGE_TAG}"
+fi
+if [ "${#gates[@]}" -ne "${total_gates}" ]; then
+  echo "  --only was in effect: ${#gates[@]} of ${total_gates} gates ran, so this is not a full sweep"
 fi
 
 if [ -n "${moved}" ]; then

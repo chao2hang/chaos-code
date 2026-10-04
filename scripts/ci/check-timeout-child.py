@@ -40,9 +40,11 @@ Nothing else in this repository sees the omission:
   child into a new session, so once the future is dropped there is no process group left that
   the parent's teardown could signal. One of the two unmarked sites was exactly that shape.
 
-The rule, kept as narrow as the evidence: where a `timeout(...)` call is handed a future that
-ends in `.output()` or `.status()` on a `tokio::process::Command`, that command has to be marked
-`kill_on_drop(true)` on the path from `Command::new` to the call. That path is read three ways:
+The rule, kept as narrow as the evidence: where a `timeout(budget, ..)` or `timeout_at(deadline,
+..)` call is handed a future that ends in `.output()` or `.status()` on a
+`tokio::process::Command` -- the two spellings abandon the same future, so both count -- that
+command has to be marked `kill_on_drop(true)` on the path from `Command::new` to the call. That
+path is read three ways:
 the method chain itself, a local binding plus the statements that touch it afterwards, and a
 builder or mutator function whose body is readable. Helper names are resolved the way Rust
 resolves them -- inside the calling crate first, then through an explicit `other_crate::` prefix,

@@ -707,6 +707,130 @@ current-thread 运行时里不等价；并且要把观测点放到运行时之�
 放在同一条命令里是对的（这次就是它发现的），但校验之前不允许出现需要靠引号嵌套或变量二次求值才能
 读懂的东西。同一条纪律也管还原之后的 mtime（见本篇另一节），两者都是「还原」的一半。
 
+## 2026-10-04：一条测试把 `GIT_BIN_PATH` 指向自己的壳脚本，等于换掉了整个测试二进制的 git
+
+容器全量（commit `8a52ff0a`，镜像 `chaos-verify:frozen`）里 `cargo test` 只红一条：
+`session::goal_classifier::evidence::tests::changed_files_complete_when_git_diff_exceeds_byte_cap`，
+报的是它自己的前提断言 `test premise: the diff must exceed the byte cap`；同一次跑里造出它的
+`session::goal_classifier::tests::baseline_capture_timeout_kills_the_git_it_abandoned` 反而是绿的。
+那条 timeout 测试把 `GIT_BIN_PATH`（`util/subprocess.rs:32` 的 `git_bin()` 认这个变量）指到一个
+壳脚本，脚本把自己的 pid 写进一个文件、再 `exec sleep 8`，用它来观察「被 timeout 放弃的那个 git
+有没有死」。
+
+机制是进程全局的。`EnvVarGuard` 只与**同样取 `ENV_LOCK` 的测试**互斥，`git_bin()` 却是裸读环境
+变量，所以 guard 活着的那一秒多里（观测被劫持时会拖到近六秒），同一个 `--lib` 二进制里任何一条
+测试的 git 调用都会 exec 到那个壳，而壳对任何参数都写下 pid 然后以 0 退出、stdout 为空。
+`git add`、`git commit`、`git rev-parse`、`git diff` 于是统统「成功」，`git diff <baseline>` 交回
+零字节，那条 evidence 测试的前提断言当场炸——它红的是夹具，不是产品。
+
+第二个缺陷更贵：老壳脚本**无条件**写那个 pid 文件。落在窗口里的受害调用会把 pid 文件改写成
+**它自己的** pid，于是 timeout 测试盯上的是别人的进程；别人的壳要睡满 8 秒，它必然报
+`the abandoned git shim (pid …) was still in state S 6.0s after the capture budget expired`。
+这句话与上一轮变异证明记进 CHANGELOG 的那句几乎逐字相同：同一条错误消息，一次是「缺陷被证明
+存在」，一次是「观测被劫持」，而红绿本身分不出这两种。
+
+实测都在同一个 `--lib` 二进制里，`--test-threads=8`，选中该测试加 `evidence` 模块共 47 条。
+老形状五轮全红（每轮 2~5 条失败；`changed_files_complete_when_git_diff_exceeds_byte_cap` 红 4/5，
+timeout 测试自己红 4/5）；把壳改成只对它瞄准的那次调用变慢、其余原样 `exec` 真 git 之后，同一
+命令 47 通过 / 0 失败 / 1.07s；老形状单跑（`--test-threads=1 --exact`）本来就通过（1.02s）。
+所以它不是一条稳定红的测试，而是一条命运由并发决定的测试——`cargo test` 不在宿主门禁里（见下一
+节），本机默认根本碰不到它。
+
+判据：**任何把可执行文件塞进进程全局环境变量的测试，注入物必须只对瞄准的那一次调用改变行为**
+——识别手段是参数，加上一个只在自家目录里存在的标记文件——其余调用原样 `exec` 真二进制，并且
+要有条断言真的用被测函数问一次「无关的仓库还看得见真 git 吗」（新测试里那条 `assert_eq!` 就是
+这个问题）；观测用的临时文件只能在被瞄准的那条分支里写。把新壳的识别条件改成 `if true`（等于
+恢复出厂形状），那条断言与同一条 evidence 测试立刻一起红。这三半缺任何一半，红绿的含义都不
+属于被测代码。
+
+## 2026-10-04：宿主门禁跳过的那四条腿，正是这一轮两个缺陷的藏身处
+
+同一个 commit 在容器里红了两条门禁：`cargo test`（上一条）与 `cargo clippy`（新测试里的
+`collapsible_if` 和 `while_let_loop` 各一处，`-D warnings` 把两者都判死）。而 push 之前本机跑过
+的 `scripts/verify-gates.sh` 打印的是 `all gates passed on the host (30 run, 4 skipped)`，被跳过
+的四条恰好是 `cargo check`、`cargo clippy`、`cargo test`、`GUI protocol types`。那句
+`all gates passed` 在结构上不可能看见这两个缺陷：它一条 clippy 没跑，一条测试没跑。
+
+`scripts/verify-gates.sh --with-build` 一直是把那四条补回来的开关（脚本头那条「the build gates are
+skipped unless --with-build」的注释写了理由，
+`CONTRIBUTING.md` 的「Fast local gate loop」一节也列了它）。缺的不是工具，是收工条件：改动落在
+Rust 代码里时，不带 `--with-build` 的那一轮不算验证过，它覆盖的是那 30 条不重建 workspace 的
+门禁。
+
+判据：引用一轮宿主门禁时把 `N run, M skipped` 原样写出来，不要写「全绿」，并对每一条 skip 问
+一遍「我这次改的东西有没有可能只有它看得见」。skip 是结构性的，不是运气；`all gates passed`
+这句话的主语是那 30 条，不是这 34 条。
+
+## 2026-10-04：宿主 runner 抄了容器的命令行，没抄容器的环境，于是 `--with-build` 自己红
+
+修完上一条之后带 `--with-build` 重跑宿主门禁：`34 gate(s) run, 0 skipped, 1 failed`，红的还是
+`cargo test`，还是 `error: 1 target failed: -p xai-grok-shell --lib`。但这次容器里那轮同类命令是
+绿的。直接在宿主上跑同一条命令、只多一个环境变量，结论就反过来了：
+
+    $ RUST_MIN_STACK=16777216 cargo test --workspace --locked --no-fail-fast
+    ...
+    386 个 test result 块，passed: 31594  failed: 0  ignored: 485，exit 0，858 s
+
+差的那一份在 `scripts/verify-in-docker.sh` 的 `run_args` 里：`--env RUST_MIN_STACK=16777216`，那
+一行自己的注释写明 `xai-grok-shell` 的 current-thread actor 测试会撑爆 harness 默认栈，并指向
+`docs/architecture/todo-open-item-classification.md` 与 CI run `36165469964`。`.github/workflows/ci.yml`
+的两条 test step 也各自设了它。也就是说三个执行环境里有三个都设了这个变量，只有宿主 runner 没设
+—— 它的设计是「只从 `gates=()` 里抄命令行，别的都不动」，而环境正是被这句「别的」漏掉的部分。
+
+现在 `scripts/verify-gates.sh` 自己导出它（调用者已设的值优先，与容器一致），并在表头把那行的实际
+取值打出来。`--self-test` 里加了三个用例：一个 fixture 门把 `${RUST_MIN_STACK}` 读回来断言它等于
+预期值，预期值不是抄来的，而是 `sed` 从 `verify-in-docker.sh` 的 `--env RUST_MIN_STACK=` 那一行现读
+（改掉任何一边都会红）；一个用例钉住「调用者显式设的值不被默认值覆盖」；一个用例钉住容器那一行还
+在。变异复核：把默认值改成 `8388608` → 恰好 `not ok a gate sees the stack size this runner exports`
+一条红，47 例里 46 passed / 1 FAILED，`cmp` 逐字节还原后 47/47。
+
+另一条变异顺带暴露了 `set -u` 的形状：把 `export` 那一行换成 no-op，`--self-test` 28 条全红而不是
+1 条，因为表头 `echo "... ${RUST_MIN_STACK}"` 在变量未设时直接让脚本以 1 死掉。这不是好信号——一次
+让整套夹具一起塌掉的变异不能定位任何一条断言。表头改成 `${RUST_MIN_STACK:-unset}`；写读取未设变量
+的 echo 时要当它是会致命的。
+
+**判据：镜像另一个 runner 时，被镜像的是「执行条件」整体（命令行、环境变量、工作目录），不是只有
+命令行；凡是从别处抄来的常量，self-test 必须回到被抄的那一处现读比对，不许在测试里留第二份副本。**
+后半句与同日「预算写在三个地方」那条同源：那次的红是台账跟自己的过期副本比，这次的差是宿主跑的是
+一条在任何其他 runner 里都不存在的命令。
+
+## 2026-10-04：同一个赋值形状在三个「会打印报告」的脚本里，把报告本身吃掉了
+
+上一条查到底之后，同一形状（`set -euo pipefail` 脚本里的裸赋值 `name="$(管道)"`）在别的会打印报告的
+脚本里被专门找了一遍，一共三处，共同点是**退出码早就对了，缺的只有字**，所以上游没有任何一处会抱怨。
+
+其一是容器 runner 自己：`moved="$(diff "${tree_before}" "${tree_after}" | sed -n … | sort -u)"`。
+`diff` 在两份文件不同时 exit 1，而「不同」正是这个分支存在的唯一理由，于是脚本死在赋值里，树中途被
+改动这一事实连同整轮判决一起消失。撞上它的是 `--only "cargo clippy"`：164 s 后 clippy 只打完
+`Finished dev profile … in 2m 40s`，没有 `PASS` 也没有 `FAILED gates:`。复现（第二个窗口在门跑到一半
+时改一个被跟踪文件）：修复前 `EXIT=1` 且判决零行；加 `|| true` 之后同样 exit 1，但
+`UNATTRIBUTABLE: the source tree changed while the gates ran.` 与变更路径都打出来了。判决本来就排在
+指纹比较之后，死在那里连这一轮的门禁结果都保不住。
+
+其二是 `scripts/ci/check-versions.sh`：`declared_names="$(grep -v '^$' <<<"$declared" | cut -d' ' -f1 | sort)"`。
+`grep` 没有行可打时 exit 1，而「没有行可打」正是 `optionalDependencies` 被清空时的状态——也就是第 5 项
+最该报告的那种破坏。删掉那个字段实测：exit 1，stdout 停在第一行信息行，stderr 零字节；上游第 4 项还
+静默通过了（那个循环按声明条目跑，条目数为零）。改法不是压状态而是去掉失败模式：换 `sed '/^$/d'`，
+它没有「一行都没匹配上」这个退出码。
+
+其三是 `scripts/install.sh` 的 `download_github`：`size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]')"`。
+`2>/dev/null` 和紧接下一行的 `[[ -n "$size" ]] || size=0` 都说明作者预期 `wc` 会失败，可这句赋值先让
+脚本死掉，那行兜底永远不可达，于是「换下一个镜像」这件事连同它的 `why:` 报告一起没了。对着 127.0.0.1
+上真实 HTTP 端点（4 KiB 正文）与一个总是 exit 1 的假 `wc` 实测：修复前两个候选都递上去却只打印一行
+`try:`；加 `|| true` 之后两个候选都试完，两条 `why: too small (0 bytes)` 都在。
+
+两份新夹具各自做了变异：`test-check-versions.py` 6 例里对着 `HEAD` 版门禁恰好红 2 例（空集那两条），
+`test-installer-download-size.py` 5 例里恰好红 1 例；两边其余用例都仍绿，说明它们钉的是别的路径，不是
+被这次修复顺带点亮的。`check-versions.sh` 的夹具把门禁与 npm 树拷进临时目录跑副本，仓库不动；
+`test-installer-download-size.py` 只桩掉候选列表（真的那份要解析 github.com），函数从 `install.sh`
+原样抽出。扫描这形状的那条 `git grep` 及其盲区（`[^"]*` 停在第一个引号，被修的两行正是这样躲过它的）
+记在 `docs/verification/shell-pipefail-silent-report-2026-10-04.log`，剩下九处逐条判过、都该停。
+
+**判据：一个会打印报告的门，它的报告与退出码同等重要；凡「非零是正常答案」的命令（`grep` 没匹配、
+`diff` 有差异、`wc` 量不到）都不许待在 `set -euo pipefail` 脚本的裸赋值里。要么换成没有这种状态的写法
+（`sed '/^$/d'`），要么显式吸收它（`|| true`）并让下一行的兜底真的可达。夹具必须断言 stderr 而不只是
+断言退出码，否则它抓不到「对了码、丢了字」这一整类缺陷。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI
