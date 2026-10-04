@@ -66,6 +66,28 @@ fn brief_policy() -> super::pending::PendingPolicy {
     }
 }
 
+/// Rounds a flow that needs more than one drain is allowed to take.
+///
+/// A round is one `drain_lsp_diagnostics` plus a breath, so this counts protocol
+/// exchanges, which is what these flows are actually measured in, rather than wall
+/// time, which the runner spends on whatever else it is holding. The shape was seen
+/// failing on CI's 4-core runner (run 37194865831, `no summary mentioning "a real
+/// problem" within the deadline`) and passing on the next commit.
+///
+/// Fifteen is not the observed need, it is the ceiling the passing runs used to sit
+/// under, kept as a count: the helper was instrumented to report the round it
+/// returned on and this module run five times, three plain and two pinned to four
+/// CPUs with `taskset -c 0-3`; the 35 completions peaked at round 2, and 15 is what
+/// the old `WAIT_TIMEOUT + WAIT_TIMEOUT` budget bought on an idle machine at ~525 ms
+/// a round. A starved runner now gets the same number of exchanges instead of a
+/// shorter list of them, because the drain blocks its whole internal wait only while
+/// a server still owes an answer, so the rounds that matter are the pre-emptable ones.
+///
+/// The other side comes free: a server that has stopped talking makes every drain
+/// return immediately, so a flow that is really broken now says so in a fraction of
+/// the time the deadline used to take.
+const DRAIN_ROUNDS: usize = 15;
+
 /// Drain until a summary mentioning `needle` appears, or give up.
 ///
 /// Several of these flows take more than one drain by design — a server that
@@ -73,8 +95,7 @@ fn brief_policy() -> super::pending::PendingPolicy {
 /// after the one that heard it — and which drain lands where is a race with the
 /// mock's own scheduling, not something worth pinning down.
 async fn drain_until_reported(mgr: &tokio::sync::Mutex<LspManager>, needle: &str) -> String {
-    let deadline = tokio::time::Instant::now() + WAIT_TIMEOUT + WAIT_TIMEOUT;
-    while tokio::time::Instant::now() < deadline {
+    for _ in 0..DRAIN_ROUNDS {
         if let Some(summary) = drain_lsp_diagnostics(mgr, std::time::Duration::from_millis(500))
             .await
             .filter(|summary| summary.text.contains(needle))
@@ -83,7 +104,7 @@ async fn drain_until_reported(mgr: &tokio::sync::Mutex<LspManager>, needle: &str
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    panic!("no summary mentioning {needle:?} within the deadline");
+    panic!("no summary mentioning {needle:?} in {DRAIN_ROUNDS} drains");
 }
 
 fn mock_server_config(script_path: &Path) -> LspServerConfig {

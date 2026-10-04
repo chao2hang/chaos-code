@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### 修复：两只测试把前提押在并不属于自己的资源上，一只押端口号，一只押八秒墙上时间
+
+上一批在跑变异批批时，一扇与本次改动无关的门被另一只正在抖的测试杀掉了，`docs/ci-test-debt.md`
+把那两个名字量清楚记在那里，这一批把它们修掉。
+
+第一只是 `crates/codegen/chaos-engine/src/remote/client.rs` 里的
+`a_transport_that_comes_up_later_is_waited_for`。它要证明「端口一开始不在，所以拨号必然重试过」，
+做法是 `bind("127.0.0.1:0")` 拿一个号、`drop` 掉、睡 250 ms 再让一个任务回来占同一个地址。可
+`drop` 就是把号交回内核的临时端口池，而
+Linux 那个池正是 `:0` 分配的那一段——实测 120 次 `bind(:0)` 全部落在 32768-60999，一次例外也没有。
+把这只测试的形状写成探针，旁边放八个线程按兄弟测试目标那样发号还号：四十轮里有三轮（另一次跑批是
+五轮）在那 250 ms 里被外来监听者占走，那就是第一次拨号直接成功、200 ms 那句断言当场落空的一轮。
+现在端口是一个常量 21787，低于每个系统的临时端口区间下界（Linux 从 32768 起，macOS 与 Windows 从
+49152 起），同一把 churn 下四十轮一次也没被占过；测试仍然先探一次，真被占用的机器会直接说
+`port 127.0.0.1:21787 has to be free to test anything`，而不是因为一个它看不见的理由通过。修完之后
+在同样的 churn 里连跑十五次全绿，同时那个旧形状的探针又丢了五轮。它仍然在测「等待」：把
+`retry_dial` 的窗口改成第一次失败就耗尽，测试立刻以 `still failing after 1 attempts` 红掉。
+
+第二只是 `drain_until_reported`（`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs`），
+只在 CI 的 4 核 runner 上红过一次（run 37194865831，下一个提交同任务又绿）。它的预算是
+`WAIT_TIMEOUT + WAIT_TIMEOUT` 共 8 秒墙上时间，等的却是一整串协议交换：python 解释器起来、握手、
+在 `didOpen` 上发诊断、再回答 `workspace/diagnostic/refresh`。现在预算是十五轮，一轮等于一次
+`drain_lsp_diagnostics` 加一口气，数的是交换而不是秒。十五不是拍出来的：把 helper 改成报出它返回在
+第几轮，模块跑五轮（三轮常规、两轮 `taskset -c 0-3`），三十五次完成最大落在第 2 轮，而十五正是旧
+预算在空闲机上按每轮约 525 ms 买得到的轮数——上限留在过去能通过的那些次停的地方，只是换了量纲。
+要说清楚的是：本地复现不出那次 CI 的红（整个 `lsp::` 钉在四核上加八个空转、单模块钉在一核上加四个
+空转，两种预算形状各自三轮全绿），所以不能断言新预算挡得住那一次；能断言的是它不再按别人也要用的
+秒数计，而且真的会结束——把 shipped 的 drain 改成把刚取到的 summary 咽掉，四条流程在 1.03 秒内全部
+以 `no summary mentioning "…" in 15 drains` 红掉，旧写法每条要空等满八秒。
+
+（2026-10-04；`crates/codegen/chaos-engine/src/remote/client.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs`、
+`docs/verification/flaky-port-and-clock-2026-10-04.log`、`docs/ci-test-debt.md`）
+
 ### 修复：差异面板那三个按钮按下去一个字节也不会动，因为产品路径里根本没有 DiffAdapter，帧还漏了 session
 
 `apps/chaos-ui` 的差异面板摆着 加载差异、接受变更、回滚变更 三个按钮。`e75ee6c7` 上 `git grep -n

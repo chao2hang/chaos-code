@@ -2281,21 +2281,41 @@ mod tests {
         );
     }
 
+    /// A port this test can promise stays its own for the whole run.
+    ///
+    /// The wait is only visible on a port that is closed when the dial starts and open
+    /// a moment later, and reserving one with `bind("127.0.0.1:0")` does not buy that:
+    /// the number goes back into the kernel's ephemeral pool the moment the probe is
+    /// dropped, and on Linux that pool is 32768..=60999, the very range every other
+    /// test's `bind(:0)` draws from. A sibling test can be handed the same number and
+    /// start listening on it, which makes the first dial succeed and takes the
+    /// premise away. It did, twice on 2026-10-04, and the panic named the missing
+    /// retry rather than the port someone else had taken.
+    ///
+    /// A named port below every system's ephemeral range cannot be handed out that
+    /// way: Linux allocates from 32768 up and macOS and Windows from 49152 up, and
+    /// nothing else in this repository binds 21787. The port is still probed below, so
+    /// a machine where something else does use it says so instead of passing for a
+    /// reason this test cannot see.
+    const LATE_TRANSPORT_PORT: u16 = 21787;
+
     /// The reason the wait exists: the tunnel or socket-activated server is not up
     /// yet, and the first attempt would otherwise be the only one.
     #[tokio::test]
     async fn a_transport_that_comes_up_later_is_waited_for() {
-        let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], LATE_TRANSPORT_PORT));
+        let probe = tokio::net::TcpListener::bind(addr)
             .await
-            .expect("a port to reserve");
-        let addr = probe.local_addr().expect("addr");
+            .unwrap_or_else(|error| panic!("port {addr} has to be free to test anything: {error}"));
         drop(probe);
 
         let appear = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(250)).await;
             let listener = tokio::net::TcpListener::bind(addr)
                 .await
-                .expect("the reserved port comes free");
+                .unwrap_or_else(|error| {
+                    panic!("only this test should be waiting for port {addr}: {error}")
+                });
             let (_stream, _peer) = listener.accept().await.expect("accept");
         });
 

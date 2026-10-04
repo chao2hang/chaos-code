@@ -1,0 +1,349 @@
+# Two tests that had bet on resources they do not own, 2026-10-04
+
+`docs/ci-test-debt.md` carried a section describing two tests whose premise is a resource
+they never held: one needed a port number to stay unallocated for 250 ms, which the kernel
+is free to hand to someone else the moment the test releases it, and one needed a busy
+4-core machine to finish eight seconds of protocol work inside eight seconds of wall time.
+Both had actually failed -- the port one twice on this machine while an unrelated mutation
+battery was running, the clock once on CI's runner and green again on the next commit. This
+fixes both, measures the hazard each one was sitting in rather than asserting it, and says
+plainly which of the two conditions could not be reproduced here.
+
+== 0. What each one looked like before
+
+The port one, in `crates/codegen/chaos-engine/src/remote/client.rs`, as it stood when this
+batch started (the reservation and the wait):
+
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port to reserve");
+    let addr = probe.local_addr().expect("addr");
+    drop(probe);
+
+    (… 2 lines elided here: a blank line and `let appear = tokio::spawn(async move {`)
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let listener = tokio::net::TcpListener::bind(addr).await.expect("the reserved port comes free");
+
+The dial that follows may take up to ten seconds (`DialRetry::new(Duration::from_secs(10))`),
+and the load-bearing assertion is the one after it:
+
+    assert!(
+        elapsed >= Duration::from_millis(200),
+        "at least one retry happened: the port was not there first time"
+    );
+
+Everything rests on the address being closed at the moment the dial starts. `drop(probe)`
+returns the number to the kernel, so it is closed only until something else is handed the
+same number and starts listening.
+
+The clock one, `crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs`:
+
+    let deadline = tokio::time::Instant::now() + WAIT_TIMEOUT + WAIT_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        if let Some(summary) = drain_lsp_diagnostics(mgr, std::time::Duration::from_millis(500))
+            .await
+            .filter(|summary| summary.text.contains(needle))
+        {
+            return summary.text;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("no summary mentioning {needle:?} within the deadline");
+
+`WAIT_TIMEOUT` is 4 s, so the budget is 8 s of wall time for a flow whose every round is
+one `drain_lsp_diagnostics` (which blocks at most its own 500 ms, and only while a server
+still owes an answer) plus a 25 ms breath.
+
+== 1. The port hazard is not hypothetical: it is the range `bind(:0)` allocates from
+
+`drop` gives the number back to the ephemeral pool, and on Linux that pool is exactly the
+range `bind(:0)` draws from, so a sibling test binary asking the kernel for a port can be
+given this one. The pool and the shape of the allocation, measured rather than quoted from
+memory:
+
+    $ python3 - <<'PY'
+    > import socket
+    > lo, hi = (int(x) for x in open("/proc/sys/net/ipv4/ip_local_port_range").read().split())
+    > outside = 0
+    > for _ in range(120):
+    >     s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close()
+    >     outside += not (lo <= p <= hi)
+    > print(f"ephemeral range {lo}-{hi}; bind(:0) draws outside it in {outside} of 120 rounds")
+    > PY
+
+    ephemeral range 32768-60999; bind(:0) draws outside it in 0 of 120 rounds
+
+Then the shape of the test itself, replayed while other processes do what sibling test
+binaries do -- hand out ephemeral ports and give them back -- and count how often a foreign
+listener is sitting on the reserved port at the moment the dial would start:
+
+    $ python3 - <<'PY'
+    > import socket, sys, threading, time
+    > LOW, HIGH = [int(x) for x in
+    >              open("/proc/sys/net/ipv4/ip_local_port_range").read().split()]
+    > NAMED = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+    > ROUNDS, CHURN = 40, 8
+    > found, lost, stop = [], [], threading.Event()
+    >
+    > def churn():
+    >     """Hand out and give back ephemeral ports, the way sibling test binaries do."""
+    >     while not stop.is_set():
+    >         socks = []
+    >         for _ in range(200):
+    >             s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1); socks.append(s)
+    >         time.sleep(0.05)
+    >         for s in socks:
+    >             s.close()
+    >
+    > def reserve(port):
+    >     """Reserve, drop, sleep 250 ms, then look: the shape of the old test."""
+    >     probe = socket.socket(); probe.bind(("127.0.0.1", port)); got = probe.getsockname()[1]
+    >     probe.close()
+    >     time.sleep(0.25)
+    >     peer = socket.socket(); peer.settimeout(0.2)
+    >     try:
+    >         peer.connect(("127.0.0.1", got)); found.append(got)
+    >     except OSError:
+    >         pass
+    >     peer.close()
+    >     back = socket.socket()
+    >     try:
+    >         back.bind(("127.0.0.1", got))
+    >     except OSError:
+    >         lost.append(got)
+    >     back.close()
+    >
+    > threads = [threading.Thread(target=churn) for _ in range(CHURN)]
+    > for t in threads:
+    >     t.start()
+    > for _ in range(ROUNDS):
+    >     reserve(NAMED)
+    > stop.set()
+    > for t in threads:
+    >     t.join()
+    > mode = f"named port {NAMED}" if NAMED else "bind(:0)"
+    > print(f"ephemeral range {LOW}-{HIGH}; mode {mode}; rounds {ROUNDS}")
+    > print(f"rounds where a foreign listener held the reserved port: {len(found)}")
+    > print(f"rounds where the reserved port could not be taken back: {len(lost)}")
+    > PY
+
+Run twice: once with no argument, which is the old shape (reserve with `:0`), and once as
+`python3 - 21787 <<'PY'`, which is the port this test now uses.
+
+    ephemeral range 32768-60999; mode bind(:0); rounds 40
+    rounds where a foreign listener held the reserved port: 3
+    rounds where the reserved port could not be taken back: 3
+
+    ephemeral range 32768-60999; mode named port 21787; rounds 40
+    rounds where a foreign listener held the reserved port: 0
+    rounds where the reserved port could not be taken back: 0
+
+Three rounds in forty is the old test failing: in those rounds the first dial succeeds,
+`elapsed` is a few hundred microseconds, and the 200 ms assertion fires. The 250 ms sleep is
+the whole exposure window, and this probe fills it with ordinary port churn. The same probe
+on 21787 saw nothing in forty rounds, because that number is outside the range the kernel
+allocates from: Linux starts at 32768, macOS and Windows at 49152.
+
+== 2. The fixed test, under the same churn
+
+The test now names its port (constant `LATE_TRANSPORT_PORT = 21787` in
+`crates/codegen/chaos-engine/src/remote/client.rs`, with the reason in its doc comment) and
+probes it first, so a machine where something else really does use that port fails with
+`port 127.0.0.1:21787 has to be free to test anything` instead of passing for a reason the
+test cannot see. That command line was then run fifteen times while the churn above was
+running, with the old-shape probe running once alongside the whole set:
+
+    $ cargo test -q -p chaos-engine --lib remote::client::tests::a_transport_that_comes_up_later_is_waited_for
+
+    (… the line above, run fifteen times; every run printed the line below)
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.30s
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.30s
+
+    (… 13 lines elided here: thirteen more runs, 1 passed and 0 failed each, all ~0.30 s)
+
+    concurrent probe (old shape, bind :0), running alongside those fifteen runs:
+    ephemeral range 32768-60999; mode bind(:0); rounds 40
+    rounds where a foreign listener held the reserved port: 5
+    rounds where the reserved port could not be taken back: 5
+    fixed test under churn: 15 passed, 0 failed
+
+Those two halves are one wall-clock interval: while the old shape was losing 5 of its 40
+reserved ports to foreign listeners, the named-port test went 15 for 15.
+
+== 3. The test still tests the wait
+
+A test that waits for something can go green by not waiting at all, so the shipped retry
+window in `retry_dial` was told that it is already spent on the first failure, which gives
+the dial exactly one attempt. The patch is one expression inside the `Err(error @
+RemoteError::Io { .. })` arm, applied once, and the driver aborts before touching the source
+if the baseline is not green:
+
+    - let Some(wait) = retry.delay(failures, started.elapsed()) else {
+    + let Some(wait) = retry.delay(failures, started.elapsed() + Duration::from_secs(3600)) else {
+
+The same command line either way, first unmutated then mutated:
+
+    $ cargo test -q -p chaos-engine --lib remote::client::tests::a_transport_that_comes_up_later_is_waited_for
+
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.30s
+
+(with the mutant compiled in:)
+
+    thread 'remote::client::tests::a_transport_that_comes_up_later_is_waited_for' (3900427) panicked at crates/codegen/chaos-engine/src/remote/client.rs:2327:18:
+    the dial should keep trying until the port is there: Io { context: "connect 127.0.0.1:21787 (still failing after 1 attempts in 137.602µs)", reason: "Connection refused (os error 111)" }
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.00s
+
+KILLED, and `restore byte-identical: True` from the `cmp` the driver runs on every path. The
+panic is the test's own `.expect`, and the attempt count in the error text is what the
+mutant changed, so the flow is genuinely going through `retry_dial`'s window check.
+
+== 4. The clock one: what 8 seconds of wall time was buying
+
+The one observed CI failure, `rust check / clippy / test` run 37194865831, and green on the
+next commit (`6826fce0`, same job):
+
+    thread 'implementations::lsp::tests::a_refresh_we_cannot_act_on_does_not_discard_what_we_know'
+    panicked at crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs:86:5:
+    no summary mentioning "a real problem" within the deadline
+
+The thing being waited for is a python subprocess: it has to start the interpreter, finish
+the LSP handshake, publish diagnostics on `didOpen`, and answer `workspace/diagnostic/
+refresh`. None of that is slow by design; all of it is CPU the runner is also spending on
+the other test binaries of the workspace.
+
+Two ways of reproducing that on this 28-core machine were tried, both against the old
+wall-clock helper and against the new one, and neither reproduced the failure. The labels
+`[wall-clock]` and `[rounds]` below are the two shapes of `drain_until_reported`, the second
+being the one this batch commits; the whole module was pinned to four CPUs with
+`taskset -c 0-3` and `--test-threads=4`, with eight busy loops pinned to the same four CPUs:
+
+    [rounds] round 1: exit=0 seconds=14.9
+        test result: ok. 130 passed; 0 failed; 2 ignored; 0 measured; 3083 filtered out; finished in 14.89s
+    [wall-clock] round 1: exit=0 seconds=14.9
+        test result: ok. 130 passed; 0 failed; 2 ignored; 0 measured; 3083 filtered out; finished in 14.86s
+
+    (… 4 lines elided here: rounds 2 and 3 of both shapes, all exit=0, 130 passed, 0 failed)
+
+    == rounds: 3/3 rounds green, failures: []
+    == wall-clock: 3/3 rounds green, failures: []
+
+and harder, with the single LSP test module pinned to one CPU with four busy loops on it:
+
+    [wall-clock] round 1: exit=0 seconds=15.6
+        test result: ok. 53 passed; 0 failed; 2 ignored; 0 measured; 3160 filtered out; finished in 15.58s
+
+    (… 4 lines elided here: rounds 2 and 3 of both shapes, all exit=0, 53 passed, 0 failed)
+
+    == wall-clock: 3/3 rounds green, failing rounds: []
+    == rounds: 3/3 rounds green, failing rounds: []
+
+So the mechanism behind the CI red stays unconfirmed here. What the runs do show is the
+irrelevance of the quantity the old helper was written against: both budget shapes took
+~15 s per module round under four-way starvation and stayed green, so the failure was not
+"the machine could not do the work in 8 s" in any shape this host can produce.
+
+== 5. The clock one: the ceiling, from the flows' own behaviour
+
+Since the machine's slowness could not be measured, the flows' own demand was. The helper was
+temporarily told to say which round it returned on -- `for _ in 0..DRAIN_ROUNDS {` became
+`for round in 1..=DRAIN_ROUNDS {`, with an `eprintln!` of `round` before the return -- and the
+module was run five times, three plain and two pinned to four CPUs with `taskset -c 0-3`, each
+run being the test binary cargo had just built under the filter
+`implementations::lsp::tests::` with `--nocapture`:
+
+    [plain 1] exit=0
+        test result: ok. 53 passed; 0 failed; 2 ignored; 0 measured; 3160 filtered out; finished in 10.03s
+        drains used: 1 for a real problem
+        drains used: 1 for the check that only the push channel runs
+        drains used: 1 for the check that only the push channel runs
+        drains used: 1 for the check that only the push channel runs
+        drains used: 1 for the check that only the push channel runs
+        drains used: 2 for refresh answered=
+        drains used: 2 for found once the solution was loaded
+
+    (… 28 lines elided here: plain rounds 2 and 3 and pinned round 1, same 7 lines each)
+
+    [pinned-4-cpu 2] exit=0
+        test result: ok. 53 passed; 0 failed; 2 ignored; 0 measured; 3160 filtered out; finished in 13.75s
+        drains used: 2 for refresh answered=
+        drains used: 1 for a real problem
+        drains used: 1 for the check that only the push channel runs
+        drains used: 1 for the check that only the push channel runs
+        drains used: 1 for the check that only the push channel runs
+        drains used: 1 for the check that only the push channel runs
+        drains used: 2 for found once the solution was loaded
+    restore byte-identical: cmp exit=0
+
+Thirty-five completions across the five rounds, the largest at round 2. The committed budget
+is `DRAIN_ROUNDS: usize = 15`, more than seven times that, and also the number of rounds the
+old 8 s budget bought on an idle machine at ~525 ms a round -- so the ceiling sits where the
+passing runs left it, in a unit the runner cannot spend on something else. The doc comment on
+the constant carries the measurement; the instrumented source was restored with a plain `cp`
+and confirmed with `cmp` (last line above) before anything else was run.
+
+== 6. The clock one: the budget is live, and it fails fast
+
+The shipped drain was told to swallow the summary it had just taken
+(`take_answered_diagnostics` result dropped, `return None`), so no flow can ever see its
+needle. Baseline first, and the four flows that call the helper:
+
+    [baseline (unmutated)] exit=0 elapsed=0.7s
+        test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3211 filtered out; finished in 0.67s
+    [mutated: drain swallows the summary it took] exit=101 elapsed=1.1s
+        test implementations::lsp::tests::a_refresh_we_cannot_act_on_does_not_discard_what_we_know ... FAILED
+        test implementations::lsp::tests::a_server_that_publishes_is_not_second_guessed_with_a_pull ... FAILED
+        test implementations::lsp::tests::a_server_that_finishes_loading_late_still_gets_its_diagnostics_read ... FAILED
+        test implementations::lsp::tests::a_diagnostics_refresh_request_is_answered_and_acted_on ... FAILED
+        test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 3211 filtered out; finished in 1.03s
+    failing flows: 4/4
+    panics naming the round budget: 4
+        no summary mentioning "a real problem" in 15 drains
+        no summary mentioning "found once the solution was loaded" in 15 drains
+        no summary mentioning "refresh answered=" in 15 drains
+        no summary mentioning "the check that only the push channel runs" in 15 drains
+    KILLED
+    restore byte-identical: cmp exit=0
+
+Two things in that block are worth reading separately. All four flows failing says the
+flows are genuinely driven through the shipped `drain_lsp_diagnostics`; and 1.03 s for four
+flows that each spent their whole 15-round budget says the rounds are cheap when nothing is
+coming, which is the case the old shape would have spent 8 s of wall time on per flow.
+
+== 7. Reproduce it
+
+The port one, in this checkout:
+
+    $ cargo test -q -p chaos-engine --lib remote::client::tests::a_transport_that_comes_up_later_is_waited_for
+
+To watch the old shape lose ports while the fixed test passes: run the probe from section 1 in
+one shell (it starts its own eight churn threads; a second shell running just that `churn()`
+loop over and over is closer to a real CI moment), and re-run the `cargo test` line above in a
+third. The argument decides which port the probe reserves -- unset is the old shape, `21787` is
+the one now in the test.
+
+The clock one:
+
+    $ cargo test -q -p xai-grok-tools --lib implementations::lsp::tests::
+
+The two mutation drivers are the patches quoted in sections 3 and 6: back the file up,
+replace the quoted anchor once, run the named tests, then `cp` the backup back and confirm
+with `cmp`. Both drivers check the baseline is green before applying anything and restore on
+the failure paths too.
+
+== 8. What is still not known
+
+The CI condition that made `a_refresh_we_cannot_act_on_does_not_discard_what_we_know` red
+was not reproduced on this machine: four-way and single-CPU starvation both kept it green,
+so this batch cannot say the new budget would have prevented that specific red. What it can
+say is that the old helper's budget was denominated in something the runner is free to spend
+elsewhere, that the new one is denominated in the exchanges the flows actually make, and that
+the new one is measured to terminate: four flows spending their entire 15-round budgets took
+1.03 s running concurrently (section 6), where the old deadline would have waited out eight
+seconds per flow.
+
+The residual risk of counting rounds instead of seconds is the opposite one, and it is
+bounded: a flow that ever needs more than 15 rounds will now fail with a message naming the
+count and the needle -- as it did in section 6 -- rather than silently waiting longer. That
+failure is legible in a transcript in a way `within the deadline` was not.
