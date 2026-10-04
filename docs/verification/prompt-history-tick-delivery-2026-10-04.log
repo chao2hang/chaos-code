@@ -1,0 +1,258 @@
+# Prompt history tick test: the 60 s CI timeout did not need a slow daemon (2026-10-04)
+
+Two CI runs on 2026-10-04 failed one test each, the same test, on commits that changed
+nothing near it. The comment inside the test blamed the machine ("CI runners can starve the
+history-search daemon thread under concurrent workspace tests") and its remedy was a 60
+second deadline. The deadline is the wrong remedy, because the interleaving that produces
+the failure needs no starvation: it is the daemon answering *quickly*.
+
+== 0. What the two runs said
+
+    $ gh run list -L 8 --json databaseId,headSha,conclusion \
+          --jq '.[]|"\(.databaseId) \(.headSha[0:8]) \(.conclusion)"'
+
+    37194865831 c8104865
+    37184965394 36d0809e failure
+    37183474313 0faeee1d failure
+
+Both failures are the same test in the same job, and every other job of both runs was green.
+The `rust` job of run 37184965394:
+
+    test app::app_view::tests::needs_animation_gates_prompt_history_tick_delivery
+    has been running for over 60 seconds
+    test app::app_view::tests::needs_animation_gates_prompt_history_tick_delivery ... FAILED
+
+    ---- app::app_view::tests::needs_animation_gates_prompt_history_tick_delivery stdout ----
+
+    thread 'app::app_view::tests::needs_animation_gates_prompt_history_tick_delivery'
+    (79492) panicked at crates/codegen/xai-grok-pager/src/app/app_view_tests.rs:669:5:
+    tick() must poll the history daemon and deliver results
+
+    test result: FAILED. 9199 passed; 1 failed; 25 ignored; 0 measured; 0 filtered out;
+    finished in 62.16s
+
+Run 37183474313 is the same panic at the same line, `finished in 62.93s`. Nothing else in
+either run failed; the pager lib totals (9199 passed / 1 failed / 25 ignored) are identical.
+
+== 1. The test asked for two things to happen on the same tick
+
+The loop it failed in was:
+
+    while std::time::Instant::now() < deadline {
+        if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
+            delivered = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+`app.tick()` does not mean "the overlay is open". `needs_animation()` is the predicate that
+means that -- it is `tick_demand() != TickDemand::None`, and its list of reasons does include
+`agent.prompt.history_search.is_active()`
+(`crates/codegen/xai-grok-pager/src/app/app_view.rs:5814`). `tick()` is something else: it
+accumulates `needs_redraw` from every state change it can see
+and returns that, and the event loop requests a draw on the animation arm only when
+`tick()` says yes (`crates/codegen/xai-grok-pager/src/app/event_loop.rs:2787`). So `tick()`
+returning `true` is a *change signal*, and the only history-related source of one is:
+
+    needs_redraw |= agent.prompt.history_search.poll();
+
+(`crates/codegen/xai-grok-pager/src/app/app_view.rs:5521`, the only production call site of
+`HistorySearchState::poll`). `poll()` reports a change exactly once per generation:
+
+    if snap.generation == self.last_gen {
+        return false;
+    }
+    self.last_gen = snap.generation;
+
+(`crates/codegen/xai-grok-pager/src/views/history_search.rs:490`).
+
+The other half is `activate()`. `activate_inner` pushes the history to the daemon and then
+reads the shared snapshot for itself, adopting whatever generation it finds as `last_gen`:
+
+    self.refresh_items(history);
+    // Eagerly grab the initial snapshot
+    if let Some(daemon) = &self.daemon {
+        self.snapshot = daemon.shared.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    }
+    self.last_gen = self.snapshot.generation;
+
+(`crates/codegen/xai-grok-pager/src/views/history_search.rs:431`, abbreviated; the
+publisher writes under the same mutex at `:200`,
+`*out.lock().unwrap() = Snapshot { items, generation }`).
+
+Put together: if the daemon publishes generation N *after* `refresh_items` sent the items but
+*before* the eager grab read them, then `activate()` returns with the two results already in
+`self.snapshot` and `last_gen` already equal to N. From then on `poll()` finds no change on
+any tick, so `tick()` reports no change, and the conjunction above can never be satisfied --
+not after 60 seconds, not ever. The count is already right; the redraw flag is what never
+arrives. The failure is a test asserting a delivery that had already happened.
+
+== 2. Negative result: a pause after activate() does not reproduce it
+
+The obvious first probe was to slow the *test* down, and it came back green. With
+`std::thread::sleep(Duration::from_millis(400))` inserted between `activate()` and the loop,
+the committed body still passed, in 0.41 s. That is not a contradiction of section 1: sleeping
+after `activate()` cannot move the publish into a window that `activate()` has already left.
+The publish lands after the grab, the next `tick()` picks up the new generation, and both
+halves of the conjunction are true on that iteration.
+
+== 3. The interleaving that does reproduce it, forced
+
+The window is between the `send` and the read, so the pause goes there, inside the product
+(`views/history_search.rs`, after `self.send(Msg::SetItems(items));` in `refresh_items`), for
+one measurement only. The deadline was shortened to 3 s so the experiment would not burn a
+minute per round; with the shipped 60 s deadline the same run fails at 60 s, which is what the
+two CI runs show.
+
+    === E1: committed body, daemon publishes inside the eager grab ===
+    [e1-old] rc=101 -> FAIL
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9224 filtered out;
+        finished in 3.21s
+        tick() must poll the history daemon and deliver results
+
+Same injected pause, rewritten body:
+
+    === E2: fixed body, same ordering ===
+    [e2-fixed] rc=0 -> PASS
+        test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9224 filtered out;
+        finished in 0.21s
+
+    restore crates/codegen/xai-grok-pager/src/app/app_view_tests.rs: byte-identical
+    restore crates/codegen/xai-grok-pager/src/views/history_search.rs: byte-identical
+
+== 4. What the rewritten test asserts
+
+Delivery and the redraw it reports are now observed separately, and the strong claim moved to
+a query that cannot have been polled before it was sent:
+
+    let before = app.agents[&id].prompt.history_search.result_count();
+    ... update_query("second") ...
+    while std::time::Instant::now() < deadline {
+        let reported_redraw = app.tick();
+        let count = app.agents[&id].prompt.history_search.result_count();
+        if count != before {
+            delivery_reported_redraw = reported_redraw;
+        }
+        narrowed = count == 1;
+        if narrowed { break; }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+`result_count()` only moves inside `poll()`, and in production `poll()` only runs inside
+`tick()`, so "the count changed" is a delivery by `tick()` by construction, and it is captured
+on the same iteration that observed it. The shipped code is unchanged by this batch: nothing
+in it was wrong. `activate()` is meant to grab a snapshot -- the comment on `refresh_items`
+says "activate re-sends the items it is given, so nothing is lost" -- and the event that opens
+the overlay draws through the input arm (`event_loop.rs:2707`, `result.needs_draw`), so a
+result set that arrived during activation reaches the screen without owing a change flag to
+any later tick.
+
+== 5. Non-vacuity: two mutants of the shipped tick()
+
+Both mutants are injected into `app_view.rs`, run, and reverted with plain `cp` followed by
+`cmp`. The baseline and the restore are the same bytes.
+
+M1 deletes the poll line from `tick()`:
+
+    [m1-no-poll] rc=101
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9224 filtered out;
+        finished in 60.01s
+        the overlay must have the activated results, from activate() or from a later tick
+
+This also settles the direction of section 1's mechanism on an ordinary machine: with no poll
+at all, the count never reaches 2, so in a normal (unmutated) run the results do arrive
+through a `tick()`-driven poll rather than through the eager grab.
+
+M2 keeps the call and throws its result away, so state still updates and nothing reports it:
+
+    [m2] rc=101
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9224 filtered out;
+        finished in 0.01s
+        thread 'app::app_view::tests::needs_animation_gates_prompt_history_tick_delivery'
+        (2955471) panicked at crates/codegen/xai-grok-pager/src/app/app_view_tests.rs:707:5:
+        the tick that delivers new results has to report a redraw, or the overlay never repaints
+
+    restore app_view.rs: byte-identical
+
+M2 is the mutant that matters for this batch: it delivers every result and reports none of
+them, and only the second assertion sees it. M1 is caught by the first one, so both halves of
+the rewritten test are load-bearing.
+
+Note what M1 also rules out: with no poll in `tick()` at all, the count never reaches 2 within
+60 s, so the eager grab is not usually what satisfies the first loop. The eager grab can
+satisfy it (section 3's forced interleaving), and that is precisely why the first loop may not
+insist on a redraw; on an unloaded machine it is `tick()` that delivers, and the first loop
+therefore still exercises the shipped path.
+
+== 6. Stability and formatting
+
+The rewritten test five times in a row:
+
+    [repeat-1] rc=0
+        test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9224 filtered out;
+        finished in 0.01s
+    (… 3 runs elided here, all rc=0 and the same line)
+    [repeat-5] rc=0
+        test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9224 filtered out;
+        finished in 0.01s
+
+    $ cargo fmt -p xai-grok-pager -- --check
+
+Both formatter checks are silent on the tree as committed:
+
+    $ cargo fmt -p xai-grok-pager -- --check
+
+    $ cargo fmt --all -- --check
+
+(no output from either; `fmt rc=0`)
+
+The whole `app::app_view` module, and then the pager lib, against a freshly built tree:
+
+    $ touch crates/codegen/xai-grok-pager/src/app/app_view.rs \
+          crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+    $ cargo test -p xai-grok-pager --lib app::app_view
+    test result: ok. 260 passed; 0 failed; 0 ignored; 0 measured; 8965 filtered out;
+    finished in 0.09s
+
+    $ cargo test -p xai-grok-pager --lib
+    test result: ok. 9200 passed; 0 failed; 25 ignored; 0 measured; 0 filtered out;
+    finished in 7.05s
+
+The `touch` is not decoration. The sweep run right after the M2 restore reported
+`259 passed; 1 failed` with M2's own message at line 707, which looked like a second failure
+introduced by the fix. It was the mutant binary: the restore copies with `cp -p`, so the
+restored file carries the saved copy's mtime, which is older than the artifact cargo had just
+built for the mutant, and cargo calls that fresh. Any cargo result after a restore is a
+measurement of the previous source unless the mtime is moved. The numbers above are from a run
+where `cmp` had confirmed the bytes and `touch` had confirmed the build.
+
+Neither side of the race is this fork's. `git log -S "self.last_gen =
+self.snapshot.generation"` on `views/history_search.rs` lands on `c68e39f6` (the initial
+open-source publish), and `git log -S "needs_animation_gates_prompt_history_tick_delivery"`
+on the test file lands on `e5fd4816`. The two have been able to lose this race since the
+first commit; what changed is
+that CI now runs the pager lib often enough to notice.
+
+== 7. Reproduce it
+
+`c8104865` is the last commit whose `app_view_tests.rs` still holds the pre-fix body, so the
+recipe names that commit rather than a moving `HEAD^`.
+
+    $ cp crates/codegen/xai-grok-pager/src/views/history_search.rs /var/tmp/keep-history.rs
+    $ cp crates/codegen/xai-grok-pager/src/app/app_view_tests.rs /var/tmp/keep-tests.rs
+    $ git show "c8104865:crates/codegen/xai-grok-pager/src/app/app_view_tests.rs" \
+          > crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+    $ sed -i '/self\.send(Msg::SetItems(items));/a\        std::thread::sleep(std::time::Duration::from_millis(200));' \
+          crates/codegen/xai-grok-pager/src/views/history_search.rs
+    $ cargo test -p xai-grok-pager --lib needs_animation_gates_prompt_history_tick_delivery
+    $ cp /var/tmp/keep-history.rs crates/codegen/xai-grok-pager/src/views/history_search.rs
+    $ cp /var/tmp/keep-tests.rs crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+    $ cmp /var/tmp/keep-history.rs crates/codegen/xai-grok-pager/src/views/history_search.rs
+    $ cmp /var/tmp/keep-tests.rs crates/codegen/xai-grok-pager/src/app/app_view_tests.rs
+
+The `cargo test` line fails with `tick() must poll the history daemon and deliver results`
+after roughly 60 seconds, which is the CI failure; the two `cmp` lines print nothing. Without
+the injected pause the pre-fix body passes, so the recipe above is a reproduction of the
+interleaving, not of a machine under load.

@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### 修复：分页器历史搜索那条「CI 偶发」，等的是一个跑得快的守护线程永远不会发出的信号
+
+2026-10-04 两次 CI 各红一条测试，两次是同一条，而红的两个提交都没碰过它附近：`37183474313`
+（`0faeee1d`）与 `37184965394`（`36d0809e`），两次都是 `9199 passed; 1 failed; 25 ignored`、
+`finished in 62 s`，其余 job 全绿。测试里那行注释把原因写成「CI 机器把历史搜索的守护线程饿死了」，
+药方是把等待放到 60 秒。药方与病症无关：这个交错不需要机器慢，它要的是守护线程**快**。
+
+`app.tick()` 返回的不是「面板还开着」——那是 `needs_animation()`，它的条件里就有
+`history_search.is_active()`；`tick()` 累加的是每一项状态变化，并把累加结果当作答案返回，事件循环的
+动画分支只在它点头时才请求重绘（`app/event_loop.rs:2787`）。`HistorySearchState::poll()` 每个
+generation 只点一次头：`snap.generation == self.last_gen` 就返回 false。而 `activate()` 把条目发给
+守护线程之后，会自己去读一次共享快照，并把读到的 generation 记成 `last_gen`
+（`views/history_search.rs:431`）。于是「同一次 tick 既报重绘、结果数又已经等于 2」这个合取只在一种
+交错下成立：守护线程恰好在 send 之后、那次读之前发布。抢跑一次，结果当场就在手上，`poll()` 从此再无
+话可说，`tick()` 从此不再点头——测试等的是一次永远不会发生的投递，而它要的东西早就到了。
+
+改的是断言的形状：结果数单独等；「报重绘」交给一条**激活之后**才发出的查询去验——`update_query`
+送出 `"second"` 之后，`result_count()` 只可能在 `tick()` 驱动的那次 `poll()` 里变动。产品代码一个字未改，
+因为它本来就没坏：`activate()` 自带快照是刻意的，而打开面板的那个事件自己会经输入分支重绘
+（`event_loop.rs:2707`）。**非空洞性**：在 `refresh_items` 的 send 之后强行插 200 ms 停顿来制造那个
+交错，改前的正文 3.21 s 红在 CI 原话上、改后的正文在同一交错下 0.21 s 绿；对出货的 `tick()` 打两个
+变异——删掉那行 `poll()`（60.01 s 红在第一条断言，顺带证明平时确实是 `tick()` 在投递而不是
+`activate()` 的快照）、保留调用但丢掉返回值（0.01 s 红在第二条断言），两条断言各自接住一个。改后连跑
+5 轮各 0.01 s，`app::app_view` 模块 260 全绿，pager lib `9200 passed; 0 failed`，
+`cargo fmt --all -- --check` 无输出。竞态的两边都不是本分支写的：eager grab 随初始开源发布 `c68e39f6`
+进来，这条测试随 `e5fd4816` 进来。**顺带记下一个会造出假结论的坑**：变异还原用的是 `cp -p`，还原后
+文件的 mtime 比刚为变异构建好的产物更旧，cargo 认它新鲜，紧随的那轮因此报的是变异二进制的结果
+（`259 passed; 1 failed`，红在变异那条消息上，看着像修复自己引入了第二次失败）——还原之后必须先
+`touch` 再跑，本文件的数字都出自 `cmp` 认过字节、`touch` 强制重建之后的运行。
+
+（2026-10-04；`crates/codegen/xai-grok-pager/src/app/app_view_tests.rs`、
+`docs/verification/prompt-history-tick-delivery-2026-10-04.log`、`docs/ci-test-debt.md`）
+
 ### 门禁：四个验收实验室没有任何 workflow 提到它们，最短的一次也已 48 个提交无人运行
 
 `scripts/*-in-docker.sh` 有六个文件，每一个都是一次真机验收：真镜像、真容器、真 nginx、真 TLS。到

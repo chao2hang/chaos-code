@@ -659,16 +659,54 @@ fn needs_animation_gates_prompt_history_tick_delivery() {
     let mut delivered = false;
     // CI runners can starve the history-search daemon thread under concurrent workspace tests.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    // `activate()` takes a snapshot of its own right after sending the items, so a daemon that
+    // answers inside that window leaves the results in hand and `last_gen` already current, which
+    // makes `poll()` report no change on any later tick. Demanding the redraw and the count in one
+    // iteration therefore loses whenever the daemon is quick: a 200 ms pause forced into
+    // `refresh_items` reproduced the 60 s CI timeout exactly that way. The count is checked on its
+    // own here, and the query below is what pins delivery to `tick()`.
     while std::time::Instant::now() < deadline {
-        if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
-            delivered = true;
+        app.tick();
+        delivered = app.agents[&id].prompt.history_search.result_count() == 2;
+        if delivered {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(
         delivered,
-        "tick() must poll the history daemon and deliver results"
+        "the overlay must have the activated results, from activate() or from a later tick"
+    );
+    // A query sent only after activation can reach the overlay through no path other than the poll
+    // that `tick()` drives, so its count changing is the delivery this test is really about.
+    let before = app.agents[&id].prompt.history_search.result_count();
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .prompt
+        .history_search
+        .update_query("second");
+    let mut narrowed = false;
+    let mut delivery_reported_redraw = false;
+    while std::time::Instant::now() < deadline {
+        let reported_redraw = app.tick();
+        let count = app.agents[&id].prompt.history_search.result_count();
+        if count != before {
+            delivery_reported_redraw = reported_redraw;
+        }
+        narrowed = count == 1;
+        if narrowed {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        narrowed,
+        "tick() must deliver the results of a query sent after activation"
+    );
+    assert!(
+        delivery_reported_redraw,
+        "the tick that delivers new results has to report a redraw, or the overlay never repaints"
     );
     app.agents
         .get_mut(&id)
