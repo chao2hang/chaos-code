@@ -1,0 +1,402 @@
+# The container that leaves root-owned files in a developer's checkout (2026-10-04)
+
+`scripts/verify-in-docker.sh` runs its gates in a container with the working tree
+bind-mounted at `/src`. The container runs as root. Anything it writes through that mount
+therefore belongs to root *inside the developer's checkout*, which is a different thing from
+writing into its own filesystem: the developer cannot delete it, and the next person's
+`git clean -fdx` does not remove what git can see either.
+
+Two places this happened, one fix in two files, and `scripts/ci/check-container-hygiene.py`
+to keep it from coming back. Output below is quoted verbatim, including its own punctuation.
+
+== 1. What one gate run left behind, as shipped
+
+The entry point at `11cdd8a2` passed `RUST_MIN_STACK` and the git-ownership variables to the
+container and nothing that stops a Python cache. Sixteen of the 29 test modules under
+`scripts/ci` load their gate module with `importlib.util.spec_from_file_location` instead of
+running it as a subprocess, and a load through the mount writes a cache. The other thirteen
+shell the gate out and write nothing. With `scripts/ci/__pycache__` cleared of container-owned
+files first:
+
+$ echo "root-owned before run: $(find . -path ./target -prune -o -user root -print | wc -l)"
+    root-owned before run: 0
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "docs path references"
+    check-doc-path-refs: 275 Markdown documents scanned against 4011 tracked paths, 48 dangling mention(s), 26 recorded; every link resolves and every dangling mention is recorded and live
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 33 gates selected, this is not a sweep
+$ find . -path ./target -prune -o -user root -print
+    ./scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc
+$ echo "root-owned after run: $(find . -path ./target -prune -o -user root -print | wc -l)"
+    root-owned after run: 1
+
+The `--full` run that morning left two such files, `check-timeout-child.cpython-311.pyc` and
+`test-installer-asset-names.cpython-311.pyc`, timestamps 12:16 and 12:24. They are `311`
+caches because the container is Debian bookworm; the host runs 3.10, so nothing on the host
+ever reads them and nothing on the host ever rewrites them.
+
+This one cannot be re-run at the head of this branch, because the fix is in place. Section 2
+has a command that reproduces the same behaviour on demand.
+
+== 2. Why a cache directory is the damage, and a cache file mostly is not
+
+A file the container writes inside a directory the developer created can still be unlinked,
+because unlinking needs write permission on the directory:
+
+$ rm scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc; echo "exit=$?"
+    exit=0
+
+What cannot be undone is the directory the container *creates*. Where no cache directory
+exists yet, the container makes one, owned by root, and from then on its files cannot be
+removed by the owner of the tree:
+
+$ d="$(mktemp -d)" && printf 'X = 1\n' > "$d/probe_mod.py"
+$ docker run --rm -e PYTHONDONTWRITEBYTECODE=0 -v "$d:/src" --workdir /src chaos-verify:frozen python3 -c 'import probe_mod; print("imported", probe_mod.X)'
+    imported 1
+$ ls -ld "$d" "$d/__pycache__" "$d/__pycache__"/*.pyc
+    drwx------ 3 chaos chaos 4096 Oct  4 13:29 /tmp/tmp.VzDGjtnoXB
+    drwxr-xr-x 2 root  root  4096 Oct  4 13:29 /tmp/tmp.VzDGjtnoXB/__pycache__
+    -rw-r----- 1 root  root   134 Oct  4 13:29 /tmp/tmp.VzDGjtnoXB/__pycache__/probe_mod.cpython-311.pyc
+$ rm -rf "$d"; echo "exit=$?"
+    rm: cannot remove '/tmp/tmp.VzDGjtnoXB/__pycache__/probe_mod.cpython-311.pyc': Permission denied
+    exit=1
+
+`PYTHONDONTWRITEBYTECODE=0` is the opt-out, so this command asks for exactly the behaviour
+the unfixed entry point had, from the image as it is now. This is what deleting the frozen
+clone used by the `--full` run hit, fourteen lines of it:
+
+    rm: cannot remove '/var/tmp/verify-frozen-a04e91a7/scripts/ci/__pycache__/panic-site-census.cpython-311.pyc': Permission denied
+    rm: cannot remove '/var/tmp/verify-frozen-a04e91a7/scripts/ci/__pycache__/check-protocol-mirror.cpython-311.pyc': Permission denied
+    rm: cannot remove '/var/tmp/verify-frozen-a04e91a7/scripts/ci/__pycache__/check-evidence-paths.cpython-311.pyc': Permission denied
+
+That clone was a throwaway, so a privileged `rm -rf` finished the job. A developer's checkout
+is not, and the same directory appearing under `scripts/` or `crates/` is permanent until
+somebody notices and reaches for `sudo`.
+
+== 3. The same shape, one size bigger: the build directory
+
+The entry point mounts a named volume over `/src/target` for exactly this reason. Without
+that line, the cargo output would be written into the checkout as root, and the first thing
+written there is the directory itself:
+
+$ docker run --rm -v "$PWD:/src" --workdir /src chaos-verify:frozen bash -c 'mkdir -p /src/target && touch /src/target/root-owned-probe && ls -l /src/target/root-owned-probe'
+    -rw-r--r-- 1 root root 0 Oct  4 05:23 /src/target/root-owned-probe
+$ ls -l target/root-owned-probe
+    -rw-r--r-- 1 root root 0 Oct  4 13:23 target/root-owned-probe
+
+The build directory on this workspace is around 40 GB, which is the other reason the check
+treats a missing `/src/target` volume as a finding rather than a style point.
+
+The volume keeps the build output out of the checkout. It does not keep the directory, and
+this one was only found after the two-place fix had been written: a mount point that the
+image does not already have is created by the runtime *inside the parent mount*, and the
+parent here is the bind-mounted checkout. A clean clone of `11cdd8a2`, one gate, came back
+holding exactly one root-owned path and nothing else:
+
+$ cd /var/tmp/verify-frozen-clean && git rev-parse --short HEAD
+    11cdd8a2
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report" >/dev/null 2>&1
+$ find . -user root
+    ./target
+$ ls -ld target; ls -A target | wc -l
+    drwxr-xr-x 2 root root 4096 Oct  4 13:36 target
+    0
+
+Being empty, that directory is still removable, because removing it needs write permission
+on the parent and the parent belongs to the developer. It is the untidy part, not the
+undeletable part:
+
+$ rmdir target; echo "exit=$?"
+    exit=0
+
+Creating it on the host before the container starts takes the creation away from the
+runtime, and after that a run leaves no root-owned path anywhere in the tree:
+
+$ mkdir -p target && ls -ld target
+    drwxrwx--- 2 chaos chaos 4096 Oct  4 13:41 target
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report" >/dev/null 2>&1
+$ find . -user root | wc -l
+    0
+$ ls -ld target
+    drwxrwx--- 2 chaos chaos 4096 Oct  4 13:41 target
+
+The two runs above are the same command against the same commit; the only difference is who
+had created `/src/target` first.
+
+== 4. The fix, which is in three places
+
+`docker/verify.Dockerfile` gains the image-level default, next to the one it already set:
+
+    # Test-thread stack for the large xai-grok-shell actor tests, same as CI.
+    ENV RUST_MIN_STACK=16777216
+
+    # The repository is bind-mounted at /src and the guards in scripts/ci import each
+    # other through that mount. Bytecode caches created there belong to root and land in
+    # the developer's checkout: a directory the container created cannot be removed by a
+    # plain `rm -rf`, only by a privileged one.
+    ENV PYTHONDONTWRITEBYTECODE=1
+
+`scripts/verify-in-docker.sh` passes it too, in `run_args`, because `IMAGE_TAG` may point at
+an image built elsewhere and the guarantee should not depend on which image was used:
+
+    --env RUST_MIN_STACK=16777216
+    # The image sets this as well; it is repeated here so an IMAGE_TAG built elsewhere
+    # cannot reintroduce the leak. The guards in scripts/ci import each other through the
+    # /src bind mount, and a __pycache__ directory the container creates there belongs to
+    # root and survives the developer's own `rm -rf`.
+    --env PYTHONDONTWRITEBYTECODE=1
+
+and it creates the build directory on the host before the container is started, which is
+what the section 3 measurement asked for:
+
+    docker volume create chaos-verify-target >/dev/null
+    # The runtime creates a mount point the image does not already have, and it creates it as
+    # root inside whatever is mounted at its parent -- so `--volume chaos-verify-target:/src/target`
+    # alone leaves a root-owned `target/` in the checkout even though nothing is ever written
+    # through it. One gate run on 2026-10-04 did exactly that. Created here first, the directory
+    # belongs to whoever ran the gates, and the run then leaves no root-owned path at all.
+    mkdir -p "${repo_root}/target"
+
+Both `ENV` lines are placed after the last `RUN`, so rebuilding the image replays nothing
+expensive: the layers that follow `ENV` are `WORKDIR` and `CMD`.
+
+== 5. After the fix, the same three measurements
+
+The entry point again, same gate, same tree:
+
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "docs path references" 2>&1 | tail -3
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 33 gates selected, this is not a sweep
+$ echo "root-owned after: $(find . -path ./target -prune -o -user root -print | wc -l)"
+    root-owned after: 0
+
+The image default on its own, without the entry point in between:
+
+$ docker run --rm chaos-verify:frozen printenv PYTHONDONTWRITEBYTECODE
+    1
+$ e="$(mktemp -d)" && printf 'X = 1\n' > "$e/probe_mod.py"
+$ docker run --rm -v "$e:/src" --workdir /src chaos-verify:frozen python3 -c 'import probe_mod; print("imported", probe_mod.X)'
+    imported 1
+$ echo "mount contents: $(ls -A "$e" | tr '\n' ' ')"
+    mount contents: probe_mod.py
+$ rm -rf "$e"; echo "exit=$?"
+    exit=0
+
+The mount comes back containing only what the host put there, so it deletes normally.
+
+== 6. The check
+
+`scripts/ci/check-container-hygiene.py` reads every `scripts/*.sh` and every
+`docker/*.Dockerfile`. Which script is judged is decided by what it mounts, not by its name:
+a mount whose host side names the checkout (`repo_root`, `repo_dir`, `checkout`,
+`source_root`) is what triggers the rules. Four rules:
+
+* a script that mounts the checkout has to pass `PYTHONDONTWRITEBYTECODE=1`;
+* `<mount>/target` has to be covered by a named volume, or `CARGO_TARGET_DIR` has to point
+  outside the mount -- pointing it at `/src/build` is not an escape;
+* where that volume is what keeps the build output out, the script has to create the host side
+  of it first, so the runtime is never the one making the mount point inside the checkout. A
+  `mkdir` inside a gate command is not accepted: it runs on the container side, which is the
+  side this check exists to distrust;
+* the image has to set the same variable in an `ENV`, so a bare `docker run` and the
+  `--shell` this entry point offers behave like the gates do.
+
+Comments do not count in either language, and `ENV NAME VALUE` without the equals sign is
+accepted because it is the other valid Dockerfile spelling.
+
+$ python3 scripts/ci/check-container-hygiene.py --verbose
+    judged scripts/collect-wsl-info.sh
+    judged scripts/install-hooks.sh
+    judged scripts/install-integrity-in-docker.sh
+    judged scripts/install-integrity-powershell.sh
+    judged scripts/install-sh-in-docker.sh
+    judged scripts/install.sh
+    judged scripts/l10n-guard.sh
+    judged scripts/npm-install-in-docker.sh
+    judged scripts/remote-acceptance-in-docker.sh
+    judged scripts/test-blitz-stress.sh
+    judged scripts/test-platform.sh
+    judged scripts/upstream-recon.sh
+    judged scripts/verify-gates.sh
+    judged scripts/verify-in-docker.sh
+    judged scripts/verify-release-signature.sh
+    judged scripts/web-deployment-in-docker.sh
+    judged docker/verify.Dockerfile
+    container-hygiene: OK (16 shell script(s) scanned, 1 mounts the checkout, 1 Dockerfile(s), 0 problem(s))
+
+One of the sixteen mounts the checkout. The other five `*-in-docker.sh` entry points mount a
+lab directory (`${lab_root}/host:/lab` and friends) and are not judged for it, which is why
+the rule keys on the mount: renaming a script must not change who is responsible.
+
+== 7. The check against the files as shipped
+
+Pinned to `11cdd8a2`, the commit before this change, so the comparison does not drift:
+
+$ t="$(mktemp -d)" && mkdir -p "$t/scripts" "$t/docker"
+$ git show "11cdd8a2:scripts/verify-in-docker.sh" > "$t/scripts/verify-in-docker.sh"
+$ git show "11cdd8a2:docker/verify.Dockerfile" > "$t/docker/verify.Dockerfile"
+$ python3 scripts/ci/check-container-hygiene.py --root "$t"; echo "exit=$?"
+    /tmp/tmp.PxQT0rRxWp/scripts/verify-in-docker.sh: mounts the checkout at /src but PYTHONDONTWRITEBYTECODE is never set; the guards in scripts/ci import each other through that mount, and the bytecode caches they write belong to root inside the checkout
+    /tmp/tmp.PxQT0rRxWp/scripts/verify-in-docker.sh: /src/target is a named volume mounted inside the checkout but the script never creates ${repo_root}/target on the host, so the runtime makes that mount point as root and the checkout ends up holding a directory its owner did not create
+    /tmp/tmp.PxQT0rRxWp/docker/verify.Dockerfile: PYTHONDONTWRITEBYTECODE is never set in the image; a bare `docker run` with this tree mounted, including the `--shell` the entry point offers, writes caches as root regardless of what the entry point passes
+    container-hygiene: 3 problem(s) in 1 shell script(s) scanned, 1 mounting the checkout, 1 Dockerfile(s)
+    exit=1
+
+Three findings, and the middle one is the section 3 defect: `/src/target` was covered by a
+volume at `11cdd8a2`, so the build output stayed out of the tree, but nothing on the host
+had created the directory the volume is mounted on:
+
+$ grep -c 'mkdir' "$t/scripts/verify-in-docker.sh"
+    0
+
+== 8. Fixtures, and what happens when each decision is undone
+
+`scripts/ci/test-check-container-hygiene.py` builds a throwaway tree and drives the check as
+a subprocess. 19 cases, all green on the shipped check:
+
+$ python3 scripts/ci/test-check-container-hygiene.py 2>&1 | tail -3
+    Ran 19 tests in 0.507s
+
+    OK
+
+Seven of them are "must not report": the shipped pair (runner plus image), the three `--env`
+spellings the shell accepts, a named volume over `/src/target` paired with the host-side
+`mkdir`, a `CARGO_TARGET_DIR` outside the mount (which needs no `mkdir`, because nothing is
+mounted inside the checkout then), `ENV NAME VALUE` in the Dockerfile, the lab runner that
+mounts nothing of the checkout, and the repository itself. That last one also asserts the
+scan reached at least a dozen scripts, which is what keeps a check that scanned nothing from
+passing. Two more are the shipped text before the fix -- the `run_args` array and the
+Dockerfile tail copied out of `11cdd8a2` -- so the shape that was actually running stays a
+test case. Three cases are the mount point: without the host `mkdir`, with a `mkdir` only
+inside a gate command, and with a host `mkdir` of some other directory.
+
+Eighteen mutations of the check, one deliberate revert each, applied to the shipped file,
+the fixture suite run against it, the file restored with a plain `cp` and verified with `cmp`.
+As in the other batteries here, the unmutated baseline runs first and a non-green baseline
+aborts, the verdict counts unittest's `FAIL:` and `ERROR:` lines so a mutation that breaks
+the file so badly that no test runs is printed as SURVIVED rather than as a kill, and an
+anchor that does not appear exactly once is not applied and is likewise reported as SURVIVED.
+
+    baseline (unmutated gate): 'OK', failures=0
+
+    KILLED  4  M1 bytecode rule dropped entirely
+    KILLED  1  M2 any value accepted, only absence flagged
+    KILLED  1  M3 shell comments left visible (a commented --env counts as set)
+    KILLED  6  M4 cargo-output rule dropped
+    KILLED  1  M5 CARGO_TARGET_DIR accepted wherever it points
+    KILLED 12  M6 target path built without the separator
+    KILLED 10  M7 checkout mount never recognised
+    KILLED  9  M8 any bind mount taken for a checkout mount (lab runners judged too)
+    KILLED  2  M9 any named volume at all taken as covering the build output
+    KILLED  3  M10 image rule dropped (entry point alone would be enough)
+    KILLED  7  M11 Dockerfile ENV only in the space form, `ENV X=1` unseen
+    KILLED  1  M12 the mount count in the verdict stops being counted
+    KILLED 11  M13 findings printed where the caller does not read them
+    KILLED  1  M14 an empty root reports success
+    KILLED  4  M15 host-side mkdir assumed present
+    KILLED  1  M16 any mkdir accepted, container side included
+    KILLED  1  M17 mkdir rule stops looking for the target directory
+    KILLED  3  M18 mount-point finding names nothing
+
+    mutations: 18  survived: 0
+    gate restored byte-identical
+
+M6 is the widest at 12 of the 19 cases: a container path built without the separator makes
+every clean fixture report a problem. M7 and M8 are the two directions the mount test can
+fail in. M8, treating any bind mount as a checkout mount, is what the lab-runner case exists
+to catch, and M7, recognising none, takes the flagging cases down instead -- a check that
+finds nothing looks exactly like a clean tree unless something asserts the scan saw the
+mount at all, which is what `1 mounts the checkout` in the verdict line is for. M4 covers
+both rules that hang off the same loop, which is why it went from 2 kills to 6 when the
+mount-point rule joined the build-output rule there. M16 and M17 are the two ways the
+`mkdir` test can be too easy: accepting one from anywhere (M16) is what the gate-command
+case catches, and dropping the requirement that it names `target` (M17) is what the
+host-`mkdir`-of-something-else case catches.
+
+== 9. Wiring
+
+The check runs in CI and in the container entry point, on executable lines in both, and
+`check-guard-wiring.py` is what says so rather than a paragraph:
+
+$ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (63 files in scripts/ci/, 62 reachable, 58 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+$ bash scripts/verify-gates.sh --list | grep -n 'hygiene'
+    18:container hygiene
+$ bash scripts/verify-gates.sh --self-test 2>&1 | tail -1
+    verify-gates self-test: 47/47 cases pass
+
+Both new files are among the 58 the entry point runs, so a container run off a clean clone
+executes them too.
+
+== 10. The check inside the container
+
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "container hygiene"
+    == source tree: 4014 files, checksum 2672203120
+       12 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    == --only is in effect: 1 of 34 gates selected, this is not a sweep
+    ...
+    Ran 19 tests in 0.522s
+
+    OK
+    container-hygiene: OK (16 shell script(s) scanned, 1 mounts the checkout, 1 Dockerfile(s), 0 problem(s))
+
+    selected gates passed in chaos-verify:frozen
+$ echo "root-owned after: $(find . -path ./target -prune -o -user root -print | wc -l)"
+    root-owned after: 0
+$ ls -ld target
+    drwxrwx--- 8 chaos chaos 4096 Oct  4 13:23 target
+
+The last two lines are the point of the change, measured by the run of the check that guards
+it: the gate suite inside the container imports nothing from `scripts/ci` through the mount,
+the build directory was already created host-side, and nothing owned by root is left behind.
+The `12 path(s) differ from HEAD` line is the runner's own honesty check and describes this
+run: the check and its fixtures were not yet committed.
+
+== 11. What this does not cover
+
+The check is static. A mount path assembled at runtime, a `docker run` assembled inside a
+variable, or a guard that writes somewhere else on purpose are all invisible to it; catching
+those means looking at the tree after a run, which needs Docker, which the gate legs do not
+have. It also cannot see the host side: `scripts/verify-gates.sh` runs the same guards as the
+developer's own uid, where a cache directory is a cache directory and nothing about ownership
+breaks.
+
+The fix does not change which user the container runs as. Running as the host uid would fix
+ownership too, but it would also change what the cargo volumes mean (they are root-owned from
+years of runs) and what `git` inside the container thinks of `/src`, which the entry point
+already works around with `GIT_CONFIG_*`. That trade is a bigger change than the defect.
+
+There is no allow list. If the rule fires on a new entry point, the entry point gets the
+`--env` line or stops mounting the checkout; see `scripts/ci/check-script-portability.py` for
+why this repository's rules are fixed in the scripts rather than waived in a file.
+
+== 12. Reproduce it
+
+    # the leak, on demand, from the current image: ask for the old behaviour explicitly
+    d="$(mktemp -d)" && printf 'X = 1\n' > "$d/probe_mod.py"
+    docker run --rm -e PYTHONDONTWRITEBYTECODE=0 -v "$d:/src" --workdir /src chaos-verify:frozen python3 -c 'import probe_mod'
+    ls -ld "$d/__pycache__"          # root root
+    rm -rf "$d"; echo "exit=$?"      # Permission denied, 1
+
+    # the fix, same probe without the explicit opt-out
+    e="$(mktemp -d)" && printf 'X = 1\n' > "$e/probe_mod.py"
+    docker run --rm -v "$e:/src" --workdir /src chaos-verify:frozen python3 -c 'import probe_mod'
+    ls -A "$e"; rm -rf "$e"          # only probe_mod.py, and it deletes
+
+    # the check, live and against the pre-fix files
+    python3 scripts/ci/check-container-hygiene.py --verbose
+    t="$(mktemp -d)" && mkdir -p "$t/scripts" "$t/docker"
+    git show "11cdd8a2:scripts/verify-in-docker.sh" > "$t/scripts/verify-in-docker.sh"
+    git show "11cdd8a2:docker/verify.Dockerfile" > "$t/docker/verify.Dockerfile"
+    python3 scripts/ci/check-container-hygiene.py --root "$t"
+
+    # the mount point, which needs a clone of the pre-fix commit to see
+    c="$(mktemp -d)/clone" && git clone -q --no-hardlinks . "$c" && git -C "$c" checkout -q 11cdd8a2
+    ( cd "$c" && IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report" )
+    find "$c" -user root          # ./target, and it is empty
+    ( cd "$c" && mkdir -p target && IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report" )
+    find "$c" -user root | wc -l  # 0
+
+    # the fixtures, and the entry point end to end
+    python3 scripts/ci/test-check-container-hygiene.py
+    IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "container hygiene"

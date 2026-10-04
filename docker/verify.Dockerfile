@@ -101,5 +101,11 @@ RUN set -eu; \
 # Test-thread stack for the large xai-grok-shell actor tests, same as CI.
 ENV RUST_MIN_STACK=16777216
 
+# The repository is bind-mounted at /src and the guards in scripts/ci import each
+# other through that mount. Bytecode caches created there belong to root and land in
+# the developer's checkout: a directory the container created cannot be removed by a
+# plain `rm -rf`, only by a privileged one.
+ENV PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /src
 CMD ["bash"]

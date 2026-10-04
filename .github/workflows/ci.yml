@@ -724,6 +724,14 @@ jobs:
           # scope, and scripts/verify-gates.sh is one of them on purpose.
           python3 scripts/ci/test-check-pipefail-report.py
           python3 scripts/ci/check-pipefail-report.py
+          # The container entry point mounts the working tree at /src and runs its gates as
+          # root, so a file the container creates is root's inside the developer's checkout.
+          # A gate run on 2026-10-04 left a Python bytecode cache there and a full run left two;
+          # where the cache directory did not exist yet, `rm -rf` over that tree stopped working.
+          # The check judges which script mounts the checkout, not which script is named like a
+          # container entry point, and covers the image too so `--shell` behaves the same.
+          python3 scripts/ci/test-check-container-hygiene.py
+          python3 scripts/ci/check-container-hygiene.py
           # Two ratchets over the Rust sources, both from one scanner. The first
           # refuses a crate that gains a production `.unwrap()`, `.expect()`,
           # `panic!` or `unsafe` site; the definition of "production" it uses

@@ -84,6 +84,21 @@ reads those 740 bytes. A `COPY` added to the Dockerfile therefore needs a matchi
 `!` line; forgetting one fails the build with `not found` instead of silently
 producing a thinner image.
 
+The mount points the other way too, and that direction has an owner. The gates run as
+root inside the container, so anything written through `/src` belongs to root inside
+your checkout. A gate run on 2026-10-04 left a Python bytecode cache there, and where
+no `__pycache__` directory existed yet the container created one, which the owner of
+the tree then cannot delete: `rm -rf` over it prints `Permission denied` and exits 1.
+The image sets `PYTHONDONTWRITEBYTECODE=1` and the entry point passes it again, so no
+bytecode is written through that mount. The named volume has a catch of its own: a mount
+point the image does not already have is created by the runtime as root *inside the parent
+mount*, and the parent here is your checkout, so the entry point creates `target/` on the
+host before the container starts -- otherwise a single gate run leaves one root-owned
+directory behind. `scripts/ci/check-container-hygiene.py` enforces all of it on any script
+that mounts the checkout -- judged by what it mounts, not by its name -- including the rule
+that the host side of a volume mounted inside the checkout is created by the script itself,
+which a `mkdir` inside a gate command does not satisfy.
+
 The run checksums every tracked and untracked file before the first gate and again
 after the last one. A mismatch prints `UNATTRIBUTABLE` and exits non-zero: the
 container reads the live working tree, so a run that overlapped an edit describes

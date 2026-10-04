@@ -84,6 +84,12 @@ echo "== preparing cargo cache volumes"
 docker volume create chaos-verify-cargo-registry >/dev/null
 docker volume create chaos-verify-cargo-git >/dev/null
 docker volume create chaos-verify-target >/dev/null
+# The runtime creates a mount point the image does not already have, and it creates it as
+# root inside whatever is mounted at its parent -- so `--volume chaos-verify-target:/src/target`
+# alone leaves a root-owned `target/` in the checkout even though nothing is ever written
+# through it. One gate run on 2026-10-04 did exactly that. Created here first, the directory
+# belongs to whoever ran the gates, and the run then leaves no root-owned path at all.
+mkdir -p "${repo_root}/target"
 
 run_args=(
   --rm
@@ -100,6 +106,11 @@ run_args=(
   # Without this the `--full` mode fails on a clean machine for a reason that has nothing
   # to do with the change under test.
   --env RUST_MIN_STACK=16777216
+  # The image sets this as well; it is repeated here so an IMAGE_TAG built elsewhere
+  # cannot reintroduce the leak. The guards in scripts/ci import each other through the
+  # /src bind mount, and a __pycache__ directory the container creates there belongs to
+  # root and survives the developer's own `rm -rf`.
+  --env PYTHONDONTWRITEBYTECODE=1
   # Git ownership, applied to *every* gate rather than per command line. The repo
   # is bind-mounted from a host uid, so git inside the container refuses to read
   # it ("detected dubious ownership in repository at '/src'") until told otherwise.
@@ -185,6 +196,12 @@ gates=(
   # shipped that way on 2026-10-04, all three with the correct exit code and no words. Out of scope
   # are the `set -uo pipefail` scripts, this file's own host runner among them.
   "pipefail report: python3 scripts/ci/test-check-pipefail-report.py && python3 scripts/ci/check-pipefail-report.py"
+  # This very entry point runs its gates as root with the working tree bind-mounted, so anything
+  # the container writes lands in the checkout owned by root. One gate run left a bytecode cache
+  # there on 2026-10-04, a `--full` run left two, and a cache directory the container had to create
+  # could not be deleted by the owner of the tree afterwards. The rule judges who mounts the
+  # checkout rather than who is named like a container entry point.
+  "container hygiene: python3 scripts/ci/test-check-container-hygiene.py && python3 scripts/ci/check-container-hygiene.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
   # The census cannot see a Prometheus call whose label count is wrong, because the panic
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says

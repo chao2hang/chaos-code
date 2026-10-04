@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### 修复：容器入口通过 bind mount 把 root 所有的文件写进工作树，那个目录连 `rm -rf` 都删不掉
+
+`scripts/verify-in-docker.sh` 以 root 身份在容器里跑门禁，工作树 bind-mount 在 `/src`。经那个挂载
+写出去的东西，归属是 root，而且落在开发者自己的树里。跑一条门禁就留下过一个 `root root` 所有的
+`check-doc-path-refs.cpython-311.pyc`，当天早上的 `--full` 留下两个；宿主的 Python 是 3.10，那
+些 311 缓存宿主既不读也不改写，就那么待着。文件本身其实还删得掉（unlink 要的是目录的写权限），
+真正删不掉的是容器 *新建* 的 `__pycache__` 目录：实测 `rm -rf` 报 `Permission denied`、exit 1。
+给 `--full` 用的那份冻结克隆就是这么留下的，清理时甩出 14 行 `Permission denied`，得用特权 shell
+才删得掉。
+
+构建目录是同一个形状且大一个数量级。入口专门用一个命名卷盖住 `/src/target`；把那一行去掉，容器里
+一句 `mkdir -p /src/target` 就在工作树里造出 root 所有的 `target`（实测那行 `ls` 输出是
+`-rw-r--r-- 1 root root ... /src/target/root-owned-probe`），而这台机器的构建目录约 40 GB。
+
+修的地方有三处：`docker/verify.Dockerfile` 里加 `ENV PYTHONDONTWRITEBYTECODE=1`，位置在最后一个
+`RUN` 之后，于是重建只需重放 `WORKDIR` 和 `CMD`；`scripts/verify-in-docker.sh` 的 `run_args` 里
+也传一份，因为 `IMAGE_TAG` 可以指向别处构建出来的镜像，这个保证不该取决于用的是哪个镜像；入口在启动
+容器之前先在宿主上 `mkdir -p "${repo_root}/target"`。第三处是修完前两处之后才看见的：镜像里没有的
+挂载点，是运行时 *在父挂载里面* 建出来的，而这里的父挂载就是 bind-mount 进去的工作树——`11cdd8a2` 的
+干净克隆跑一条门禁，回来树上就一个 `root root` 的 `target`（空的，所以 `rmdir` 还删得掉，这处是难看
+而不是删不掉）。改完之后同样的三条测量：入口跑完工作树里 root 所有的文件数是 0；
+`printenv PYTHONDONTWRITEBYTECODE` 出来是 `1`；同样的探针在挂载里只留下宿主自己写的那一个文件，
+`rm -rf` exit 0。容器仍以 root 运行——换成宿主 uid 会同时动 cargo 那几个命名卷的归属和容器内 git 对
+`/src` 的看法，代价比缺陷大。
+
+（2026-10-04；`docker/verify.Dockerfile`、`scripts/verify-in-docker.sh`、
+`docs/verification/container-hygiene-2026-10-04.log`）
+
+### 门禁：新增 `check-container-hygiene.py`，判据是谁把仓库挂进了容器，而不是谁的名字像容器入口
+
+规则四条：把仓库挂进容器的脚本必须传 `PYTHONDONTWRITEBYTECODE=1`；`<挂载点>/target` 要么被命名卷
+盖住、要么把 `CARGO_TARGET_DIR` 指到挂载之外（指到 `/src/build` 不算逃出去）；用命名卷盖住的那一条，
+脚本还得自己在宿主上把那个目录建出来，否则挂载点是运行时以 root 身份在 bind-mount 里面造的——写在门禁
+命令里的 `mkdir` 不算，因为那一句跑在容器那一侧，而这条检查存在的理由就是不信任那一侧；镜像自己的
+`ENV` 里也得有同一个变量，否则裸跑一句 `docker run`、或者用入口提供的 `--shell`，写的还是 root 的东西。
+判谁受审看挂载不看文件名：六个 `*-in-docker.sh` 里只有一个是把仓库挂进去的，另外五个挂的是 lab
+目录，扫描覆盖 `scripts/` 下全部 16 个 shell 脚本，改个名字不该改变谁有责任。注释在 shell 和
+Dockerfile 里都不算数，`ENV NAME VALUE` 那种不带等号的写法认，因为那是另一种合法写法。
+
+对着 `11cdd8a2`（这次改动之前的 commit）里的那两份文件跑，报出 3 处并各自给出改法；当前树是
+`OK (16 shell script(s) scanned, 1 mounts the checkout, 1 Dockerfile(s), 0 problem(s))`。
+`test-check-container-hygiene.py` 19 例全绿：7 例是「不该报的必须不报」，2 例是修复前的原文，1 例
+直接读真树并断言扫描确实扫到了十几个脚本——不然一个什么都没扫的检查也能「通过」，3 例是挂载点（少了
+宿主 `mkdir`、只在门禁命令里 `mkdir`、宿主 `mkdir` 建的是别的目录）。18 个变异 0 存活（最宽的 M6 一次
+杀 12 例：容器路径少拼一个 `/`，所有干净的 fixture 全都报问题；M16 与 M17 是 `mkdir` 判据两种放宽的
+方式，各由一条 fixture 接住），变异后 `cp` 还原、`cmp` 复核字节一致。接线在 `.github/workflows/ci.yml`
+与 `scripts/verify-in-docker.sh` 的 `gates=()`（`check-guard-wiring.py`：63 文件、62 可达、58 由入口
+跑），`--list` 排第 18；容器里那 19 例也全绿，跑完工作树里 root 所有的文件数还是 0。
+
+边界：这是一条静态检查，看不见运行时拼出来的挂载路径，也看不见塞在变量里的 `docker run`；宿主那个
+`scripts/verify-gates.sh` 本来就以开发者自己的 uid 跑，归属上不出这个问题。
+
+（2026-10-04；`scripts/ci/check-container-hygiene.py`、`scripts/ci/test-check-container-hygiene.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、`docker/verify.Dockerfile`、
+`docs/verification/container-hygiene-2026-10-04.log`）
+
 ### 改进：容器入口此前只能从干净克隆里跑，真正的原因是仓库没有 `.dockerignore`
 
 `scripts/verify-in-docker.sh` 的镜像只 `COPY` 一个文件（`rust-toolchain.toml`，740 字节），

@@ -341,6 +341,25 @@ fixtures were still uncommitted when it ran. The image was built from
 the container read the live tree through the bind mount. `1 of 33` is the unfiltered array;
 `cargo test` and `GUI protocol types` are appended by `--full` and are not among the 33.
 
+The same command was re-run later the same day over a `git clone` of this repository checked
+out at `11cdd8a2`, so that the run had a commit to be attributed to and nothing else. The line
+this section had to explain is then simply not printed:
+
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report"
+    == source tree: 4011 files, checksum 3878427692
+    == --only is in effect: 1 of 33 gates selected, this is not a sweep
+    ...
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 33 gates ran, so this is not a full sweep
+
+Only the four lines carrying the point are quoted; the fixture leg between them is the same
+17 tests as above. That run also left one root-owned path in the clone, and it was not a
+Python cache: `./target`, empty, created by the runtime as the mount point of
+`chaos-verify-target` inside the bind mount. The gate under test here is not exposed to
+that, because its fixtures run the check as a subprocess rather than importing it. The whole
+of it, including the host-side `mkdir` that removes it, is written up in
+`docs/verification/container-hygiene-2026-10-04.log`.
+
 == 9. The sweep, and the one gate that has to run last
 
 The docs for a change cite its evidence log by path, and `check-doc-path-refs.py` rejects a
