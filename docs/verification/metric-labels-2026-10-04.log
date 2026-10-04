@@ -1,0 +1,240 @@
+# A Prometheus call with the wrong label count aborts the process, and nothing read it (2026-10-04)
+
+`scripts/ci/check-metric-labels.py` is a new gate. It pairs every Prometheus label-value
+call with the labels the metric it names was registered with, and it fails when the two
+disagree or when a registration would be rejected outright. This log records why the
+repository needs it, which is that the mistake it catches aborts a process and neither the
+compiler, nor the panic census, nor a test suite reliably sees it. Everything below was run
+on the working tree at `45628088`; the source mutation in section 2 is undone in section 4
+and verified undone.
+
+== 0. The premise, read out of the dependency rather than out of memory
+
+Two lines of `prometheus` decide the whole argument. The version is not a guess: `Cargo.lock`
+pins `prometheus` 0.14.0, and a fixture asserts that the version the gate's docstring cites
+is the version the lockfile names.
+
+    $ grep -n 'pub fn with_label_values\|self.get_metric_with_label_values(vals).unwrap()\|if vals.len() != self.desc.variable_labels.len()' ~/.cargo/registry/src/*/prometheus-0.14.0/src/vec.rs
+        118:        if vals.len() != self.desc.variable_labels.len() {
+        292:    pub fn with_label_values<V>(&self, vals: &[V]) -> T::M
+        296:        self.get_metric_with_label_values(vals).unwrap()
+
+The lookup a call site writes, `src/vec.rs:292`:
+
+    pub fn with_label_values<V>(&self, vals: &[V]) -> T::M
+    where
+        V: AsRef<str> + std::fmt::Debug,
+    {
+        self.get_metric_with_label_values(vals).unwrap()
+    }
+
+The check that fails first, inside `hash_label_values`, `src/vec.rs:118`:
+
+    if vals.len() != self.desc.variable_labels.len() {
+        return Err(Error::InconsistentCardinality {
+            expect: self.desc.variable_labels.len(),
+            got: vals.len(),
+        });
+    }
+
+So `with_label_values(&[..])` with one entry too many is an `unwrap` on an `Err`, on the
+thread that happens to record the metric. `remove_label_values` and `delete_label_values`
+return the same `Err` instead of panicking, which is the quieter half of the problem: the
+child metric is never removed and nothing is printed.
+
+== 1. What the tree looks like to the check
+
+    $ python3 scripts/ci/check-metric-labels.py --print
+        metric labels hold: 83 registrations, 155 label-value call sites, 0 recorded
+
+83 registrations, of which 82 go through a `register_*!` macro and one is built by hand
+(`IntCounterVec::new(Opts::new(..), &[..])` in
+`crates/common/xai-computer-hub-sdk/src/metric_donate.rs`). 155 label-value call sites, in
+15 files across three crates:
+
+    101  in production code
+     54  in test files (handle_tests.rs, hub_server_tests.rs)
+
+The production calls are not on paths a reader can assume a test walks:
+
+     9  crates/codegen/xai-grok-workspace-daemon/src/daemonize.rs
+     5  crates/codegen/xai-grok-workspace-daemon/src/preview_supervisor.rs
+    26  crates/codegen/xai-grok-workspace/src/handle.rs
+     7  crates/codegen/xai-grok-workspace/src/hub_auth/proactive.rs
+     9  crates/codegen/xai-grok-workspace/src/hub_server.rs
+     3  crates/codegen/xai-grok-workspace/src/permission/hub_permission.rs
+    10  crates/codegen/xai-grok-workspace/src/recovery.rs
+     3  crates/codegen/xai-grok-workspace/src/session/checkpoint.rs
+     1  crates/codegen/xai-grok-workspace/src/session/mod.rs
+     8  crates/codegen/xai-grok-workspace/src/session/swap_policy.rs
+     8  crates/codegen/xai-grok-workspace/src/upload/mod.rs
+     1  crates/common/xai-computer-hub-sdk/src/metric_donate.rs
+    11  crates/common/xai-computer-hub-sdk/src/metrics.rs
+
+Whether a given call is reached by a test is a coverage question, and the gate deliberately
+does not take it on. What it does instead is judge all 155 statically, in 11 seconds, in
+every leg, including the legs that compile nothing.
+
+Two measurements behind the "not covered" list in the docstring, so the list is a
+measurement and not a hedge. The other unwrapping form, `with(&HashMap)`, shares its name
+with `Cell::with`, `RefCell::with` and this repository's lock helpers, and 244 lines call
+`.with(`. Sorting those by whether the file also declares a metric vector leaves exactly two,
+both in `crates/codegen/xai-grok-workspace/src/upload/mod.rs`, at lines 558 and 613, and both
+are `tracing_subscriber::registry().with(layer)`. No metric here is looked up through `with`
+today. On the registration side, all 82 macro calls consume their `Result` inside a
+`LazyLock`, 36 by `unwrap` and 46 by `expect`; dropping the `Result` instead would already be
+a clippy error, because `Result` is `#[must_use]` and CI runs
+`cargo clippy --workspace --all-targets --locked -- -D warnings`.
+
+== 2. One real call, broken on purpose
+
+The claim to test is not "the gate reports what it is told to report", which fixtures cover,
+but "a wrong label count is real, and the tools we already run miss it". The mutation is one
+extra entry in the array of a production call, `observe_startup_stage` in
+`crates/codegen/xai-grok-workspace/src/handle.rs:84`, which records workspace startup stage
+timings and has six call sites in that file, on the recovery, catalog, hub-connect and
+time-to-ready paths:
+
+    -        .with_label_values(&[stage, outcome])
+    +        .with_label_values(&[stage, outcome, "extra"])
+
+Four commands, same tree, in this order.
+
+    $ python3 scripts/ci/check-metric-labels.py
+        crates/codegen/xai-grok-workspace/src/handle.rs:85: arity: STARTUP_STAGE_DURATION_SECONDS.with_label_values passes 3 label value(s), the metric declares 2; aborts on a mismatch (prometheus unwraps inside the dependency)
+
+        1 problem(s): 83 registrations, 155 calls checked
+        exit=1
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+        baseline holds: 97 crates, 0 fewer production sites than recorded
+        exit=0
+
+    $ cargo check -p xai-grok-workspace --lib --message-format short
+        Finished `dev` profile [unoptimized] target(s) in 19.07s
+        exit=0
+
+    $ cargo test -p xai-grok-workspace --lib -- startup_stage_observe_records_independent_samples
+        running 1 test
+        test handle::tests::startup_stage_observe_records_independent_samples ... FAILED
+        ---- handle::tests::startup_stage_observe_records_independent_samples stdout ----
+        thread 'handle::tests::startup_stage_observe_records_independent_samples' (3977445) panicked at ~/.cargo/registry/src/*/prometheus-0.14.0/src/vec.rs:296:49:
+        called `Result::unwrap()` on an `Err` value: InconsistentCardinality { expect: 2, got: 3 }
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1934 filtered out; finished in 0.00s
+        exit=101
+
+The census is green because there is no panic token at the call site to count; the panic is
+in the dependency. `cargo check` is green because `&[&str; 3]` coerces to the `&[V]` the
+method takes, whatever the metric was registered with. The test run is the honest part: the
+abort is not theoretical, it is `InconsistentCardinality { expect: 2, got: 3 }` on the line
+section 0 quotes, and it is the only one of the four commands that noticed.
+
+That test is also the limit of the honest claim. This particular call is reached by
+`startup_stage_observe_records_independent_samples`, so for this one site the crate's own
+suite does catch the mistake, on the legs that run it. Nothing equivalent covers the drain,
+recovery, swap and OOM calls in section 1, and the abort there happens in a process someone
+is waiting on, which is why the finding is worth having before any code runs.
+
+== 3. The mutation matrix
+
+Each row is one `write_text` on `crates/codegen/xai-grok-workspace/src/handle.rs`, then the
+gate, then a restore. The driver refuses a mutation whose target text is not unique, so a
+row that would change two places reports `SKIPPED` instead of silently changing both.
+
+    M1  one label value too many at a real call site
+        handle.rs:85: arity: ... passes 3 label value(s), the metric declares 2
+        1 problem(s)                                          expected: arity    ok
+    M2  a declared label dropped from a real registration
+        six findings: the two production calls plus four in handle_tests.rs, all
+        "passes 2 label value(s), the metric declares 1"       expected: arity    ok
+    M3  a metric name that duplicates another one
+        handle.rs:20: duplicate-name: 'grok_workspace_drain_started_total' is registered
+        2 times (handle.rs:20, handle.rs:28)                   expected: name     ok
+    M4  a metric name Prometheus would reject
+        handle.rs:44: bad-name: 'grok-workspace-drain-lost-items_total' is not a
+        Prometheus metric name                                 expected: name     ok
+    M5  a label name Prometheus would reject
+        handle.rs:62: bad-label: grok_workspace_startup_stage_duration_seconds: label
+        'outcome count' is not a valid Prometheus label name    expected: label    ok
+
+M2 is the row worth reading twice: one edited line, a registration, turns red at six call
+sites in three files, because the gate resolves each call to the metric it names. M3's
+message names both registrations, which is the pair a reader has to reconcile; and
+`register_int_counter_vec!` for the second one returns `AlreadyRegistered`, whose `unwrap`
+aborts the first thread that touches that metric, not the module that registered it.
+
+== 4. The tree afterwards
+
+Every restore is a copy followed by a byte comparison, not an `git checkout` that could also
+revert something else:
+
+    $ cp {SCRATCH}/handle.rs.orig crates/codegen/xai-grok-workspace/src/handle.rs
+    $ cmp {SCRATCH}/handle.rs.orig crates/codegen/xai-grok-workspace/src/handle.rs
+        (no output)
+
+    restored byte-identically: True     (M1)
+    restored byte-identically: True     (M2)
+    restored byte-identically: True     (M3)
+    restored byte-identically: True     (M4)
+    restored byte-identically: True     (M5)
+
+    == final tree state: identical to backup: True
+       git status for that file: (clean)
+
+The copy preserves the bytes and deliberately not the mtime: the artifact left in `target/`
+after section 2 was built from the mutated file, and restoring an older mtime would let cargo
+call that artifact fresh. `shutil.copy` leaves the timestamp at "now", so the next cargo run
+rebuilds from the restored source instead of testing the mutated binary.
+
+== 5. Fixtures, and the bug the real tree caught first
+
+    $ python3 scripts/ci/test-check-metric-labels.py
+        Ran 33 tests in 22.572s
+
+        OK
+
+The suite drives the shipped script over synthetic trees and pins each decision from both
+sides where one side alone would not prove anything: a call with one value too many is paired
+with the same metric called correctly, so a scanner that stopped matching `with_label_values`
+cannot pass by reporting nothing. One case runs the gate on this repository with the
+committed ledger, so it cannot be green in fixtures and red where it was written.
+
+Writing the gate against the real tree found two bugs that no fixture had suggested. The
+element counter started counting depth inside the opening bracket, so no top-level comma ever
+split and it reported 70 arity problems where the fixed counter finds none; the argument
+scanner tracked only parentheses and ignored string literals, so `&[]` parsed as `]` and a `)`
+inside a help string could close the argument list early. Both are pinned now: one case uses
+the one-entry-per-line trailing comma most label arrays in this repository use, one passes an
+empty label list, one puts an unbalanced `)` in a help string.
+
+== 6. Wiring
+
+The gate is in both places a guard has to be, with the same command line, which is what
+`check-guard-wiring.py` compares:
+
+    $ grep -n 'check-metric-labels' .github/workflows/ci.yml scripts/verify-in-docker.sh
+        .github/workflows/ci.yml:725:          python3 scripts/ci/test-check-metric-labels.py
+        .github/workflows/ci.yml:726:          python3 scripts/ci/check-metric-labels.py
+        scripts/verify-in-docker.sh:165:  "metric labels: python3 scripts/ci/test-check-metric-labels.py && python3 scripts/ci/check-metric-labels.py"
+
+    $ python3 scripts/ci/check-guard-wiring.py
+        check-guard-wiring: OK (55 files in scripts/ci/, 54 reachable, 50 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+
+== 7. The whole host gate sweep afterwards
+
+    $ bash scripts/verify-gates.sh
+        PASS  panic-site census
+        PASS  metric labels
+        ...
+        SKIP  cargo check (build gate; --with-build runs it)
+        SKIP  cargo clippy (build gate; --with-build runs it)
+        SKIP  cargo test (build gate; --with-build runs it)
+        SKIP  GUI protocol types (build gate; --with-build runs it)
+
+        all gates passed on the host (29 run, 4 skipped)
+
+29 gates run where the previous commit ran 28; the four skips are the same four build gates
+the host runner has always skipped, and the container runs them. Whole sweep 202 seconds.
+Section 2 is the reason the `PASS  metric labels` line is worth a gate: it is the only
+automatic check in the repository, other than a test that happens to reach the line, that
+would have printed anything about a call with one label value too many.

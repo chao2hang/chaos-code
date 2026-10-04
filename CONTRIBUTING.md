@@ -145,6 +145,41 @@ it, and a quotation of a mistake looks exactly like a recommendation unless the 
 otherwise. A row whose finding has gone away fails as stale, so fixing the line means
 deleting the row rather than leaving it behind.
 
+### A metric call with the wrong number of labels aborts the process
+
+`with_label_values` is the neat form of a Prometheus lookup, and it is implemented as an
+unwrap of the checked one: in `prometheus` 0.14.0, the version the lockfile pins, the function
+is at `src/vec.rs:292`, the `unwrap()` that panics is at `src/vec.rs:296`, and the length check
+that fails first is at `src/vec.rs:118`. One extra or one missing entry in the array is
+therefore an abort at the call site, and the three things that would normally catch a mistake
+do not see it. The compiler cannot: the labels are a runtime slice, and `&[&str]` of any
+length typechecks against `&[V] where V: AsRef<str>`. `panic-site-census.py` cannot: it counts
+panic-capable sites by the tokens that cause them, and no `unwrap`, `expect`, `panic!` or
+`unsafe` token sits at the call site, because the panic lives inside the dependency. A test
+sees it only where a test reaches that call, and 101 of the 155 label-value call sites here
+are in production code, on startup, drain, recovery, swap and OOM paths.
+
+`scripts/ci/check-metric-labels.py` reads both sides of the pairing. On the registration side
+it checks the 83 metric registrations, 82 through the `register_*!` macros and one built by
+hand: the metric name is a valid Prometheus name, no name is registered twice on the default
+registry, and label names are valid and unique inside one metric. All 82 macro registrations
+consume the `Result` inside a `LazyLock`, 36 by `unwrap` and 46 by `expect`, so a duplicate
+name aborts in whatever code first touches the metric rather than where it was registered, and
+this gate is the reason those calls are safe. On the call side it checks that each
+`with_label_values`, `get_metric_with_label_values`, `remove_label_values` and
+`delete_label_values` call passes as many values as the metric it names declares. The first
+aborts on a mismatch; the other three return the error, so a mismatch there is a metric that
+silently stops reporting. Both are findings.
+
+The receiver is matched by name against the `static`, `const` or `let` a registration is bound
+to, which is exact for the `static` behind a `LazyLock` form this tree uses everywhere; an
+identifier used for two metrics with different label counts is reported as ambiguous rather
+than resolved by guessing. What the gate cannot judge is a finding and never a pass: a label
+list that is not an array literal is `dynamic-labels`, a receiver reached through a field or a
+function call is `unresolved-receiver`. Where one of those is correct as written, a row in
+`scripts/ci/metric-labels-allowlist.tsv` records it, and a row whose finding has gone away
+fails as stale.
+
 ## Fast local gate loop
 
 The container answers "does a fresh clone work?". It does not answer "did my edit

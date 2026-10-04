@@ -227,3 +227,35 @@ rather than what passed, and would also have caught the filtered-out case.
   executes tests that compile for `x86_64-pc-windows-gnu` and those are not all the same
   tests, because some of them are gated `#[cfg(windows)]` and some spawn `python3`, which
   wine cannot execute. The LSP mock-server family was therefore not re-run under wine.
+
+== 10. The verdict from CI
+
+The run this push triggered is `37165185079`, head `45628088`. It finished `success` with
+every job green, including the two platform legs. The Windows leg is job `111331251342`:
+
+    $ gh run view --job 111331251342 --log | grep -oE 'test result: [a-zA-Z]+\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored'
+        suites=33 passed=3485 failed=0 ignored=16
+
+Against the previous run's Windows job (`111285204201`), which is the one that carried the
+failure this batch was about, measured the same way:
+
+        suites=33 passed=3482 failed=1 ignored=16
+
+The suite under test moved from `FAILED. 3116 passed; 1 failed; 2 ignored` to
+`ok. 3119 passed; 0 failed; 2 ignored`: the red one gone, the two added tests present, the
+ignored count unchanged. Section 9 predicted that the ignored count would move by two and
+quoted `3116 passed; 0 failed`; both halves of that sentence were wrong in the same way,
+because it was written from the `xai-grok-tools` lib suite instead of the job, and because
+neither new test is `#[ignore]`d. The job-wide totals above are the numbers to keep.
+
+The three names, from the same log:
+
+    test implementations::grok_build::image_edit::tests::resolve_file_uri_reads_path ... ok
+    test implementations::lsp::manager::tests::a_header_decodes_the_uri_instead_of_cutting_the_scheme_off ... ok
+    test implementations::lsp::tests::a_file_uri_decodes_back_to_the_path_it_was_made_from ... ok
+
+The second is the test that had been red since the LSP mock-server batch, and it is red or
+green on a fact about Windows path and URI syntax that no Linux host can decide. What
+section 9 left open stays open: the Windows implementation of a persistent shell, and the
+fact that `#[cfg(windows)]`-gated code is still compiled by CI only, so the wine run in
+section 6 remains a spot check rather than a substitute for the leg.

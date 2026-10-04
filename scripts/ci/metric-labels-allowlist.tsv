@@ -1,0 +1,9 @@
+# Findings `scripts/ci/check-metric-labels.py` may not report, one per line.
+# Columns: key<TAB>category<TAB>reason. The key is the identifier the finding names, which is
+# the receiver of the call (`counter`, not `counter.with_label_values`, and not the file the
+# call is in). A row may only record findings of its own category, and an entry with no live
+# finding fails as stale, so a reviewed exemption cannot outlive the call that needed it.
+# Categories: dynamic-labels (the values are computed, so no static count exists),
+# unresolved-receiver (the receiver is not a name a registration is bound to),
+# ambiguous-receiver (the name is bound to metrics with different label counts),
+# not-prometheus (the method belongs to another type with the same name).

@@ -714,6 +714,16 @@ jobs:
           python3 scripts/ci/test-panic-site-census.py
           python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
           python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+          # The census above counts panic sites by the tokens that cause them, so it cannot
+          # see a Prometheus metric call whose label count is wrong: `with_label_values`
+          # unwraps inside the dependency (`prometheus-0.14.0/src/vec.rs:292`) and fails on a
+          # count mismatch (`src/vec.rs:114`), while `&[&str]` of any length typechecks. The
+          # abort lands on a startup, drain or error path no test runs. This checks every
+          # label-value call against the labels its metric declares, and every registered
+          # name and label against what Prometheus accepts, which is also what makes the
+          # `.unwrap()` on the 82 registrations unreachable rather than merely unlikely.
+          python3 scripts/ci/test-check-metric-labels.py
+          python3 scripts/ci/check-metric-labels.py
           # A test that changes the process working directory and leaves it inside a
           # directory something else deletes breaks every sibling in the same libtest
           # process: gix_discover::is_git calls current_dir() before it looks at the

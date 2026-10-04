@@ -159,6 +159,10 @@ gates=(
   "workflow yaml: python3 scripts/ci/test-check-workflow-yaml.py && python3 scripts/ci/check-workflow-yaml.py"
   "script portability: python3 scripts/ci/check-script-portability.py && python3 scripts/ci/test-script-portability.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
+  # The census cannot see a Prometheus call whose label count is wrong, because the panic
+  # lives in the dependency (`with_label_values` unwraps) and no token at the call site says
+  # so. This pairs each label-value call with the labels its metric registration declares.
+  "metric labels: python3 scripts/ci/test-check-metric-labels.py && python3 scripts/ci/check-metric-labels.py"
   "cwd-change census: python3 scripts/ci/test-cwd-change-census.py && python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv"
   "spawn-cwd portability: python3 scripts/ci/test-check-spawn-cwd-portability.py && python3 scripts/ci/check-spawn-cwd-portability.py"
   # A `#[cfg(unix)]` on a test is not a skip: the test stops existing on the other platform, so it

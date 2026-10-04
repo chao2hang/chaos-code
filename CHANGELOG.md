@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### 门禁：metric 调用的数组多一个值，进程当场 abort，编译器、普查和台账三样都看不见它
+
+`with_label_values` 是 prometheus 的语法糖，实现是把带检查的那个解包：0.14.0（`Cargo.lock`
+钉住的就是这一个版本）里函数在 `src/vec.rs:292`，会 panic 的那次 `unwrap()` 在 `:296`，而
+先撞上的是 `hash_label_values` 里的 `vals.len() != self.desc.variable_labels.len()`
+（`:118`），它返回 `InconsistentCardinality`。也就是说 `&[..]` 里多一个或者少一个值，就是
+调用点当场 abort。三件本该拦住它的事都看不见这件事，一件是编译器：labels 是运行期的切片，
+`&[&str]` 无论多长都满足 `&[V] where V: AsRef<str>`；一件是 `panic-site-census.py`：它按
+造成 panic 的那些 token 计数，而调用点上一个这样的 token 都没有，panic 住在依赖里；最后
+一件是测试：只有走到那一行的测试才看得见，而本仓库 155 个 label-value 调用点里有 101 个
+在生产代码，站在 startup、drain、recovery、swap、OOM 这几条路上。
+
+判断的依据写在门禁自己的 docstring 里，但它是从依赖里读出来的，不是从记忆里写的；fixture
+还有一条把 docstring 引的版本号和 `Cargo.lock` 对起来，另一条在被 vendor 的源码里核对它引
+的三个行号，引用飘走会在测试里红，而不是留在文档里。
+
+真树上的变异证明这件事不是修辞。把 `handle.rs:84` 的 `observe_startup_stage` 的数组加一个
+值，同一份代码依次跑四件事：
+
+        check-metric-labels.py → exit=1：handle.rs:85 arity，passes 3 label value(s) against 2
+        panic-site-census.py --check-baseline → exit=0：baseline holds, 97 crates
+        cargo check -p xai-grok-workspace --lib → exit=0：Finished in 19.07s
+        cargo test -p xai-grok-workspace --lib → exit=101：InconsistentCardinality { expect: 2, got: 3 }
+
+第四条是诚实的那一条：abort 不是推演，它就是第 0 节引的那一行报出来的错。也正是这条把话说
+清楚——这一处恰好有测试走到，所以这一个调用点在跑它的腿上确实有别的防线；drain、recovery、
+swap、OOM 那几处没有等价的覆盖，而那里的 abort 落在一个正被人等的进程上。矩阵另外四行：
+M2 改注册侧删掉一个 label，一处改动让三个文件里的六个调用点同时红；M3 把名字改成另一个已
+存在的名字，门禁把两处注册一起点名；M4 一个带连字符的 metric 名；M5 一个带空格的 label 名。
+五次还原都是「一次 copy + 逐字节比对」，5/5 True，git 干净。copy 保留内容而故意不保留
+mtime，因为 `target/` 里那份产物是用改坏的源码编出来的，把 mtime 调回过去等于让 cargo 认为
+那份产物还是新鲜的。
+
+门禁读配对的两头。注册侧 83 个（82 个走 `register_*!` 宏，1 个手写 `IntCounterVec::new`）：
+metric 名合法、默认注册表里不重名、label 名合法且在同一 metric 内不重复；82 处宏调用全在
+`LazyLock` 里消费掉那个 `Result`，36 个 `unwrap`、46 个 `expect`，所以重名会在第一个碰到该
+指标的线程上炸，而不是在注册它的模块里。调用侧 155 个：`with_label_values` 不匹配就 abort，
+`get_metric_with_label_values`、`remove_label_values`、`delete_label_values` 不匹配只是返回
+`Err`，也就是那个指标从此悄悄不再上报，两种都算问题。判定不了的从不假装通过：label 列表不是
+数组字面量记 `dynamic-labels`，receiver 要经字段或函数调用才拿到记
+`unresolved-receiver`，台账 `scripts/ci/metric-labels-allowlist.tsv` 今天 0 行。
+
+写这个门禁的过程里，真树先抓出门禁自己两个 bug：元素计数器把深度起算点放在 `[` 之内，于是
+任何顶层逗号都切不开，报出 70 条假 arity；参数扫描只跟踪圆括号且不认识字符串字面量，于是
+`&[]` 被解析成 `]`，help 字符串里一个 `)` 就能把参数表提前闭合。两条现在各有一条 fixture
+钉着。不覆盖的也写在 docstring 里而不是假装没有：`with(&HashMap)` 是另一种会 abort 的写法，
+但本树 244 处 `.with(` 与 `Cell::with`、`RefCell::with` 和自家的锁辅助函数同名，不看类型没
+法判——同时声明了 metric 向量的文件里只剩两处，都是
+`tracing_subscriber::registry().with(layer)`；至于把注册返回的 `Result` 直接丢掉，那已经是
+clippy 错误（CI 跑 `cargo clippy --workspace --all-targets --locked -- -D warnings`，而
+`Result` 是 `#[must_use]`），这条不重复做。
+
+fixture 32 → 33 例；两处接线同一条命令行，`check-guard-wiring.py` 报
+`OK (55 files in scripts/ci/, 54 reachable, 50 run by scripts/verify-in-docker.sh, 4 recorded
+CI-only, 1 exempt)`。
+
+（2026-10-04；`scripts/ci/check-metric-labels.py`、`scripts/ci/metric-labels-allowlist.tsv`、
+`scripts/ci/test-check-metric-labels.py`、`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`、`CONTRIBUTING.md`、
+`docs/verification/metric-labels-2026-10-04.log`）
 ### 门禁：台账里有一列是身份的一部分，于是加一个标记要重写 25 行
 
 全量门禁 28 门红了两门，两门都来自本轮那三条新测试。平台门那边刺眼的不是「新增未记的门控」，而是
