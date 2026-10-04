@@ -21,7 +21,7 @@ path fold decided and then executed against a Windows target, the unpin/title
 lost update closed inside the persistence actor itself, the platform gating that turned that Windows
 leg green, and the five mechanisms that accounted for the 42 Windows test failures left over after
 that gating, now inventoried row by row, is
-22 unchecked and 115 partial
+24 unchecked and 115 partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -31,8 +31,11 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 1/17
-(unchecked/partial), summing to 136. Four unchecked rows were added on
+M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 4/17
+(unchecked/partial), summing to 139. Three unchecked rows were opened on 2026-10-04 while the
+Docker acceptance labs were being re-run: the installer's artifact fetch has no transfer ceiling,
+the reasons its mirror candidates gave are printed only on the failure path, and one container
+fingerprint checksum no longer reproduces. Four unchecked rows were added on
 2026-10-03 and two of them closed in the passes that followed; on 2026-10-04 the
 §8.2 Q4 maintenance-cycle row closed with a source-by-source review of every
 maintenance line (`docs/maintenance-line-review-2026-10-04.md`, evidence
@@ -117,7 +120,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 1 | 17 |
+| Maintenance items / §8 | 4 | 17 |
 
 ## Locally delivered in this audit pass
 

@@ -280,3 +280,34 @@ defect itself rather than its fixture, check out the version of the entry point 
 this change and give it an empty pattern with a stub on `PATH`: the exit status is 0, the
 verdict reads as a sweep, and the number of `docker run` invocations equals the size of the
 quick list plus the preflight.
+
+The block was re-run verbatim on 2026-10-04, in a clone built by its own first line, which
+landed on `36d0809e` with `git status --porcelain` empty. The four commands, in order, with
+the per-test lines elided from the first suite:
+
+    Ran 26 tests in 0.848s
+
+    OK
+
+    verify-gates self-test: 50/50 cases pass
+
+    check-guard-wiring: OK (66 files in scripts/ci/, 65 reachable, 61 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+
+    selected gates passed in chaos-verify:local
+      --only was in effect: 1 of 36 gates ran, so this is not a full sweep
+
+One caveat about that first line, learned while re-running it:
+
+    warning: --depth is ignored in local clones; use file:// instead.
+
+so the clone the recipe builds is full rather than shallow. That costs a checkout; nothing
+the four commands depend on requires a shallow tree.
+
+The container leg printed one more line worth recording here:
+
+    == source tree: 4020 files, checksum 3045864519
+
+It names neither the directory it fingerprinted nor the commit it was taken at, which is
+the gap `docs/verification/verify-in-docker-entry-blindness-2026-10-04.log` section 4 is
+about. The number above is the one that log's fresh clone reproduces, and the run that could
+not be re-measured printed a different one over the same file count.

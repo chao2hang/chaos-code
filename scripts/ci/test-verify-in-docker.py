@@ -37,6 +37,11 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "verify-in-docker.sh"
 if not SCRIPT.is_file():  # pragma: no cover - the shipped layout always has it
     raise SystemExit(f"script under test not found: {SCRIPT}")
+# Resolved before any fixture puts a stub directory in front of `PATH`, so a stub can hand back
+# to the real git for the subcommands a case does not want to break.
+REAL_GIT = shutil.which("git")
+if REAL_GIT is None:  # pragma: no cover - the fixtures shell out to git themselves
+    raise SystemExit("these fixtures need a real git on PATH")
 
 STUB = r"""#!/usr/bin/env bash
 # Answers the four docker subcommands the entry point uses and records every call.
@@ -141,6 +146,49 @@ class EntryFixture:
             proc = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True)
             assert proc.returncode == 0, proc.stderr
 
+    def stub_git(self, body: str) -> None:
+        """A `git` earlier on PATH than the real one, for a git that misbehaves on request.
+
+        One reachable failure is `detected dubious ownership in repository` -- the reason the
+        container side of the entry point carries a `safe.directory` bootstrap at all. Owners
+        cannot be changed from a fixture, so the stub reproduces the exit status and the stderr
+        instead, which is all the script under test can see. The other use is a command that dies
+        partway through its output, which no amount of real-repo setup produces on demand.
+        """
+        stub = self.root / "stub-bin" / "git"
+        stub.write_text(body, encoding="utf-8")
+        stub.chmod(0o755)
+
+    def hide_tree_from_git(self) -> None:
+        """Make `git ls-files -co --exclude-standard` list nothing while git itself exits 0.
+
+        That is a healthy git reporting no files, which is what a checkout whose own ignore rules
+        cover the whole tree looks like. Tracked paths are listed whatever the ignore rules say, so
+        the index has to be emptied as well for the listing to come back genuinely empty.
+        """
+        (self.root / ".gitignore").write_text("*\n", encoding="utf-8")
+        proc = subprocess.run(["git", "rm", "-r", "-q", "--cached", "--", "."],
+                              cwd=self.root, capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+
+    def head_sha(self) -> str:
+        """The short sha the fingerprint line is expected to name."""
+        proc = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=self.root,
+                              capture_output=True, text=True, check=True)
+        return proc.stdout.strip()
+
+    def uncommit(self) -> None:
+        """Strip the history and leave the files: a checkout with content but no commit.
+
+        Reachable for real -- `git init` in a directory somebody copied sources into, or an
+        export that dropped `refs/`. The fingerprint still means something there, so the line
+        has to say "no commit" rather than print an empty field where a sha belongs.
+        """
+        shutil.rmtree(self.root / ".git")
+        proc = subprocess.run(["git", "init", "-q"], cwd=self.root,
+                              capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+
     def env(self, **extra: str) -> dict:
         base = {
             "DOCKER_STUB_LOG": str(self.log),
@@ -160,6 +208,20 @@ class EntryFixture:
 
     def probes(self) -> list[str]:
         return [ln for ln in self.calls() if ln.startswith("target-probe")]
+
+    def quick_gate_count(self) -> int:
+        """How many entries the shipped `gates=()` array holds, counted from the copy's text.
+
+        The expectation is derived rather than written down, because adding a gate is a routine act
+        and a literal here would turn every one of them into a two-file edit that says nothing about
+        the gate added. What is worth pinning is the property: an unfiltered run reached every entry
+        the array has, so the loop dropped none and ran none twice.
+        """
+        text = (self.root / "scripts" / "verify-in-docker.sh").read_text(encoding="utf-8")
+        body = text.split("gates=(", 1)[1].split("\n)", 1)[0]
+        found = sum(1 for line in body.splitlines() if line.lstrip().startswith('"'))
+        assert found > 10, f"the array parse found {found} entries; the fixture is guessing"
+        return found
 
     def tree_files(self) -> int:
         """How many files the entry point's own fingerprint should see right now."""
@@ -294,7 +356,8 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("all gates passed in stub-image:tag", proc.stdout)
         self.assertNotIn("--only was in effect", proc.stdout)
         total = len(self.fx.gate_runs()) - 1  # minus the preflight
-        self.assertEqual(total, 36, f"the quick list moved: {total} gates")
+        self.assertEqual(total, self.fx.quick_gate_count(),
+                         "an unfiltered run has to reach every entry of `gates=()`")
 
 
 class VerdictTests(unittest.TestCase):
@@ -360,20 +423,47 @@ class VerdictTests(unittest.TestCase):
 
     def test_a_tree_at_rest_prints_one_checksum_and_no_caveat(self) -> None:
         proc = self.fx.run("--only", "tree ownership")
-        heads = re.findall(r"== source tree: (\d+) files, checksum (\d+)", proc.stdout)
+        heads = re.findall(r"== source tree: (\S+) at (\S+): (\d+) files, checksum (\d+)",
+                           proc.stdout)
         self.assertEqual(len(heads), 1, proc.stdout)
-        self.assertEqual(heads[0][0], str(self.fx.tree_files()))
+        self.assertEqual(heads[0][2], str(self.fx.tree_files()))
+        self.assertEqual(heads[0][0], str(self.fx.root),
+                         "a transcript has to say which checkout it describes")
+        self.assertEqual(heads[0][1], self.fx.head_sha(), "and which commit")
+
         self.assertNotIn("differ from HEAD", proc.stdout)
         self.assertNotIn("UNATTRIBUTABLE", proc.stdout)
 
+    def test_the_fingerprint_line_says_which_checkout_it_describes(self) -> None:
+        # A bare checksum cannot be re-measured after the fact: on 2026-10-04 a transcript's
+        # fingerprint could not be reproduced from the clone it was said to describe, and the
+        # line named neither that clone nor its commit. Both are on the line now.
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        line = re.search(r"^== source tree: (.*)$", proc.stdout, re.MULTILINE)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertIn(str(self.fx.root), line.group(1))
+        self.assertIn(self.fx.head_sha(), line.group(1))
+        self.assertIn(" files, checksum ", line.group(1))
+
+    def test_a_tree_with_no_commit_says_no_commit_rather_than_printing_nothing(self) -> None:
+        self.fx.uncommit()
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        line = re.search(r"^== source tree: (.*)$", proc.stdout, re.MULTILINE)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertIn("at (no commit):", line.group(1))
+        self.assertNotIn("at :", line.group(1), "an empty field reads as a truncated sha")
+
     def test_a_file_nobody_committed_is_counted_and_declared(self) -> None:
         before = self.fx.run("--only", "tree ownership")
-        count_before = re.search(r"== source tree: (\d+) files", before.stdout).group(1)
+        count_before = re.search(r"== source tree: \S+ at \S+: (\d+) files",
+                                 before.stdout).group(1)
         # An editor's new file, which is the kind of path a run races with.
         (self.fx.root / "new-module-note.md").write_text("in the tree, not in a commit\n",
                                                          encoding="utf-8")
         proc = self.fx.run("--only", "tree ownership")
-        count_after = re.search(r"== source tree: (\d+) files", proc.stdout).group(1)
+        count_after = re.search(r"== source tree: \S+ at \S+: (\d+) files", proc.stdout).group(1)
         self.assertEqual(int(count_after), int(count_before) + 1,
                          "untracked content has to be inside the fingerprint")
         self.assertIn("1 path(s) differ from HEAD, so this run describes the working tree, "
@@ -381,6 +471,124 @@ class VerdictTests(unittest.TestCase):
         self.assertLess(proc.stdout.index("path(s) differ from HEAD"),
                         proc.stdout.index("== tree ownership"),
                         "the caveat has to precede the gate output")
+
+    def test_a_repository_git_will_not_read_stops_the_run(self) -> None:
+        # Measured on 2026-10-04: with git unreachable, `git ls-files` wrote nothing and `cksum`
+        # dutifully hashed the empty list, so the run printed a checksum of nothing, compared it
+        # to another checksum of nothing, and reported `all gates passed` with no attribution
+        # behind it. `detected dubious ownership in repository at '/src'` is the reachable form
+        # -- it is why the container side carries a `safe.directory` bootstrap at all.
+        self.fx.stub_git("#!/bin/sh\n"
+                         "echo 'fatal: detected dubious ownership in repository at "
+                         "\"/src\"' >&2\n"
+                         "exit 128\n")
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("exited 128 after naming 0 path(s)", proc.stderr)
+        self.assertIn("could not be attributed to a commit", proc.stderr)
+        self.assertEqual(self.fx.gate_runs(), [], f"a broken fingerprint runs no gate: "
+                                                 f"{self.fx.calls()}")
+        self.assertNotIn("files, checksum", proc.stdout)
+        self.assertNotIn("differ from HEAD", proc.stdout)
+        self.assertNotIn("passed in stub-image:tag", proc.stdout)
+
+    def test_a_checkout_where_nothing_is_listed_stops_the_run(self) -> None:
+        # git healthy, exit 0, and an empty listing: the ignore rules cover the whole tree, so the
+        # checksum is taken over nothing. The run cannot tell a vacuous fingerprint from a clean
+        # one, which is why an empty listing is refused on its own rather than only a failed one.
+        # It is also the only thing standing between an empty listing and `xargs -0 cksum`, which
+        # runs its command once even on empty input and would then read the terminal.
+        self.fx.hide_tree_from_git()
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("exited 0 after naming 0 path(s)", proc.stderr)
+        self.assertIn("could not be attributed to a commit", proc.stderr)
+        self.assertEqual(self.fx.gate_runs(), [], self.fx.calls())
+        self.assertNotIn("files, checksum", proc.stdout)
+
+    def test_a_listing_git_died_partway_through_stops_the_run(self) -> None:
+        # The listing is non-empty here, so only its exit status says the tree was not covered.
+        # `cksum` happily sums the paths that did arrive, and the after-image agrees with the
+        # partial before-image, which is the pair of facts that made the old code confident.
+        # The fourth name carries a newline: that is why git writes the listing NUL-separated, and
+        # why it is counted by NUL bytes rather than by lines (measured with grep 3.7, a line count
+        # of this listing comes out one too many).
+        self.fx.stub_git("#!/bin/sh\n"
+                         'if [ "$1" = ls-files ]; then\n'
+                         "  for name in README.md docker/verify.Dockerfile docs/gate-notes.md; do\n"
+                         '    printf "%s" "${name}"; head -c 1 /dev/zero\n'
+                         "  done\n"
+                         "  printf 'a note\\nwith a newline in it.md'; head -c 1 /dev/zero\n"
+                         "  exit 128\n"
+                         "fi\n"
+                         f'exec "{REAL_GIT}" "$@"\n')
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("exited 128 after naming 4 path(s)", proc.stderr)
+        self.assertIn("could not be attributed to a commit", proc.stderr)
+        self.assertEqual(self.fx.gate_runs(), [], self.fx.calls())
+        self.assertNotIn("files, checksum", proc.stdout)
+
+    def test_a_second_checksum_that_fails_blames_the_tree_not_a_path(self) -> None:
+        # The script's own comment calls this shape out: the after-the-facts checksum can fail
+        # while the tree is being rewritten underneath it. Naming files from a comparison against a
+        # sums file that was never written would invent a mover, so the branch says it could not
+        # checksum the tree and still prints the gate verdict and the non-zero exit.
+        counter = Path(self._tmp.name) / "ls-files-calls"
+        self.fx.stub_git("#!/bin/sh\n"
+                         'if [ "$1" = ls-files ]; then\n'
+                         '  n="$(cat "${GATE_STUB_COUNTER}" 2>/dev/null || echo 0)"\n'
+                         '  n=$((n + 1)); echo "${n}" >"${GATE_STUB_COUNTER}"\n'
+                         '  if [ "${n}" -ge 2 ]; then\n'
+                         "    echo 'fatal: bad object HEAD' >&2\n"
+                         "    exit 128\n"
+                         "  fi\n"
+                         "fi\n"
+                         f'exec "{REAL_GIT}" "$@"\n')
+        proc = self.fx.run("--only", "tree ownership", GATE_STUB_COUNTER=str(counter))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("UNATTRIBUTABLE", proc.stdout)
+        self.assertIn("the tree could not be checksummed", proc.stdout)
+        self.assertIn("selected gates passed in stub-image:tag", proc.stdout)
+        self.assertIn("can be attributed to a commit", proc.stdout)
+        self.assertEqual(len(self.fx.gate_runs()), 2, self.fx.calls())
+
+    def test_a_listed_file_that_cannot_be_read_stops_the_run(self) -> None:
+        # A path git lists but `cksum` cannot open used to be accepted, because only "no sums at
+        # all" was checked: the sums file was short, not empty, and the short fingerprint was then
+        # compared against the run's own equally-short after-image. The hole in the tree is a
+        # symlink to a missing target rather than a chmod 000 file because a broken link also
+        # defeats root, so the fixture means the same thing wherever the suite runs.
+        os.symlink("nothing-here", self.fx.root / "docs" / "dangling.md")
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("cksum summed only", proc.stderr)
+        self.assertIn("listed file(s) from", proc.stderr)
+        self.assertIn("did not actually read", proc.stderr)
+        self.assertEqual(self.fx.gate_runs(), [], self.fx.calls())
+        self.assertNotIn("files, checksum", proc.stdout)
+        self.assertNotIn("passed in stub-image:tag", proc.stdout)
+
+    def test_a_git_that_refuses_status_says_so_rather_than_implying_a_clean_tree(self) -> None:
+        # The count of dirty paths came from `git status --porcelain | grep -c ''`, so a git that
+        # answered with an error on stderr and nothing on stdout produced the count zero, which is
+        # the sentence a clean tree earns. `ls-files` still works here: the two commands fail
+        # apart, which is why this is a separate case from the one above.
+        self.fx.stub_git("#!/bin/sh\n"
+                         'if [ "$1" = status ]; then\n'
+                         "  echo 'fatal: unable to read object database' >&2\n"
+                         "  exit 128\n"
+                         "fi\n"
+                         f'exec "{REAL_GIT}" "$@"\n')
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("git status exited 128", proc.stdout)
+        self.assertIn("cannot say whether the tree matches any", proc.stdout)
+        self.assertIn("unable to read object database", proc.stdout)
+        self.assertIn("== source tree:", proc.stdout)
+        self.assertEqual(len(self.fx.gate_runs()), 2, self.fx.calls())
+        self.assertIn("selected gates passed in stub-image:tag", proc.stdout)
+        self.assertNotIn("differ from HEAD", proc.stdout)
 
 
 class MountContractTests(unittest.TestCase):

@@ -690,6 +690,11 @@ jobs:
           # so nothing here can catch such a mistake the way the release matrix
           # does -- and by then the tag is already public. The first v0.4.0 tag
           # failed exactly this way, on two of six builds.
+          # The fixtures are the part that keeps this a rule rather than a habit:
+          # they hand the checker a Windows job with an unpinned `run:` in three
+          # matrix spellings and ask whether it says so, and they are what prove
+          # the checker still reads a block-form `os:` list as a matrix.
+          python3 scripts/ci/test-check-workflow-shells.py
           python3 scripts/ci/check-workflow-shells.py
           # A step's `run:` block may only use a binary the job actually
           # provisions. This is the rule the `docs localization` job broke on
@@ -835,3 +840,13 @@ jobs:
           # treats a comment, a doc and a real invocation differently.
           python3 scripts/ci/test-check-guard-wiring.py
           python3 scripts/ci/check-guard-wiring.py
+          # The same question one directory up. The check above accounts for scripts/ci/,
+          # so the acceptance labs in scripts/ belonged to nobody: on 2026-10-04 five of
+          # the six `*-in-docker.sh` files were named by no workflow, and the transcripts
+          # they had last produced were two days and thirty-odd commits behind the tree.
+          # A lab is either named on an executable line of a workflow -- this job's own
+          # steps, and the scheduled `docker-labs.yml` -- or it carries a dated row in
+          # scripts/ci/docker-labs.tsv saying what CI cannot supply. A row past its date
+          # budget is a failure too, and prints the command that would refresh it.
+          python3 scripts/ci/test-check-lab-coverage.py
+          python3 scripts/ci/check-lab-coverage.py

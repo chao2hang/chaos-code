@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### 门禁：四个验收实验室没有任何 workflow 提到它们，最短的一次也已 48 个提交无人运行
+
+`scripts/*-in-docker.sh` 有六个文件，每一个都是一次真机验收：真镜像、真容器、真 nginx、真 TLS。到
+`36d0809e` 为止，其中只有 `install-integrity-in-docker.sh` 与 `verify-in-docker.sh` 被某个 workflow 的
+可执行行提到，其余四个（web 部署 TLS、M4 远程工作区、install.sh、npm 安装）没有任何机器在跑它们，最近一
+次运行距当时 48 到 70 个提交。它们的结论只存在于 `docs/verification/` 的转录里，而转录不会因为你改了
+`install.sh` 就变红。
+
+新增 `scripts/ci/check-lab-coverage.py`：一条实验室要么被某个 workflow 的可执行行点名，要么在
+`scripts/ci/docker-labs.tsv` 里留有一条 30 天内的带日期行，写明脚本、类别、转录、日期、当时的 sha、判决
+与理由，两条都不满足即红；规则没有豁免名单，npm 那一行因此如实写着 `red`（`chaos-code-*` 六个平台的
+native 包至今未发布，`win32` 那两个名字属于抢注的 `0.0.1-security`）。同时新增
+`.github/workflows/docker-labs.yml`，每天 03:17 UTC 跑 web 与 remote 两门。
+
+顺带修掉的是同一类盲点的上游：`check-workflow-yaml.py`、`check-workflow-shells.py`、
+`check-workflow-toolchain.py` 各自硬写着 `[ci.yml, release.yml]`，新 workflow 加入的当天就会从三个门禁的
+视野里消失，而本仓库这个新文件正是第一个会消失的。三者改为发现 `.github/workflows/*.yml` 下的全部文件、
+发现为空即失败，`check-workflow-shells.py` 另补上块状 `os:` 矩阵的解析。漂移测量、33 例夹具、39 发变异
+0 存活记在 `docs/verification/docker-lab-coverage-2026-10-04.log`。
+
+（2026-10-04；`scripts/ci/check-lab-coverage.py`、`.github/workflows/docker-labs.yml`）
+
+### 修复：容器入口的树指纹与「工作区是否等于某个提交」都会在看不见的时候保持沉默
+
+`scripts/verify-in-docker.sh` 在跑门之前与之后各取一次树指纹，结尾的判决归因于这一对。`fingerprint()`
+的函数体就是一条管道，返回值即管道的返回值，而调用处从不看它：`git` 因 `detected dubious ownership`
+退出 128 时，脚本原样把 128 传出去，自己一个字也不说。空清单更糟——树的 ignore 规则覆盖一切、索引被清空
+时，`git ls-files` 合法地列出 0 条并退出 0，而 GNU `xargs` 在空输入上仍会执行一次命令，于是 `cksum` 没有
+任何文件参数、转身去读自己的标准输入，那一行打印 `== source tree: 1 files, checksum …`，随后照常跑门并
+报 `selected gates passed`：这一次运行说的是「1 个文件」，而不是「我看不到」。`cksum` 打不开清单中某一条
+时同理——和文件是短了一段而不是空，两次成像以同样的方式短，于是这场比对对一个它从未读完的树达成了自洽。
+`git status` 那一半把 stderr 丢进 `/dev/null`、又用 `| grep -c ''` 把此前发生的一切折成一个数字，拒绝执行
+`status` 的运行因此拿到了与「干净树」完全相同的输出，而那句话对干净树写的正是「什么都不写」。
+
+现在两处都会自证：`fingerprint` 失败即退出 1，并说明 `git` 列到第几条、`cksum` 只算了清单里的几条；
+`git status` 的退出码单独捕获，被拒绝时打印退出码与 `git` 自己的第一行，然后照常跑门（读不了 `status`
+不影响容器检查代码）。那个计数本身也不能再随手交给 `grep -c ''`：清单是 NUL 分隔的，而含换行的路径在 git
+里合法，GNU grep 3.7 会把 NUL 分隔段落里的换行一并计入，于是那条本用来让数字可信的消息自己把数字放大了，
+`count_paths` 改为数 NUL 字节。指纹行现在还写明它指纹的是哪个目录、取在哪个提交（历史里还没有提交的仓库
+打印 `at (no commit)`，而不是一个读起来像被截断的空字段），因为 2026-10-04 那次 `--full` 打印的校验和在
+今天同一目录里量不出来，而那一行并没有说它量的是哪个目录。夹具 26 → 34 例（其中 9 例在 `36d0809e` 上即
+红），新旧对照与变异矩阵记在 `docs/verification/verify-in-docker-entry-blindness-2026-10-04.log`。
+
+（2026-10-04；`scripts/verify-in-docker.sh`、`scripts/ci/test-verify-in-docker.py`）
+
 ### 修复：`--only ""` 在两个 runner 上都不是过滤器，容器把整张表跑完还打出全量措辞
 
 那条守卫本来就把意图写在上面（「空 pattern 匹配每一个标签，于是 `--only ""` 会是一次全量扫描」），可它判

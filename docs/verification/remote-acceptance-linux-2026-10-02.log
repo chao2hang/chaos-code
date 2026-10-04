@@ -172,3 +172,81 @@
 
 == summary
 all 102 M4 acceptance checks passed against chaos-verify:local
+
+
+## Re-run 2026-10-04: 130 checks, and the 28 newest ones were recorded in the wrong file
+
+`scripts/remote-acceptance-in-docker.sh` grew from 102 checks to 130 in `6013a862`
+(2026-10-03), which made `chaos-remote install` refuse an artifact the host was never told to
+trust. That commit came with a full 130-check transcript -- in
+`docs/verification/remote-provenance-linux-2026-10-02.log`, the file written about the
+feature, not the file named after the lab. So the checks did run. The lab's own transcript
+above still ended at `all 102 M4 acceptance checks passed`, 61 commits back at `f3a058a7`, and
+nothing connected the two files: a reader of this document would conclude the lab has 102
+checks, and the 130-check run that contradicts it is not findable from here. The lab was also
+named by no workflow, so the gap could only be closed by someone remembering.
+
+This run closes it at `36d0809e`, 15:46 +0800, and it is the first run of this lab recorded in
+this file since the count changed. Two sections are quoted rather than all 239 lines: the
+section the count grew by, and the one pre-existing section that gained a check. What the two
+transcripts do and do not agree on is written out under them.
+
+    $ bash scripts/remote-acceptance-in-docker.sh
+
+    == an artifact is installed only if a key the host was told about signed these bytes
+       ok  the publisher key is 32 raw ed25519 bytes, base64
+       ok  the sidecar is the wrapped base64 a shell pipeline leaves behind
+       ok  that host says at startup whose signature it will accept
+       ok  an artifact with no signature is refused by a host with a key
+       ok  the same build is installed once its sidecar is there
+       ok  the sidecar was found next to the artifact, not named on the command line
+       ok  a signature from a key this host was never told about is refused
+       ok  bytes changed after signing are refused though their digest is correct
+       ok  a file that is not a signature at all is refused by name
+       ok  the four refusals published nothing
+       ok  and left no half-written upload behind in the install directory
+       ok  what it did install is byte-identical to what the key signed
+       ok  the same unsigned build installs on the host that opted out
+       ok  a keyless host says at startup that every install will be refused
+       ok  a keyless host refuses an unsigned deploy
+       ok  and refuses a correctly signed one too, because it has nothing to check it against
+       ok  the keyless host published nothing at all
+       ok  the environment switch is reported at startup as well
+       ok  CHAOS_REMOTE_REQUIRE_SIGNATURE=0 installs the unsigned build
+       ok  opting out of the requirement does not let a host accept a signature it cannot check
+       ok  that host says both things at once: unsigned is accepted, a key is held
+       ok  it installs the unsigned build, because that is what it opted into
+       ok  and still refuses a signature its own key did not make
+       ok  while the build that key did sign still installs
+       ok  a build for another platform is refused by the host it was sent to
+       ok  the platform refusal published nothing
+       ok  and the host is still pointing at what it had
+
+The 28th of those checks landed inside a section that already existed, and it is quoted here
+as the run printed it:
+
+    == starting the server, loopback-only, on the remote host
+       ok  the host says at startup that it accepts unsigned artifacts
+       credentials published: 256
+       ok  the listener is reachable on loopback
+
+
+    [the other 102 checks elided: quoted in full in the run above]
+
+    == summary
+    all 130 M4 acceptance checks passed against chaos-verify:local
+
+Exit status 0. 102 + 27 + 1 = 130, so this file now describes the lab as it is.
+
+What the 130 lines say about the older transcripts. Compared against the 130-check run in
+`remote-provenance-linux-2026-10-02.log`, the `ok` lines here differ in one place, and it is a
+measured number rather than a behaviour: a mute peer was given up on after 31s where that run
+recorded 30s, in a check whose text is the timeout it observed. Compared against the 102-check
+run above, the differences are the 28 added checks plus three such timing figures (`8 -> 7`
+and `7 -> 6` in a credential-count check, 4s versus 3s in a connect-wait check, and that same
+30s versus 31s). No check text differs in any other way, which is the claim this transcript is
+here to keep.
+
+The lab is named on an executable line of `.github/workflows/docker-labs.yml` as of this
+change, so the count in the summary line and the count in the script are now kept together by
+a schedule rather than by memory.

@@ -16,7 +16,8 @@ The rule enforced here: in any job whose `runs-on` can be Windows, every step
 that has a `run:` must either pin `shell: bash` or carry an `if:` mentioning
 `runner.os` (which is how `Install Linux deps` legitimately opts out). The
 matrix form counts too -- `runs-on: ${{ matrix.os }}` is Windows-capable if any
-`os:` in that job's matrix names Windows.
+`os:` in that job's matrix names Windows, written either inline (`os: [a, b]`) or
+as a block (`os:` then indented `- b` lines), because both mean the same job.
 
 Usage: python3 scripts/ci/check-workflow-shells.py [workflow.yml ...]
 Exit: 0 = clean, 1 = a step would run under the wrong shell.
@@ -26,10 +27,18 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_WORKFLOWS = [
-    Path(".github/workflows/ci.yml"),
-    Path(".github/workflows/release.yml"),
-]
+WORKFLOW_DIR = Path(".github/workflows")
+
+
+def default_workflows() -> list[Path]:
+    """Every workflow in `.github/workflows`, rather than a list of names in a file.
+
+    The three workflow gates each hard-coded `ci.yml` and `release.yml`, so the day a
+    third file appeared -- `docker-labs.yml` did, in the same change as this comment --
+    it was checked by none of them. That is the unwired-guard shape again: green, from
+    a check that was never looking at the thing.
+    """
+    return sorted(WORKFLOW_DIR.glob("*.yml"))
 
 
 def parse_jobs(text):
@@ -44,6 +53,8 @@ def parse_jobs(text):
     job = None
     step = None
     in_jobs = False
+    # Indent of a bare `os:` key whose values are the indented `- ` lines under it.
+    pending_os: int | None = None
 
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.rstrip()
@@ -57,6 +68,7 @@ def parse_jobs(text):
         if indent == 0:
             in_jobs = body == "jobs:"
             job, step = None, None
+            pending_os = None
             continue
         if not in_jobs:
             continue
@@ -66,6 +78,7 @@ def parse_jobs(text):
             jobs[job] = {"runs_on": None, "matrix_os": [], "steps": []}
             order.append(job)
             step = None
+            pending_os = None
             continue
         if job is None:
             continue
@@ -79,9 +92,20 @@ def parse_jobs(text):
             continue
 
         # Matrix entries are nested deeper than the job keys.
+        if pending_os is not None:
+            # A bare `os:` followed by indented `- ` items is the same matrix as
+            # `os: [a, b]`. Reading only the inline form would let a rewrite of one
+            # matrix into the other form take the job out of this check's sight.
+            if indent > pending_os and body.startswith("- "):
+                jobs[job]["matrix_os"].append(body[2:].strip())
+                continue
+            pending_os = None
         match = re.match(r"os:\s*(.*)$", key)
         if match:
-            jobs[job]["matrix_os"].append(match.group(1).strip())
+            value = match.group(1).strip()
+            jobs[job]["matrix_os"].append(value)
+            if not value:
+                pending_os = indent
 
         if indent == 6 and body.startswith("- "):
             step = {
@@ -139,7 +163,11 @@ def check(path):
 
 
 def main(argv):
-    paths = [Path(a) for a in argv[1:]] or DEFAULT_WORKFLOWS
+    paths = [Path(a) for a in argv[1:]] or default_workflows()
+    if not paths:
+        print("check-workflow-shells: no workflow files found -- refusing to pass",
+              file=sys.stderr)
+        return 1
     failed = False
     for path in paths:
         if not path.exists():

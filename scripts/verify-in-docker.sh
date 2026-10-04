@@ -146,19 +146,76 @@ trap 'rm -rf "${tree_dir}"' EXIT
 tree_before="${tree_dir}/before.sums"
 tree_after="${tree_dir}/after.sums"
 
+count_lines() { # `grep -c` prints 0 *and* exits 1 on an empty file, hence the `|| true`
+  grep -c '' "$1" 2>/dev/null || true
+}
+
+count_paths() { # counts NUL-separated names, which is how `git ls-files -z` writes them. The
+  # `|| true` is the one `count_lines` needs for the same reason: this runs while the script is
+  # explaining a failure, and a count it cannot take must not end the run before that
+  # explanation is printed -- which is the hazard scripts/ci/check-pipefail-report.py exists for,
+  # and it fired on this line when the function was first written.
+  local bytes
+  bytes="$(tr -dc '\0' <"$1" | wc -c || true)"
+  printf '%s' "${bytes//[[:space:]]/}"
+}
+
 fingerprint() { # fingerprint <output-file>
-  ( cd "${repo_root}" && git ls-files -co --exclude-standard -z | xargs -0 cksum ) >"$1"
+  # Both halves of this have to be able to fail. `git ls-files` decides what the checksum covers,
+  # and `cksum` decides whether every listed file was actually read: either one going wrong used
+  # to leave an empty (or short) file behind, and an empty fingerprint compares equal to an empty
+  # fingerprint, so the run would print its verdict with nothing behind the attribution.
+  local out="$1" rc=0 named
+  ( cd "${repo_root}" && git ls-files -co --exclude-standard -z ) >"${out}.list" || rc=$?
+  named="$(count_paths "${out}.list")"
+  if [ "${rc}" -ne 0 ] || [ ! -s "${out}.list" ]; then
+    {
+      echo "fingerprint: git ls-files -co --exclude-standard exited ${rc}" \
+           "after naming ${named} path(s) in ${repo_root}"
+      echo "   a fingerprint over too few paths compares equal to the same too-few paths taken"
+      echo "   after the gates, so a verdict from this run could not be attributed to a commit."
+      echo "   Is ${repo_root} a repository git will read?"
+    } >&2
+    return 1
+  fi
+  xargs -0 cksum <"${out}.list" >"${out}" || rc=$?
+  if [ "${rc}" -ne 0 ] || [ ! -s "${out}" ]; then
+    {
+      echo "fingerprint: cksum summed only $(count_lines "${out}") of" \
+           "$(count_lines "${out}.list") listed file(s) from ${repo_root} (exit ${rc})"
+      echo "   a partial fingerprint is compared against the run's own after-image and agrees"
+      echo "   with it, so the verdict would name a commit this run did not actually read."
+    } >&2
+    return 1
+  fi
+  return 0
 }
 
 sum_of() { cksum <"$1" | cut -d' ' -f1; }
 
-fingerprint "${tree_before}"
-echo "== source tree: $(grep -c '' "${tree_before}") files, checksum $(sum_of "${tree_before}")"
+fingerprint "${tree_before}" || exit 1
+# The line is quoted in run transcripts, so it has to name what it fingerprinted. A bare
+# checksum can only be re-measured by guessing which checkout it came from: on 2026-10-04 a
+# transcript's checksum could not be reproduced from the clone it claimed to describe, and
+# nothing on the line said which clone that was. `git rev-parse` failing is not fatal here --
+# a repository with files but no commit is fingerprintable, and says so.
+head_sha="$( ( cd "${repo_root}" && git rev-parse --short HEAD ) 2>/dev/null )" || head_sha=""
+echo "== source tree: ${repo_root} at ${head_sha:-(no commit)}:" \
+     "$(count_lines "${tree_before}") files, checksum $(sum_of "${tree_before}")"
 # `grep -c` over `wc -l`: `wc` pads its count on some BSDs, which would make a
 # clean tree compare unequal to `0` below.
-dirty="$(cd "${repo_root}" && git status --porcelain 2>/dev/null | grep -c '' || true)"
-if [ -n "${dirty}" ] && [ "${dirty}" != "0" ]; then
-  echo "   ${dirty} path(s) differ from HEAD, so this run describes the working tree, not a commit"
+#
+# The exit status of `git status` is asked for separately because it matters: a git that refuses
+# this repository -- an index it cannot read, an owner it will not trust, no git on PATH -- exits
+# non-zero with nothing on stdout, and piping into `grep -c ''` turned that into the count zero,
+# which is the sentence a clean tree earns. Silence and "clean" were the same output.
+status_err="${tree_dir}/status.err"
+status="$(cd "${repo_root}" && git status --porcelain 2>"${status_err}")" && status_rc=0 || status_rc=$?
+if [ "${status_rc}" -ne 0 ]; then
+  echo "   git status exited ${status_rc}, so this run cannot say whether the tree matches any"
+  echo "   commit: $(head -n 1 "${status_err}")"
+elif [ -n "${status}" ]; then
+  echo "   $(printf '%s\n' "${status}" | grep -c '') path(s) differ from HEAD, so this run describes the working tree, not a commit"
 fi
 
 # The repo is bind-mounted from a host user, so git inside the container sees a
@@ -182,6 +239,13 @@ gates=(
   "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
   "documented commands: python3 scripts/ci/test-check-evidence-commands.py && python3 scripts/ci/check-evidence-commands.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
+  # The complement of guard wiring, which accounts for `scripts/ci/` only. The acceptance labs one
+  # directory up -- `scripts/*-in-docker.sh` -- were nobody's: five of the six had never been named
+  # by a workflow, and their transcripts were two days behind thirty-odd commits. A lab either has
+  # to be named on an executable line of a workflow, or carry a dated row in
+  # `scripts/ci/docker-labs.tsv` saying what CI cannot supply; a row past its date budget fails the
+  # same way, and names the command that would refresh it.
+  "Docker lab coverage: python3 scripts/ci/test-check-lab-coverage.py && python3 scripts/ci/check-lab-coverage.py"
   # The host gate runner reads the array below, so it is checked from inside it: the
   # fixture cases of scripts/verify-gates.sh --self-test include parsing this real file,
   # which fails here if the entry format changes and no local runner notices.
@@ -196,7 +260,7 @@ gates=(
   # No argument on purpose: the CI step runs it with none, and pointing this one at
   # ci.yml alone left release.yml -- the workflow with the Windows matrix, which is
   # the whole reason the check exists -- unexamined locally.
-  "workflow shells: python3 scripts/ci/check-workflow-shells.py"
+  "workflow shells: python3 scripts/ci/test-check-workflow-shells.py && python3 scripts/ci/check-workflow-shells.py"
   "workflow toolchain: python3 scripts/ci/test-check-workflow-toolchain.py && python3 scripts/ci/check-workflow-toolchain.py"
   "workflow yaml: python3 scripts/ci/test-check-workflow-yaml.py && python3 scripts/ci/check-workflow-yaml.py"
   "script portability: python3 scripts/ci/check-script-portability.py && python3 scripts/ci/test-script-portability.py"

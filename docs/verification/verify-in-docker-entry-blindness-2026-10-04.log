@@ -1,0 +1,410 @@
+# A container run could not tell a tree it had read from one it had not (2026-10-04)
+
+`scripts/verify-in-docker.sh` fingerprints the checkout before the first gate and again after
+the last one, and the verdict line it prints at the end is attributed to that pair. Until this
+batch, neither half of the fingerprint could report that it had failed, and the line that
+reports whether the tree matches a commit read `git status`' output while discarding its exit
+status.
+
+Five shapes were measured against both revisions of the script: the same broken repository run
+twice, once with `scripts/verify-in-docker.sh` at `36d0809e` and once with the version in this
+batch. Four of the five ended the run without a verdict at all -- silently, with nothing
+printed about why. The fifth printed a full green verdict over a repository whose listing was
+empty, which is the case where the run said something false rather than nothing.
+
+Every transcript below is copied from those paired runs. Each repository was built by the
+shipped fixtures (`scripts/ci/test-verify-in-docker.py`), so the reproduction is the fixture
+suite rather than a hand-built directory.
+
+== 0. The two lines, before and after
+
+At `36d0809e`, `scripts/verify-in-docker.sh:149-160`:
+
+    fingerprint() { # fingerprint <output-file>
+      ( cd "${repo_root}" && git ls-files -co --exclude-standard -z | xargs -0 cksum ) >"$1"
+    }
+
+    sum_of() { cksum <"$1" | cut -d' ' -f1; }
+
+    fingerprint "${tree_before}"
+    echo "== source tree: $(grep -c '' "${tree_before}") files, checksum $(sum_of "${tree_before}")"
+    dirty="$(cd "${repo_root}" && git status --porcelain 2>/dev/null | grep -c '' || true)"
+    if [ -n "${dirty}" ] && [ "${dirty}" != "0" ]; then
+      echo "   ${dirty} path(s) differ from HEAD, so this run describes the working tree, not a commit"
+    fi
+
+Three properties of that shape matter together. `fingerprint` has no exit status of its own:
+the function body is one pipeline, so what it returns is whatever the pipeline returns, and
+nothing at the call site looked. `2>/dev/null` on `git status` throws away the only text that
+would explain a refusal. And `| grep -c ''` turns whatever happened before it into a number --
+including a refusal, whose count of zero is the sentence a clean tree earns.
+
+== 1. The same five broken repositories, run twice
+
+The driver builds each repository, then runs the fixture's copy of the entry point at each
+revision with `--only "tree ownership"`, so one gate runs and the only difference is the
+script. `stub-image:tag` is the fixture's `docker` stub, which records every invocation; `|`
+lines are its stdout and `!` lines its stderr, exactly as the driver captured them.
+
+### A. `git` refuses the repository
+
+Reachable without any contrivance: `detected dubious ownership in repository` is the reason
+the container side of this same script carries a `safe.directory` bootstrap. The fixture
+reproduces the exit status and the stderr, which is all the script can see.
+
+    --- HEAD 36d0809e: exit=128
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        ! fatal: detected dubious ownership in repository at "/src"
+    --- with the fix: exit=1
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        ! fatal: detected dubious ownership in repository at "/src"
+        ! fingerprint: git ls-files -co --exclude-standard exited 128 after naming 0 path(s) in /tmp/tmp8d1k0a3v/repo
+        !    a fingerprint over too few paths compares equal to the same too-few paths taken
+        !    after the gates, so a verdict from this run could not be attributed to a commit.
+        !    Is /tmp/tmp8d1k0a3v/repo a repository git will read?
+
+At `36d0809e` the run stops at exit 128 with nothing of its own to say: `git`'s message is on
+stderr, but the exit status is `git`'s, propagated through a function that never looked at it.
+The image-build lines above it are the last thing a reader sees before the `fatal:`, and they
+succeeded.
+
+### B. `git` is healthy and the listing comes back empty
+
+The tree's own ignore rules cover everything, and the index has been emptied, so `git ls-files
+-co --exclude-standard` legitimately reports no paths and exits 0.
+
+    --- HEAD 36d0809e: exit=0
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        | == source tree: 1 files, checksum 3871339299
+        |    5 path(s) differ from HEAD, so this run describes the working tree, not a commit
+        | == --only is in effect: 1 of 36 gates selected, this is not a sweep
+        | 
+        | == preflight: container can read the repository
+        | preflight: OK
+        | 
+        | == tree ownership
+        | stub gate ran: python3 scripts/ci/test-check-tree-ownership.py && python3 scripts/ci/check-tree-ownership.py
+        | 
+        | selected gates passed in stub-image:tag
+        |   --only was in effect: 1 of 36 gates ran, so this is not a full sweep
+    --- with the fix: exit=1
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        ! fingerprint: git ls-files -co --exclude-standard exited 0 after naming 0 path(s) in /tmp/tmptf6yygye/repo
+        !    a fingerprint over too few paths compares equal to the same too-few paths taken
+        !    after the gates, so a verdict from this run could not be attributed to a commit.
+        !    Is /tmp/tmptf6yygye/repo a repository git will read?
+
+This is the one that prints something false rather than nothing. `== source tree: 1 files` is
+not one file's worth of fingerprint: the sums file is one line because GNU `xargs` runs its
+command once on empty input, so `cksum` was handed no file arguments at all and read its own
+standard input. The number on that line counts lines of the sums file, which is what both the
+old `grep -c ''` and the new `count_lines` do, so it agrees perfectly with the number of
+checksums taken and tells you nothing about the number of paths. The run then gates that tree
+and reports `selected gates passed`, and the after-image is the same checksum of nothing, so
+the movement check agrees with itself too.
+
+The empty-listing check is also the only thing between this script and `xargs -0 cksum`
+reading a terminal: on a developer's machine, with stdin a tty, that call blocks.
+
+### C. `git` dies partway through the listing
+
+A listing that stops after three of the repository's paths, with `git` exiting 128. No real
+repository produces this on demand, which is why it is a stub `git` rather than a setup.
+
+    --- HEAD 36d0809e: exit=128
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+    --- with the fix: exit=1
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        ! fingerprint: git ls-files -co --exclude-standard exited 128 after naming 3 path(s) in /tmp/tmpxcl2_dle/repo
+        !    a fingerprint over too few paths compares equal to the same too-few paths taken
+        !    after the gates, so a verdict from this run could not be attributed to a commit.
+        !    Is /tmp/tmpxcl2_dle/repo a repository git will read?
+
+`36d0809e` dies with no output at all, not even a failing command to point at. The fixed
+version says how far the listing got, which is the part that decides whether the checksum is
+short or merely late.
+
+That count of paths had to be counted properly to be worth printing. The first version reused
+`count_lines`, and the shipped fixture's listing contains a path with a newline in its name,
+which is legal in git: GNU `grep -c ''` counts NUL-separated segments, so a newline inflated
+the number the message exists to make trustworthy. `count_paths` counts NUL bytes instead,
+which is what the shipped fixture's variant with the newline-bearing name pins.
+
+### D. A path `git` lists and `cksum` cannot open
+
+A tracked symlink whose target does not exist. A `chmod 000` file would not do as well:
+`cksum` runs as root inside the container in the real deployment, and a broken link is
+unreadable at any uid.
+
+    --- HEAD 36d0809e: exit=123
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        ! cksum: dangling: No such file or directory
+    --- with the fix: exit=1
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        ! cksum: dangling: No such file or directory
+        ! fingerprint: cksum summed only 5 of 6 listed file(s) from /tmp/tmpstnpq4c3/repo (exit 123)
+        !    a partial fingerprint is compared against the run's own after-image and agrees
+        !    with it, so the verdict would name a commit this run did not actually read.
+
+The sums file here is short rather than empty, which is the case a `-s` test cannot see. Both
+images would be short in the same way, so the comparison the script exists to perform agrees
+with itself about a tree it never finished reading.
+
+### E. `git` refuses `status`
+
+    --- HEAD 36d0809e: exit=0
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        | == source tree: 5 files, checksum 3305271461
+        | == --only is in effect: 1 of 36 gates selected, this is not a sweep
+        | 
+        | == preflight: container can read the repository
+        | preflight: OK
+        | 
+        | == tree ownership
+        | stub gate ran: python3 scripts/ci/test-check-tree-ownership.py && python3 scripts/ci/check-tree-ownership.py
+        | 
+        | selected gates passed in stub-image:tag
+        |   --only was in effect: 1 of 36 gates ran, so this is not a full sweep
+    --- with the fix: exit=0
+        | == building stub-image:tag from docker.io/library/debian:bookworm-slim
+        | sha256:stubbed
+        | == preparing cargo cache volumes
+        | == source tree: /tmp/tmpkik3l2m8/repo at 0b37745: 5 files, checksum 1736566262
+        |    git status exited 128, so this run cannot say whether the tree matches any
+        |    commit: fatal: unable to read object database
+        | == --only is in effect: 1 of 37 gates selected, this is not a sweep
+        | 
+        | == preflight: container can read the repository
+        | preflight: OK
+        | 
+        | == tree ownership
+        | stub gate ran: python3 scripts/ci/test-check-tree-ownership.py && python3 scripts/ci/check-tree-ownership.py
+        | 
+        | selected gates passed in stub-image:tag
+        |   --only was in effect: 1 of 37 gates ran, so this is not a full sweep
+
+`36d0809e` prints the fingerprint, prints nothing about the tree's relationship to any commit,
+and goes on to run the gates. An absent caveat line is read as a clean tree, because that is
+exactly what the code writes for a clean tree: nothing. The fixed version prints the refusal
+and `git`'s own first line, and still runs the gates, because a `git` that cannot do `status`
+does not stop a container from checking code.
+
+The `1 of 36` versus `1 of 37` difference is the same run's own gate count: this batch adds
+the `Docker lab coverage` gate, recorded in
+`docs/verification/docker-lab-coverage-2026-10-04.log`.
+
+== 2. The fixtures, and which of them the old code failed
+
+The 34-case suite was run against `36d0809e`'s copy of the script with everything else from
+this batch in place -- the fixtures copy the entry point under test into a one-shot git
+repository, so swapping that one file is the whole experiment:
+
+    $ python3 scripts/ci/test-verify-in-docker.py     # against scripts/verify-in-docker.sh at 36d0809e
+    ERROR: test_a_file_nobody_committed_is_counted_and_declared (__main__.VerdictTests)
+    FAIL: test_a_checkout_where_nothing_is_listed_stops_the_run (__main__.VerdictTests)
+    FAIL: test_a_git_that_refuses_status_says_so_rather_than_implying_a_clean_tree (__main__.VerdictTests)
+    FAIL: test_a_listed_file_that_cannot_be_read_stops_the_run (__main__.VerdictTests)
+    FAIL: test_a_listing_git_died_partway_through_stops_the_run (__main__.VerdictTests)
+    FAIL: test_a_repository_git_will_not_read_stops_the_run (__main__.VerdictTests)
+    FAIL: test_a_tree_at_rest_prints_one_checksum_and_no_caveat (__main__.VerdictTests)
+    FAIL: test_a_tree_with_no_commit_says_no_commit_rather_than_printing_nothing (__main__.VerdictTests)
+    FAIL: test_the_fingerprint_line_says_which_checkout_it_describes (__main__.VerdictTests)
+    Ran 34 tests in 2.745s
+    FAILED (failures=8, errors=1)
+
+Seven of the nine are the behaviour above: five assert an exit status and a message the old
+code never produced (`AssertionError: 128 != 1`, `123 != 1`, `0 != 1` -- the `0 != 1` is case
+B), and two assert the checkout and commit now named on the fingerprint line. Two are not
+evidence about the old code and are labelled as such here:
+`test_a_tree_at_rest_prints_one_checksum_and_no_caveat` and
+`test_a_file_nobody_committed_is_counted_and_declared` parse that line with a regular
+expression that expects the new fields, so they fail against the old wording whatever the old
+code did. The ninth case that this batch added,
+`test_a_second_checksum_that_fails_blames_the_tree_not_a_path`, passes at `36d0809e` as well:
+the `|| fingerprint_ok=no` on the after-image call was already there, and this batch left it
+alone.
+
+The eleven mutants for this file, with the fixture that caught each, are in section 8 of
+`docs/verification/docker-lab-coverage-2026-10-04.log`.
+
+== 3. A mutation that could not be written
+
+The driver was asked to kill one more mutant: drop `|| exit 1` from `fingerprint
+"${tree_before}" || exit 1`, leaving the call bare. It survived, and the reason is that it is
+not a mutant at all. The script runs under `set -e`, so a function call that returns non-zero
+already ends the script at the same line, with the same output. The `|| exit 1` makes that
+explicit for the reader and buys nothing observable.
+
+The honest options were to keep a mutant that proves nothing, or to drop it and say so here.
+It was dropped. What the fixture does prove is the pair a reader can actually rely on: the
+message on stderr and the exit status of 1, asserted together, plus `self.fx.gate_runs() ==
+[]`, which is the assertion that a run which cannot fingerprint itself runs no gate at all.
+
+== 4. A checksum that cannot be reproduced, and what that says about the line
+
+The `--full` container run of 2026-10-04 printed:
+
+    == source tree: 4020 files, checksum 2692478763
+
+Re-measuring that fingerprint today, in the very directory that run was launched from, which
+is still at `36d0809e` and still clean:
+
+    $ cd /var/tmp/labcov-full-36d0809e
+    $ git log --oneline -1
+    36d0809e fix(ci): `--only ""` 在两个 runner 上都不是过滤器，容器门禁入口第一次有自己的夹具
+    $ git status --porcelain | wc -l
+    0
+    $ git ls-files -co --exclude-standard -z | tr -dc '\0' | wc -c
+    4020
+    $ git ls-files -co --exclude-standard -z | xargs -0 cksum | cksum
+    3045864519 303226
+
+A fresh `file://` clone of `36d0809e` agrees with that second number, not with the printed
+one: 4020 paths, `3045864519`. A third measurement the same day, a container run of the entry
+point's own fixtures launched from a fresh clone of the same revision, printed the same
+`4020 files, checksum 3045864519` on its way to its gate
+(`docs/verification/container-entry-fixtures-2026-10-04.log`, section 8). So the count matches
+and the checksum does not.
+
+This is not explained, and it is stated rather than smoothed over. What can be said:
+
+- The new failure modes would not have caught it. `git` exited 0, the listing was complete and
+  non-empty, and every path was readable. Every check in section 1 passes on this tree.
+- The difference is in contents, not in which paths were read, because the path count agrees.
+- The listing was written to a file in a `mktemp -d` directory removed by the script's `EXIT`
+  trap,
+  so the per-path sums that produced `2692478763` no longer exist and cannot be diffed against
+  today's.
+
+What the line lacked was not a better checksum but an identity: it named neither the directory
+it fingerprinted nor the commit it was taken at, so a transcript's number can only be
+re-measured by guessing which of the several checkouts on this machine it came from. The
+fingerprint line now carries both, which is what section 1's case E output shows (`== source
+tree: /tmp/tmpkik3l2m8/repo at 0b37745: 5 files, checksum 1736566262`), and a repository whose
+history has no commit prints `at (no commit)` rather than an empty field that reads as a
+truncated sha. That is a small honesty fix, not a fix for the mismatch above; the mismatch
+stays open here, and if it recurs on a run whose line now names its directory and its commit,
+the next measurement has something to start from.
+
+== 5. The gate written for this hazard fired on this batch's own new line
+
+Section 4's `scripts/verify-gates.sh` sweep was red, and the single failing gate was about the
+batch's own code. The `pipefail report` gate exists for the `grep -c ''` class of bug that
+this whole log is about. The `count_paths()` function added in this batch was an instance of
+it:
+
+    $ scripts/verify-gates.sh
+    == gates extracted from /home/chaos/hunt/dev/projects/chaos-code/scripts/verify-in-docker.sh
+       host run: the ${bootstrap} prefix is dropped, build gates are skipped
+       env: RUST_MIN_STACK=16777216 (mirrors the container's --env; set it to override)
+    PASS  toolchain matches the pin
+    (… 17 PASS lines elided here)
+    PASS  script portability
+    FAIL  pipefail report (exit 1)
+    (… the 17-test log elided here; the failing test's own message is quoted below)
+    PASS  container hygiene
+    (… 15 PASS lines and 4 SKIP lines elided here)
+
+    FAILED gates: pipefail report
+    35 gate(s) run, 4 skipped, 1 failed
+
+The gate runs `test-check-pipefail-report.py && check-pipefail-report.py`, so what failed
+inside that entry was the test's anti-vacuity case, which runs the checker over this
+repository and asserts exit 0. Its assertion message carries the finding:
+
+    FAIL: test_repository_is_clean_and_actually_scanned (__main__.PipefailReportTests)
+    ----------------------------------------------------------------------
+    Traceback (most recent call last):
+      File "/home/chaos/hunt/dev/projects/chaos-code/scripts/ci/test-check-pipefail-report.py", line 275, in test_repository_is_clean_and_actually_scanned
+        self.assertEqual(proc.returncode, 0, f"stderr: {proc.stderr}")
+    AssertionError: 1 != 0 : stderr: scripts/verify-in-docker.sh:155: bytes="$(tr -dc '\0' <"$1" | wc -c)"
+        wc: exits non-zero when its input cannot be read
+        fix: the non-zero status here is a normal answer, and a plain assignment hands it to `set -e`; use a command without that status (`sed '/^$/d'`, `awk 'NF { n += 1 } END { print n + 0 }'`) or absorb it explicitly with `|| true` so the handling below stays reachable
+    pipefail-report: 1 assignment(s) that can end an errexit script before it prints its report
+
+`count_paths()` is called from inside the branch of `fingerprint()` that explains a
+fingerprint which could not be taken. Under `set -euo pipefail` a `wc -c` that cannot read its
+input exits non-zero, and inside a bare assignment that status reaches `errexit`: the run ends
+on the counting line and the explanation it was in the middle of producing is never printed.
+The accounting path was the thing that could break and it could not survive breaking, which is
+the same shape as `grep -c ''` printing `0` while exiting `1`. `count_lines()` had carried its
+`|| true` since the day it was written; the new function did not. No fixture of the entry
+point would have said so: with the `|| true` removed, all 34 of them still pass (`Ran 34 tests
+in 3.296s` then `OK`), because the counting succeeds in every one of them and only an
+unreadable input makes it exit non-zero. The repository-wide scan of the shape is what catches
+it.
+
+The fix is the two tokens the remedy line names, with the reason beside them in
+`scripts/verify-in-docker.sh`. The line number differs between the two quotes above (155
+there, 159 below) because the comment above the function grew between the two measurements.
+
+To see it fire, take the `|| true` out of that line and re-run the checker. It costs about two
+seconds and needs no container and no network. The restore keeps its own copy instead of using
+`git checkout --`, because while a batch is still uncommitted the index holds the pre-fix
+revision, which is what a checkout hands back; that happened once while these numbers were
+being taken, and the saved copy is what caught it:
+
+    $ cp scripts/verify-in-docker.sh /var/tmp/keep-verify-in-docker.sh
+    $ sed -i 's/ | wc -c || true)"/ | wc -c)"/' scripts/verify-in-docker.sh
+    $ python3 scripts/ci/check-pipefail-report.py; echo "exit $?"
+    scripts/verify-in-docker.sh:159: bytes="$(tr -dc '\0' <"$1" | wc -c)"
+        wc: exits non-zero when its input cannot be read
+        fix: the non-zero status here is a normal answer, and a plain assignment hands it to `set -e`; use a command without that status (`sed '/^$/d'`, `awk 'NF { n += 1 } END { print n + 0 }'`) or absorb it explicitly with `|| true` so the handling below stays reachable
+    pipefail-report: 1 assignment(s) that can end an errexit script before it prints its report
+    exit 1
+    $ python3 scripts/ci/test-check-pipefail-report.py 2>&1 | tail -3
+    Ran 17 tests in 1.267s
+
+    FAILED (failures=1)
+    $ cp /var/tmp/keep-verify-in-docker.sh scripts/verify-in-docker.sh
+    $ cmp /var/tmp/keep-verify-in-docker.sh scripts/verify-in-docker.sh && echo restored
+    restored
+    $ python3 scripts/ci/check-pipefail-report.py
+    pipefail-report: OK (31 shell script(s), 23 with `set -e` scanned, 0 hazard assignment(s))
+
+With the two tokens back, the sweep that opened this section is green again:
+
+    $ scripts/verify-gates.sh 2>&1 | tail -1
+    all gates passed on the host (35 run, 4 skipped)
+
+== 6. Reproduce it
+
+The fixtures need `git`, `python3` and a `bash`, and no Docker and no network:
+
+    $ python3 scripts/ci/test-verify-in-docker.py
+    (34 per-test "ok" lines elided; the timing line varies per run)
+    Ran 34 tests in 3.196s
+
+    OK
+
+To see the paired old-versus-new behaviour, copy the entry point from `36d0809e` over the
+working tree's and re-run the suite, then restore:
+
+    $ cp scripts/verify-in-docker.sh /var/tmp/keep-verify-in-docker.sh
+    $ git show 36d0809e:scripts/verify-in-docker.sh >scripts/verify-in-docker.sh
+    $ python3 scripts/ci/test-verify-in-docker.py      # 9 of 34 fail
+    $ cp /var/tmp/keep-verify-in-docker.sh scripts/verify-in-docker.sh
+    $ cmp /var/tmp/keep-verify-in-docker.sh scripts/verify-in-docker.sh && echo restored
+
+Against the real container the same line is printed by any run, and `--only` keeps it to one
+gate:
+
+    $ scripts/verify-in-docker.sh --only "Docker lab coverage"

@@ -41,10 +41,18 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_WORKFLOWS = [
-    Path(".github/workflows/ci.yml"),
-    Path(".github/workflows/release.yml"),
-]
+WORKFLOW_DIR = Path(".github/workflows")
+
+
+def default_workflows() -> list[Path]:
+    """Every workflow in `.github/workflows`, rather than a list of names in a file.
+
+    All three workflow gates used to hard-code `ci.yml` and `release.yml`, so a third
+    file -- `docker-labs.yml`, added in the same change as this comment -- would be
+    checked by none of them. For this gate that is the worst case of the three: a file
+    nobody parses is a file whose syntax error switches off the guards inside it.
+    """
+    return sorted(WORKFLOW_DIR.glob("*.yml"))
 
 # `key: value`, `key:` and `- key: value`, with the value split off. Keys here are
 # workflow vocabulary or shell text; anything else falls through to the scalar branch.
@@ -140,7 +148,10 @@ def check_text(text: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    paths = [Path(a) for a in argv[1:]] or DEFAULT_WORKFLOWS
+    paths = [Path(a) for a in argv[1:]] or default_workflows()
+    if not paths:
+        print("workflow yaml: no workflow files found -- refusing to pass", file=sys.stderr)
+        return 1
     missing = [p for p in paths if not p.is_file()]
     if missing:
         print("workflow yaml: no such file(s): " + ", ".join(str(m) for m in missing), file=sys.stderr)

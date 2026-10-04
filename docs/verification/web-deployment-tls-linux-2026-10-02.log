@@ -78,3 +78,39 @@
 
 == summary
 all 41 TLS deployment checks passed against nginx:1.27-alpine + chaos-verify:local
+
+
+## Re-run 2026-10-04: the same 41 checks, now on a schedule the repository owns
+
+The deployment contract did not move between the run above and this one. What moved is who
+runs it. `scripts/web-deployment-in-docker.sh` is now named on an executable line of
+`.github/workflows/docker-labs.yml`, a job that fires at 03:17 UTC every day and can also be
+started by hand, and `scripts/ci/check-lab-coverage.py` is the rule that refuses a lab named
+by nobody. This run is that scheduled command run by hand, at 15:44 +0800, on the tree at
+`36d0809e`, which is 70 commits past `0e89f3fc` -- the commit that added this lab and the
+transcript above together.
+
+    $ bash scripts/web-deployment-in-docker.sh
+
+    == building the Web host on this machine
+        Finished `dev` profile [unoptimized] target(s) in 1m 03s
+       the container runs this binary: 20M
+
+    == issuing a lab CA and a certificate for chaos.test
+       chain verifies: Oct  6 07:44:20 2026 GMT
+
+    == starting the backend, the proxy, and a machine that should stay outside
+       backend address on the shared network: 172.19.0.2:8787
+       the backend listens on loopback only, and nginx shares that namespace
+
+    [41 check lines elided: quoted in full in the 2026-10-02 run above]
+
+    == summary
+    all 41 TLS deployment checks passed against nginx:1.27-alpine + chaos-verify:local
+
+Exit status 0, 124 lines. Every `ok` line is byte-identical to the run above: the 41 lines
+starting `   ok` were extracted from each transcript and `diff` reports no difference. So the
+differences between the two runs are the ones a re-run has to have -- the build took 1m 03s
+instead of 0.48s because the earlier run hit a warm target directory, the binary the container
+ran is 20M where 19M was recorded, and the leaf certificate expires on Oct 6 2026 rather than
+Oct 4 -- and not differences in what a TLS deployment consists of.

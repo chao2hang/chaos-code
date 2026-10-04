@@ -269,3 +269,97 @@ differing versions, and the escape hatches are asserted absent rather than teste
 still names `88511413`, and `cmp` of the file at `1487aded` against the file at `ef33dfd9` (the head
 pushed on 2026-10-03) reports no difference. So this transcript still describes the installer that is
 on `main`, and no re-run is owed for the commits since.
+
+
+## Re-run 2026-10-04: 19/19 again, one installer commit later, on a mirror nobody vetted
+
+The re-run above is dated 2026-10-03. `scripts/install.sh` has been touched once since then,
+by `021b5453` (2026-10-04), the commit that stopped the mirror loop from dying on a failed
+`wc`; the lab had not run since. It is green: the same 19 counted checks, and all 20 of its
+`ok` lines are byte-identical to the run above (`diff` over the extracted lines reports
+nothing). The installer the container ran is the working-tree copy, which `cmp` finds
+identical to `scripts/install.sh` at `36d0809e`, so the result belongs to that commit.
+
+    $ bash scripts/install-sh-in-docker.sh
+
+    == the machine doing the installing
+       image:        debian:bookworm-slim (stock Debian; no cargo, no repo, no prior install)
+       installer:    scripts/install.sh (working tree)
+       repo:         chao2hang/chaos-code
+       built-in key: A+938NxEPRqBrn6P/393upsO4Arcdwt3/H6F2eC8aHM=
+       keep-alive:   the container stops after 21600s; a longer download needs CHAOS_LAB_KEEPALIVE
+       ok  container is up: Linux 6.8.0-138-generic x86_64
+       ok  prerequisites install from distro packages: curl, python3, python3-cryptography
+       python3 3.11.2, cryptography 38.0.4
+       ok  no prior install to inherit: no ~/.chaos, no chaos on PATH, no cargo
+       ok  the built-in key is the repository's CHAOS_SIGNING_PUBLIC_KEY
+
+    == the command README tells users to run
+       ok  the published https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh is byte-identical to the script under test
+         | Chaos installer
+         |   repo:    chao2hang/chaos-code
+         |   version: 0.4.2
+         |   asset:   chaos-linux-x64
+         |   store:   /root/.chaos/downloads/chaos-0.4.2-linux-x86_64
+         |   dest:    /root/.chaos/bin/chaos -> ../downloads/chaos-0.4.2-linux-x86_64
+         |   origin:  https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+         |   mirror:  origin first, then public fallbacks
+         | downloading...
+         |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+         |   try: https://ghfast.top/https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+         |   from: https://ghfast.top/https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+         |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/SHA256SUMS
+         | checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+         | signature OK
+         | installed: /root/.chaos/bin/chaos -> ../downloads/chaos-0.4.2-linux-x86_64
+         | chaos 0.4.2 (8503250745ff)
+         | appended PATH export to /root/.bashrc
+         | 
+         | OK. Verify (this session may need PATH first — curl|bash does not update the parent shell):
+         |   export PATH="/root/.chaos/bin:$PATH"
+         |   chaos --version
+         | Or use the full path: /root/.chaos/bin/chaos --version
+         | New terminals pick up PATH from your shell rc automatically.
+       ok  install.sh exited 0 with no CHAOS_SIGNING_PUBLIC_KEY in the environment
+       ok  the digest was checked: checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+       ok  the signature was checked: signature OK
+
+    [the checks on what landed on disk, and the second run, elided: quoted in full in the run
+     above]
+
+    == controls: the signature check has to be able to say no
+       ok  the controls really do set CHAOS_SIGNING_PUBLIC_KEY in the child's environment
+       ok  a blank key is refused before any download starts
+         |   from: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+         |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/SHA256SUMS
+         | checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+         | error: signature verification FAILED for chaos-linux-x64
+         |   The binary may have been tampered with. Refusing to install.
+         |   To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1.
+       ok  a valid-but-foreign key is refused with 'signature verification FAILED'
+       ok  the refused install left the working artifact untouched (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+
+    all 19 check(s) passed
+
+Exit status 0, 81 lines, finished 16:40 +0800.
+
+**One thing the transcript shows that the green does not cover.** In the section above, the
+fetch lines come out in this order: `try:` the origin, then `try:` the mirror, then `from:`
+the mirror. The origin was tried, dropped, and the 161,233,728-byte artifact (`content-length`
+from `curl -sIL` against that URL today) came from `ghfast.top` instead -- and a run that
+succeeds this way says nothing about why origin was skipped. `download_github` collects every
+candidate's reason in `reasons`, but prints them only on the `download failed for` path
+(`scripts/install.sh:335`-`341`), so the reasons for the candidates that lost are thrown away
+the moment one candidate wins. A user who gets a working install from a mirror has no way to
+learn that origin was unreachable, or answered with an HTML error page, or truncated -- which
+is the same information the 2026-10-03 section above needed and could not get.
+
+The same call site is the one fetch in the installer with no ceiling: `scripts/install.sh:530`
+is `download_github "$ORIGIN_URL" "$TMP" 12 0 1048576`, so `max_time` is 0 and `--max-time` is
+never added, and no `--speed-limit` is passed either. That is deliberate -- the comment above
+it says a 140 MB+ asset must not be cut off mid-transfer -- but with origin-first ordering it
+means a candidate that trickles bytes holds the run for as long as it likes, and "downloading
+at 3 KB/s" is indistinguishable from "hung". The lab cannot see this either: it waits for the
+installer rather than bounding it, and its only ceiling, `CHAOS_LAB_KEEPALIVE`, stops the
+container rather than the fetch. Recorded against the installer as an open item rather than
+turned into a red here, because every check the lab makes did pass.

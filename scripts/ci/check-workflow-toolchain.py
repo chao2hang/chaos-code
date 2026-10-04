@@ -43,10 +43,17 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_WORKFLOWS = [
-    Path(".github/workflows/ci.yml"),
-    Path(".github/workflows/release.yml"),
-]
+WORKFLOW_DIR = Path(".github/workflows")
+
+
+def default_workflows() -> list[Path]:
+    """Every workflow in `.github/workflows`, rather than a list of names in a file.
+
+    All three workflow gates used to hard-code `ci.yml` and `release.yml`, so a third
+    file -- `docker-labs.yml`, added in the same change as this comment -- installed
+    nothing and needed nothing as far as any gate was concerned.
+    """
+    return sorted(WORKFLOW_DIR.glob("*.yml"))
 
 
 class Tool:
@@ -276,7 +283,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--verbose", action="store_true", help="print every detected need")
     args = parser.parse_args(argv)
 
-    targets = args.workflows or [p for p in DEFAULT_WORKFLOWS if p.exists()]
+    targets = args.workflows or default_workflows()
     if not targets:
         print("check-workflow-toolchain: no workflow files found -- refusing to pass",
               file=sys.stderr)

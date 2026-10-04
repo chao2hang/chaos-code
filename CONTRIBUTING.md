@@ -115,6 +115,17 @@ container reads the live working tree, so a run that overlapped an edit describe
 neither a commit nor a clean tree, and a `cargo test` leg that raced an editor looks
 exactly like a genuine failure. Run it with the tree at rest.
 
+Both halves of that fingerprint have to say what they could not see, and for a while
+neither could. `fingerprint()` was a bare pipeline whose status nobody read, so a
+`git` that refused the repository (`detected dubious ownership` is the shape that
+happens for real) ended the run with `git`'s exit code and no word of its own; an
+empty listing, which `git` returns happily when the tree's ignore rules cover
+everything, printed `== source tree: 1 files` and let the run gate that tree and
+report a pass over a checkout it had read none of. The line now names the directory it
+fingerprinted and the commit it was taken at (`at (no commit)` when history has none),
+and a failure says how far the listing got. Read that line before trusting a verdict:
+a run that cannot say which checkout it read cannot attribute anything to a commit.
+
 Behind a registry mirror, point the build at your own base image:
 
 ```sh
@@ -147,6 +158,40 @@ entry point and each workflow. A flag only one side passes stays legal, because
 `--require` is deliberately Windows-leg-only and the container cannot satisfy it, but
 a flag both sides pass has to carry the same values in both -- which means lowering a
 budget is a one-commit change to two files.
+
+### Acceptance labs have to keep being run
+
+`scripts/*-in-docker.sh` is six acceptance labs: the container gate runner, an
+installer integrity run, an `install.sh` run, an `npm install` run, a TLS-terminating
+web deployment, and the remote-workspace acceptance run. Each builds a real image and
+drives a real container, so none of them is cheap -- and none of them is evidence once
+it goes stale. As of 2026-10-04, four of the six were named by no workflow at all;
+their most recent run was 48 to 70 commits behind the tree, and their green verdicts
+lived only in `docs/verification/` transcripts, which do not turn red when you break
+`install.sh`.
+
+`scripts/ci/check-lab-coverage.py` is the rule. A lab is either named on an executable
+line of some workflow, or it carries a dated row in `scripts/ci/docker-labs.tsv` less
+than 30 days old. `--list` prints which of the two applies to each lab. The ledger
+columns are `script`, `category`, `transcript`, `last_run`, `last_sha`, `verdict` and
+`reason`, and `verdict` is what the run actually said: the npm row reads `red`, with
+the reason next to it (two pinned platform packages are published only as security
+placeholders, which is a release action this repository does not perform from CI).
+There is no allow list, so a lab nobody schedules has to keep re-earning its row by
+hand, and a lab whose verdict CI could produce has no row to hide behind.
+
+`.github/workflows/docker-labs.yml` is the schedule for the two labs that fit one: it
+rebuilds the verification image nightly and runs the web-deployment and
+remote-workspace labs against it. `ci.yml` runs the coverage check itself, and the
+entry point's `gates` array runs the check's fixtures first, so a ledger that has
+quietly gone stale is caught by both roots.
+
+The three workflow guards (`check-workflow-yaml.py`, `check-workflow-shells.py`,
+`check-workflow-toolchain.py`) discover every file under `.github/workflows/` instead
+of a hard-coded pair, and fail when discovery finds nothing. They used to name
+`ci.yml` and `release.yml`, which meant that adding a workflow was also the day it
+stopped being checked -- the lab workflow above is the first file that would have
+vanished from all three.
 
 ### Commands you write down are read
 

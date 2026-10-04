@@ -1,0 +1,493 @@
+# Four of the six Docker labs were named by no workflow (2026-10-04)
+
+`scripts/` ships six files ending in `-in-docker.sh`: five acceptance labs that build a real
+binary or download a real artifact and interrogate it inside a container that has never seen
+this repository, plus `scripts/verify-in-docker.sh`, the container entry point that owns the
+gate list. On 2026-10-04 two of those six were named by a workflow. The other four were read
+by nothing at all: their verdicts belonged to whoever happened to remember to run them.
+
+This batch adds `scripts/ci/check-lab-coverage.py`, which asks of each of the six: does a
+workflow name it on an executable line, or does it carry a dated row in
+`scripts/ci/docker-labs.tsv` saying what CI cannot supply. It wires the two labs whose verdict
+is about the commit under test into `.github/workflows/docker-labs.yml`, and re-runs the other
+four so the ledger starts full and current rather than asserting a coverage nobody measured.
+
+Everything quoted below is copied verbatim out of runs on 2026-10-04. The four lab re-runs are
+recorded in the transcripts they belong to, each under a `## Re-run 2026-10-04` heading; this
+file records the coverage rule around them.
+
+== 0. What is in this batch
+
+    scripts/ci/check-lab-coverage.py              new gate: lab coverage, with a date on it
+    scripts/ci/test-check-lab-coverage.py         new fixtures, 33 cases
+    scripts/ci/docker-labs.tsv                    new ledger: 3 rows, one per lab CI cannot run
+    .github/workflows/docker-labs.yml             new workflow: the two buildable labs, daily
+    .github/workflows/ci.yml                      runs the new gate and the new workflow-shells
+                                                  fixtures
+    scripts/verify-in-docker.sh                   gates array gains "Docker lab coverage" and
+                                                  the workflow-shells entry gains its fixtures
+    scripts/ci/check-workflow-{yaml,shells,toolchain}.py
+                                                  workflow list is discovered, not hard-coded,
+                                                  so a third workflow file is checked by default
+    scripts/ci/test-check-workflow-shells.py      new fixtures for the shells gate, 13 cases
+    docs/verification/*-linux-2026-10-02.log      four lab transcripts, each with its re-run
+
+== 1. The drift, measured before anything was wired
+
+Each lab script: the last commit that touched it, how far that commit sits behind `HEAD`, and
+which workflow names it. `git grep` at `36d0809e` is the honest column, because the working
+tree already contains the workflow this batch adds.
+
+    $ for s in scripts/*-in-docker.sh; do
+        last="$(git log -1 --format='%h %ad' --date=short -- "$s")"
+        behind="$(git rev-list --count "$(git log -1 --format=%H -- "$s")..HEAD")"
+        named="$(git grep -l -F "$s" -- '.github/workflows/*.yml' | paste -sd, -)"
+        at_head="$(git grep -l -F "$s" 36d0809e -- '.github/workflows/*.yml' \
+                   | sed 's/^[^:]*://' | paste -sd, -)"
+        printf '%-42s %-16s %3s behind  now: %-34s then: %s\n' \
+          "$s" "$last" "$behind" "${named:-nothing}" "${at_head:-nothing}"
+      done
+    scripts/install-integrity-in-docker.sh     9adaa44b 2026-10-02  50 behind  now: .github/workflows/ci.yml           then: .github/workflows/ci.yml
+    scripts/install-sh-in-docker.sh            9adaa44b 2026-10-02  50 behind  now: nothing                            then: nothing
+    scripts/npm-install-in-docker.sh           9adaa44b 2026-10-02  50 behind  now: nothing                            then: nothing
+    scripts/remote-acceptance-in-docker.sh     6013a862 2026-10-03  48 behind  now: .github/workflows/docker-labs.yml  then: nothing
+    scripts/verify-in-docker.sh                36d0809e 2026-10-04   0 behind  now: .github/workflows/ci.yml           then: .github/workflows/ci.yml
+    scripts/web-deployment-in-docker.sh        0e89f3fc 2026-10-02  70 behind  now: .github/workflows/docker-labs.yml  then: nothing
+
+At `36d0809e` four of the six were named by nothing, and the four newest transcripts were 48
+to 70 commits behind the tree they claimed to describe. `check-guard-wiring.py` accounts for
+`scripts/ci/`, one directory down, so a lab in `scripts/` is invisible to it: there was no
+gate anywhere in the repository that could have noticed a lab going unrun.
+
+The staleness is not cosmetic. `scripts/remote-acceptance-in-docker.sh` grew 28 checks in
+`6013a862` on 2026-10-03 and its own transcript still showed the 102-check run; the 130-check
+transcript landed in `docs/verification/remote-provenance-linux-2026-10-02.log` instead. That
+is written up in `docs/verification/remote-acceptance-linux-2026-10-02.log`.
+
+== 2. The rule, and the reason it is two rules
+
+A lab goes unrun in two different ways and they need opposite answers.
+
+A lab whose verdict is about the commit under test should simply be run by CI. The gate
+measures "can be run by CI" rather than believing it: the script has to appear on an
+executable line of some `.github/workflows/*.yml`. Whole-line comments and trailing comments
+do not count, so a workflow that mentions a lab while explaining why it is not wired fails the
+gate; both shapes are fixtures (`test_a_comment_mentioning_the_lab_is_not_an_invocation`,
+`test_a_commented_out_command_at_end_of_a_line_is_not_an_invocation`).
+
+A lab whose verdict is about something other than the commit cannot be a merge gate at all.
+`npm-install-in-docker.sh` asks what the public registry serves today;
+`install-sh-in-docker.sh` installs a published release artifact, not the tree being merged.
+Those get a row in `scripts/ci/docker-labs.tsv` with a category, the transcript the run
+produced, the date and commit it ran at, and the thing CI cannot supply. The row is not an
+exemption from being run: its date has to be within 30 days or the gate goes red and names the
+command to re-run. A documented-but-never-run lab therefore fails on a schedule instead of
+becoming archaeology.
+
+Which is the whole point of the ledger being a *dated claim*. An allow list says "this one is
+allowed to be unrun, forever". This says "somebody saw this pass, or saw exactly why it cannot
+pass, on this day, at this commit" -- and goes red when that stops being true.
+
+== 3. The ledger and the classification, as they stand
+
+    $ python3 scripts/ci/check-lab-coverage.py --list
+    scripts/install-integrity-in-docker.sh	run by CI	.github/workflows/ci.yml
+    scripts/install-sh-in-docker.sh	ledgered	2026-10-04	36d0809e	green	consumes-published-artifact
+    scripts/npm-install-in-docker.sh	ledgered	2026-10-04	36d0809e	red	consumes-published-artifact
+    scripts/remote-acceptance-in-docker.sh	run by CI	.github/workflows/docker-labs.yml
+    scripts/verify-in-docker.sh	ledgered	2026-10-04	a04e91a7	green	already-done-in-ci
+    scripts/web-deployment-in-docker.sh	run by CI	.github/workflows/docker-labs.yml
+
+    $ python3 scripts/ci/check-lab-coverage.py
+    check-lab-coverage: OK (6 lab(s): 3 run by CI, 3 with a current ledger row)
+
+Two of the three ledger rows are `green` and one is `red`. A red row is not a failure of the
+gate and the gate does not treat it as one: the ledger records what the last run said, and the
+verdict field exists so that "we know this one is red, and why" is written down instead of
+being re-litigated by the next person to run the lab.
+
+The `verify-in-docker` row is the one a reader should be suspicious of, because the container
+entry point is what CI itself runs on a push. Its reason says what is actually true: the
+`rust`, `clippy` and `script-job` steps run the same command list natively on every push, so a
+container leg in CI would measure the image build and the volume caches rather than the
+change, and the sweep inside the image runs to about two hours. The row is dated `a04e91a7`,
+the last commit it was actually run at, which is a different commit from the other two rows.
+
+== 4. The two labs that became CI's
+
+`.github/workflows/docker-labs.yml` is new. It is not wired into `ci.yml`: each of the two
+labs pays for a cold `cargo` build plus a container image build, so a per-push leg would cost
+more than the two verdicts are worth on every commit. It runs on `cron: "17 3 * * *"` plus
+`workflow_dispatch`, so a lab you are changing can be watched on demand.
+
+    name: Docker acceptance labs
+
+    on:
+      schedule:
+        - cron: "17 3 * * *"
+      workflow_dispatch:
+    ...
+          - name: Web host behind a TLS-terminating proxy
+            shell: bash
+            run: bash scripts/web-deployment-in-docker.sh
+
+          - name: M4 remote workspace acceptance
+            shell: bash
+            run: bash scripts/remote-acceptance-in-docker.sh
+
+`timeout-minutes: 150` is a budget, not a measurement: neither lab has been timed on a GitHub
+runner, and the comment in the file says so. It is stated high because a scheduled job that
+hits a low ceiling reports a timeout instead of a verdict, and nobody is watching at 03:17
+UTC.
+
+Two dependencies had to be stated rather than assumed present, and
+`check-workflow-toolchain.py` is what forced them into the open. `socat` is the tunnel between
+the two machines in the remote lab -- the transport dials loopback only, so killing `socat` is
+how a dropped network is produced -- and `openssl` mints the lab CA the TLS lab hands to
+`curl`. Neither is on `ubuntu-latest` by the lab's own account; the lab refuses to run without
+them, so the job installs them. `nginx:1.27-alpine` is pulled explicitly for the same reason:
+the TLS lab refuses to pull mid-check.
+
+Making the third workflow file visible required changing the three workflow gates. All three
+had `["ci.yml", "release.yml"]` written out, so a new file would have been checked by nothing,
+including by the gates whose whole job is checking workflow files. Each now globs
+`.github/workflows/*.yml` and refuses to pass on an empty result:
+
+    $ python3 scripts/ci/check-workflow-yaml.py
+    workflow yaml: 3 file(s), no unquoted scalar with a mapping separator
+
+    $ python3 scripts/ci/check-workflow-shells.py
+    check-workflow-shells: .github/workflows/ci.yml: OK
+    check-workflow-shells: .github/workflows/docker-labs.yml: OK
+    check-workflow-shells: .github/workflows/release.yml: OK
+
+    $ python3 scripts/ci/check-workflow-toolchain.py
+    check-workflow-toolchain: OK (3 workflow file(s), 2 tool rule(s))
+
+`check-workflow-shells.py` gained one more fix while it was being opened: it recognised a
+matrix `os:` entry only in flow form. A block-form entry is the same claim about the same
+runner and was passing unchecked.
+
+== 5. What the four re-runs said
+
+Each lab was run on 2026-10-04 in a container on this machine against the tree at `36d0809e`.
+The closing lines of each run, copied from the end of its transcript:
+
+    all 41 TLS deployment checks passed against nginx:1.27-alpine + chaos-verify:local
+    all 130 M4 acceptance checks passed against chaos-verify:local
+    all 19 check(s) passed
+    13 check(s) run, at least one failed
+
+in that order: the TLS deployment lab, the M4 remote-workspace lab, the installer lab, the npm
+lab. The transcripts say more than the totals:
+
+- `docs/verification/web-deployment-tls-linux-2026-10-02.log`: 41 `ok` lines
+  byte-identical to the 2026-10-02 run, 70 commits later. Same checks, same answers, and now
+  on a schedule the repository owns rather than a memory.
+- `docs/verification/remote-acceptance-linux-2026-10-02.log`: 130 checks; today's `ok`
+  lines differ from the provenance run's only in one elapsed-time figure (`after 31s` vs
+  `after 30s`). The 28 checks that had gone unrecorded in this file are now recorded in it.
+- `docs/verification/install-sh-linux-2026-10-02.log`: 19/19 again, one installer commit
+  later, with `install.sh` `cmp`-identical to the copy at `36d0809e`. It also documents
+  something the green total hides, taken up in section 7.
+- `docs/verification/npm-install-linux-2026-10-02.log`: exit 1, the same two failures as
+  2026-10-02, unchanged in kind.
+
+== 6. The npm lab is red for a reason CI cannot fix
+
+    FAILED checks:
+      - pinned but unpublished platform packages (npm installs these silently):
+         - chaos-code-win32-arm64@0.2.110 (published: 0.0.1-security)
+         - chaos-code-win32-x64@0.2.110 (published: 0.0.1-security)
+    13 check(s) run, at least one failed
+
+The check reads the `optionalDependencies` of the launcher package the registry actually
+served, installed inside the container, and asks of each pin whether that version exists under
+that name. The registry has `0.0.1-security` and nothing else for both `win32` names -- that
+is the version npm itself publishes when a name is reserved as a security placeholder. `npm`
+treats a missing optional dependency as normal, so a Windows user gets the launcher and no
+binary; the launcher's own error is the only sign, and the lab asserts that error is loud:
+
+    ok  with no win32 binary present the launcher fails loudly (exit 1): chaos-code: no platform binary installed for win32-x64.
+
+The fix is to publish two packages. That is a release action, and this repository does not
+perform releases from CI, which is exactly what the ledger row's reason field is for.
+
+The same comparison done against the launcher manifest in the tree, rather than the one the
+registry serves, shows the wider shape of it:
+
+    $ python3 - <<'PY'
+    import json, subprocess
+    d = json.load(open("crates/codegen/xai-grok-pager/npm/chaos/package.json"))
+    print("launcher package.json version:", d["version"])
+    for k, v in (d.get("optionalDependencies") or {}).items():
+        out = subprocess.run(["npm", "view", k, "versions", "--json"],
+                             capture_output=True, text=True).stdout
+        have = "".join(out.split()).replace('""', ",").strip("[]").strip('"')
+        mark = "yes" if v in have.split(",") else "NO"
+        print(f"  {k:26} pinned {v}  on registry: {have}  pinned version exists: {mark}")
+    PY
+    launcher package.json version: 0.4.2
+      chaos-code-darwin-arm64    pinned 0.4.2  on registry: 0.2.110  pinned version exists: NO
+      chaos-code-darwin-x64      pinned 0.4.2  on registry: 0.2.110  pinned version exists: NO
+      chaos-code-linux-arm64     pinned 0.4.2  on registry: 0.2.110  pinned version exists: NO
+      chaos-code-linux-x64       pinned 0.4.2  on registry: 0.2.110  pinned version exists: NO
+      chaos-code-win32-arm64     pinned 0.4.2  on registry: 0.0.1-security  pinned version exists: NO
+      chaos-code-win32-x64       pinned 0.4.2  on registry: 0.0.1-security  pinned version exists: NO
+
+The four `NO`s that are not the lab's failures are the ordinary case: the tree is at `0.4.2`
+and `0.4.2` has not been published yet, so no platform package carries it. Reading this block
+without that distinction is how a registry-state problem gets mistaken for a build problem, so
+the lab's wording names the specific pins rather than counting mismatches.
+
+== 7. A green lab total that hides which host served the bytes
+
+The `install-sh` re-run passed 19 of 19 and printed this while doing it:
+
+    |   origin:  https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+    |   mirror:  origin first, then public fallbacks
+    | downloading...
+    |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+    |   try: https://ghfast.top/https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+    |   from: https://ghfast.top/https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+
+`try:` origin, then `try:` the mirror, then `from:` the mirror. The install was served by a
+public third-party mirror, and the run that called itself green had to be read line by line to
+notice. Two source-level facts explain why, both re-read on 2026-10-04:
+
+    $ grep -n 'download_github "$ORIGIN_URL"' scripts/install.sh
+    530:USED_URL="$(download_github "$ORIGIN_URL" "$TMP" 12 0 1048576)" || exit 1
+
+The fourth field is `max_time`, and `download_github` only appends `--max-time` when it is
+positive:
+
+    $ grep -n -- '--max-time\|--speed-limit\|--speed-time\|--limit-rate' scripts/install.sh
+    295:    curl_args+=(--max-time "$max_time")
+    352:    if curl -fsSL --connect-timeout 10 --max-time 30 -o "$tmp" "$cand" 2>/dev/null; then
+    367:      curl -fsSLI --connect-timeout 10 --max-time 30 "$cand" 2>/dev/null \
+
+So the big fetch has a 12-second connect timeout and no ceiling on the transfer itself, and no
+minimum throughput anywhere in the script. That is deliberate -- the comment at `:528` says a
+140 MB+ asset must not be cut off mid-body -- but the artifact's real size is worth putting
+next to it:
+
+    $ curl -sIL -o /dev/null -D - \
+        https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64 \
+        | grep -i '^content-length' | tail -1
+    content-length: 161233728
+
+153 MiB with no wall-clock ceiling and no `--speed-limit` means a mirror that trickles the
+body at any rate above zero holds the install open indefinitely. The `min_bytes` floor of
+1048576 catches a truncated or proxy-substituted body, which is the defect it was written for,
+but it can only be evaluated once the transfer ends.
+
+The other half: `download_github` builds a `reasons` list as it walks candidates and prints it
+only on the failure path -- the `printf '%s' "$reasons" | awk 'NF && !seen[$0]++'` followed by
+`head -4` at `scripts/install.sh:339`. On success it prints the winning URL and returns. A
+user -- or a lab -- therefore cannot tell whether origin answered 404, answered with a body
+`min_bytes` rejected, or was never reachable, which is precisely the question to ask of an
+install whose bytes came from a mirror. Both halves are filed as TODO rows; neither is
+silently fixed here, because changing the installer's failure semantics needs its own evidence
+and its own fixtures.
+
+== 8. The gate is not vacuous: 39 mutants, 0 survived
+
+Each mutation is a source edit to the shipped file, applied to a scratch copy, followed by the
+real gate plus its real fixtures; a mutant survives if the suite still passes. Every driver
+checks its baseline first and aborts rather than reporting kills against a red baseline, and
+each restores its subject with plain `cp` verified by `cmp`. The five specs mutate, in order:
+`scripts/verify-in-docker.sh`, `scripts/ci/check-lab-coverage.py`,
+`scripts/ci/check-workflow-shells.py`, `scripts/ci/check-workflow-yaml.py` and
+`scripts/ci/check-workflow-toolchain.py`. The run in full, including which fixture killed each
+mutant -- an unmatched anchor is reported as SURVIVED, and a fixture failing that was not
+expected to is named under `also failed (unexpected)`:
+
+    ################ spec-verify
+    baseline: green (OK)
+    git's exit status ignored when the listing is not empty: KILLED
+        exit=1 failing=1 ["test_a_listing_git_died_partway_through_stops_the_run"]
+    an empty listing accepted: KILLED
+        exit=1 failing=1 ["test_a_checkout_where_nothing_is_listed_stops_the_run"]
+    a short sums file accepted: KILLED
+        exit=1 failing=1 ["test_a_listed_file_that_cannot_be_read_stops_the_run"]
+    cksum's failure swallowed at the call: KILLED
+        exit=1 failing=1 ["test_a_listed_file_that_cannot_be_read_stops_the_run"]
+    the after-image failure no longer recorded: KILLED
+        exit=1 failing=1 ["test_a_second_checksum_that_fails_blames_the_tree_not_a_path"]
+    a git that refuses status reads as a clean tree: KILLED
+        exit=1 failing=1 ["test_a_git_that_refuses_status_says_so_rather_than_implying_a_clean_tree"]
+    the dirty count never runs: KILLED
+        exit=1 failing=2 ["test_a_file_nobody_committed_is_counted_and_declared", "test_a_git_that_refuses_status_says_so_rather_than_implying_a_clean_tree"]
+        also failed (unexpected): ["test_a_git_that_refuses_status_says_so_rather_than_implying_a_clean_tree"]
+    NUL-separated names counted as lines: KILLED
+        exit=1 failing=1 ["test_a_listing_git_died_partway_through_stops_the_run"]
+    the checkout is not named on the fingerprint line: KILLED
+        exit=1 failing=3 ["test_a_file_nobody_committed_is_counted_and_declared", "test_a_tree_at_rest_prints_one_checksum_and_no_caveat", "test_the_fingerprint_line_says_which_checkout_it_describes"]
+        also failed (unexpected): ["test_a_file_nobody_committed_is_counted_and_declared", "test_a_tree_at_rest_prints_one_checksum_and_no_caveat"]
+    the commit is never resolved: KILLED
+        exit=1 failing=3 ["test_a_file_nobody_committed_is_counted_and_declared", "test_a_tree_at_rest_prints_one_checksum_and_no_caveat", "test_the_fingerprint_line_says_which_checkout_it_describes"]
+        also failed (unexpected): ["test_a_file_nobody_committed_is_counted_and_declared", "test_a_tree_at_rest_prints_one_checksum_and_no_caveat"]
+    an unresolvable commit prints an empty field: KILLED
+        exit=1 failing=1 ["test_a_tree_with_no_commit_says_no_commit_rather_than_printing_nothing"]
+
+    11 mutation(s): 11 killed, 0 survived
+        killed    git's exit status ignored when the listing is not empty
+        killed    an empty listing accepted
+        killed    a short sums file accepted
+        killed    cksum's failure swallowed at the call
+        killed    the after-image failure no longer recorded
+        killed    a git that refuses status reads as a clean tree
+        killed    the dirty count never runs
+        killed    NUL-separated names counted as lines
+        killed    the checkout is not named on the fingerprint line
+        killed    the commit is never resolved
+        killed    an unresolvable commit prints an empty field
+    rc=0
+    ################ spec-labcov
+    baseline: green (OK)
+    a whole-line comment counts as an invocation: KILLED
+        exit=1 failing=1 ["test_a_comment_mentioning_the_lab_is_not_an_invocation"]
+    a trailing comment counts as an invocation: KILLED
+        exit=1 failing=1 ["test_a_commented_out_command_at_end_of_a_line_is_not_an_invocation"]
+    labs only one directory deep are swept: KILLED
+        exit=1 failing=1 ["test_a_lab_in_a_subdirectory_is_swept_in_too"]
+    the staleness budget is not enforced: KILLED
+        exit=1 failing=1 ["test_the_budget_boundary_is_inclusive"]
+    a run date in the future is accepted: KILLED
+        exit=1 failing=1 ["test_a_future_run_date_is_a_problem"]
+    the sha is not shape-checked: KILLED
+        exit=1 failing=1 ["test_a_shallow_checkout_shape_checks_the_sha_instead"]
+    an untracked transcript is accepted: KILLED
+        exit=1 failing=1 ["test_an_untracked_transcript_is_a_problem"]
+    the transcript need not live under docs/verification: KILLED
+        exit=1 failing=1 ["test_a_transcript_outside_docs_verification_is_a_problem"]
+    any category string is accepted: KILLED
+        exit=1 failing=1 ["test_an_unknown_category_is_a_problem_and_lists_the_choices"]
+    any verdict string is accepted: KILLED
+        exit=1 failing=1 ["test_an_unknown_verdict_is_a_problem"]
+    an empty reason is accepted: KILLED
+        exit=1 failing=1 ["test_an_empty_reason_is_a_problem"]
+    a row may vouch for a script the repository does not carry: KILLED
+        exit=1 failing=1 ["test_a_row_for_an_untracked_script_is_a_problem"]
+    a row for a lab CI now runs is kept: KILLED
+        exit=1 failing=1 ["test_a_row_for_a_lab_ci_now_runs_is_redundant"]
+    a lab with no answer at all is excused: KILLED
+        exit=1 failing=5 ["test_a_comment_mentioning_the_lab_is_not_an_invocation", "test_a_commented_out_command_at_end_of_a_line_is_not_an_invocation", "test_a_lab_in_a_subdirectory_is_swept_in_too", "test_a_new_lab_is_red_without_any_edit_to_the_gate", "test_unaccounted_lab_is_named"]
+        also failed (unexpected): ["test_a_comment_mentioning_the_lab_is_not_an_invocation", "test_a_commented_out_command_at_end_of_a_line_is_not_an_invocation", "test_a_lab_in_a_subdirectory_is_swept_in_too"]
+    a workflow naming a lab the repository lacks is silent: KILLED
+        exit=1 failing=1 ["test_a_workflow_naming_a_lab_that_does_not_exist_is_a_problem"]
+    an untracked ledger is read anyway: KILLED
+        exit=1 failing=1 ["test_an_untracked_ledger_excuses_nothing"]
+    the ledger header is not checked: KILLED
+        exit=1 failing=1 ["test_a_ledger_without_a_header_is_a_problem"]
+    a row with the wrong field count is read anyway: KILLED
+        exit=1 failing=1 ["test_a_misaligned_ledger_row_is_a_problem"]
+    two rows for one lab are both read: KILLED
+        exit=1 failing=1 ["test_two_rows_for_one_lab_are_a_problem"]
+    a shallow checkout resolves the sha anyway: KILLED
+        exit=1 failing=1 ["test_a_shallow_checkout_shape_checks_the_sha_instead"]
+    a mid-edit tracked file missing from disk crashes the gate: KILLED
+        exit=1 failing=1 ["test_a_tracked_workflow_missing_from_disk_is_reported_not_crashed"]
+
+    21 mutation(s): 21 killed, 0 survived
+        killed    a whole-line comment counts as an invocation
+        killed    a trailing comment counts as an invocation
+        killed    labs only one directory deep are swept
+        killed    the staleness budget is not enforced
+        killed    a run date in the future is accepted
+        killed    the sha is not shape-checked
+        killed    an untracked transcript is accepted
+        killed    the transcript need not live under docs/verification
+        killed    any category string is accepted
+        killed    any verdict string is accepted
+        killed    an empty reason is accepted
+        killed    a row may vouch for a script the repository does not carry
+        killed    a row for a lab CI now runs is kept
+        killed    a lab with no answer at all is excused
+        killed    a workflow naming a lab the repository lacks is silent
+        killed    an untracked ledger is read anyway
+        killed    the ledger header is not checked
+        killed    a row with the wrong field count is read anyway
+        killed    two rows for one lab are both read
+        killed    a shallow checkout resolves the sha anyway
+        killed    a mid-edit tracked file missing from disk crashes the gate
+    rc=0
+    ################ spec-wfshells
+    baseline: green (OK)
+    the workflow list is hard-coded again: KILLED
+        exit=1 failing=3 ["test_a_third_workflow_is_checked_without_anyone_naming_it", "test_every_shipped_workflow_pins_its_shells", "test_no_workflows_at_all_refuses_to_pass"]
+        also failed (unexpected): ["test_no_workflows_at_all_refuses_to_pass"]
+    an empty workflow directory passes: KILLED
+        exit=1 failing=1 ["test_no_workflows_at_all_refuses_to_pass"]
+    a block-form matrix entry is not read: KILLED
+        exit=1 failing=1 ["test_a_block_matrix_naming_windows_makes_the_job_capable"]
+
+    3 mutation(s): 3 killed, 0 survived
+        killed    the workflow list is hard-coded again
+        killed    an empty workflow directory passes
+        killed    a block-form matrix entry is not read
+    rc=0
+    ################ spec-wfyaml
+    baseline: green (OK)
+    the workflow list is hard-coded again: KILLED
+        exit=1 failing=3 ["test_a_third_workflow_is_checked_without_anyone_naming_it", "test_no_workflows_at_all_refuses_to_pass", "test_shipped_workflows_are_clean"]
+        also failed (unexpected): ["test_no_workflows_at_all_refuses_to_pass"]
+    an empty workflow directory passes: KILLED
+        exit=1 failing=1 ["test_no_workflows_at_all_refuses_to_pass"]
+
+    2 mutation(s): 2 killed, 0 survived
+        killed    the workflow list is hard-coded again
+        killed    an empty workflow directory passes
+    rc=0
+    ################ spec-wftoolchain
+    baseline: green (OK)
+    the workflow list is hard-coded again: KILLED
+        exit=1 failing=3 ["test_a_third_workflow_is_checked_without_anyone_naming_it", "test_no_workflows_at_all_refuses_to_pass", "test_real_workflows_provision_everything_they_run"]
+        also failed (unexpected): ["test_no_workflows_at_all_refuses_to_pass"]
+    an empty workflow directory passes: KILLED
+        exit=1 failing=1 ["test_no_workflows_at_all_refuses_to_pass"]
+
+    2 mutation(s): 2 killed, 0 survived
+        killed    the workflow list is hard-coded again
+        killed    an empty workflow directory passes
+    rc=0
+
+One mutation was written, found to be equivalent, and dropped rather than counted. Removing
+the caller's `|| exit 1` after `fingerprint "${tree_before}"` leaves the run failing for the
+same reason, because the script runs under `set -e` and a bare failing function call already
+ends it. The fixture still asserts the message and the exit status; the mutant that would have
+distinguished the two does not exist. That is written up in
+`docs/verification/verify-in-docker-entry-blindness-2026-10-04.log`.
+
+== 9. Reproduce it
+
+    $ python3 scripts/ci/test-check-lab-coverage.py
+    $ python3 scripts/ci/check-lab-coverage.py
+    $ python3 scripts/ci/check-lab-coverage.py --list
+
+The gate asks nothing of the network and nothing of Docker, so it runs on any clone. To see
+the staleness rule bite, move a ledger row's date back 31 days and re-run it:
+
+    $ python3 - <<'PY'
+    import pathlib
+    p = pathlib.Path("scripts/ci/docker-labs.tsv")
+    p.write_text(p.read_text().replace("2026-10-04", "2026-09-03"))
+    PY
+    $ python3 scripts/ci/check-lab-coverage.py
+    check-lab-coverage: FAIL (4 problem(s))
+      scripts/ci/docker-labs.tsv:6: scripts/install-sh-in-docker.sh last ran on 2026-09-03, 31 days ago, past the 30-day budget; re-run it and update the row: bash scripts/install-sh-in-docker.sh 2>&1 | tee docs/verification/<dated log>
+      scripts/ci/docker-labs.tsv:7: scripts/npm-install-in-docker.sh last ran on 2026-09-03, 31 days ago, past the 30-day budget; re-run it and update the row: bash scripts/npm-install-in-docker.sh 2>&1 | tee docs/verification/<dated log>
+      scripts/ci/docker-labs.tsv:8: transcript docs/verification/verify-in-docker-full-a04e91a7-2026-09-03.log is not tracked; a log that exists only on one machine is not evidence for a commit
+      scripts/ci/docker-labs.tsv:8: scripts/verify-in-docker.sh last ran on 2026-09-03, 31 days ago, past the 30-day budget; re-run it and update the row: bash scripts/verify-in-docker.sh 2>&1 | tee docs/verification/<dated log>
+    $ git checkout -- scripts/ci/docker-labs.tsv
+
+The third problem is the transcript rule firing alongside the date rule: the rewrite changed
+the date inside the transcript's filename too, and a log that is not tracked cannot vouch for
+a commit. Both are errors, and the gate reports every one rather than the first.
+
+The labs themselves need Docker; two of them also build the workspace:
+
+    $ bash scripts/web-deployment-in-docker.sh
+    $ bash scripts/remote-acceptance-in-docker.sh
+    $ bash scripts/install-sh-in-docker.sh
+    $ bash scripts/npm-install-in-docker.sh

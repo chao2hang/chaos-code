@@ -179,10 +179,41 @@ class WorkflowYaml(unittest.TestCase):
         self.assertIn("no such file", proc.stdout + proc.stderr)
 
     def test_shipped_workflows_are_clean(self) -> None:
-        code, out = self.run_check(REPO / ".github" / "workflows" / "ci.yml")
-        self.assertEqual(code, 0, out)
-        code, out = self.run_check(REPO / ".github" / "workflows" / "release.yml")
-        self.assertEqual(code, 0, out)
+        # No arguments, run from the real checkout: every workflow the repository has is
+        # covered by discovery rather than by a name written in this file.
+        shipped = sorted((REPO / ".github" / "workflows").glob("*.yml"))
+        self.assertGreaterEqual(len(shipped), 3, "discovery found nothing to check")
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT)], cwd=REPO, capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(f"{len(shipped)} file(s)", proc.stdout)
+
+    def test_a_third_workflow_is_checked_without_anyone_naming_it(self) -> None:
+        # The hole this closes: the three workflow gates each listed ci.yml and
+        # release.yml by hand, so the next file was checked by none of them. Here a
+        # second file, discovered rather than named, still gets its bad line refused.
+        directory = self.tmp / ".github" / "workflows"
+        directory.mkdir(parents=True)
+        (directory / "ci.yml").write_text(
+            WORKFLOW.format(case="- uses: actions/checkout@v4\n"), encoding="utf-8"
+        )
+        (directory / "docker-labs.yml").write_text(
+            WORKFLOW.format(case=CASES[0][1]), encoding="utf-8"
+        )
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT)], cwd=self.tmp, capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("docker-labs.yml", proc.stdout + proc.stderr)
+
+    def test_no_workflows_at_all_refuses_to_pass(self) -> None:
+        (self.tmp / ".github" / "workflows").mkdir(parents=True)
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT)], cwd=self.tmp, capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("no workflow files", proc.stdout + proc.stderr)
 
     @unittest.skipIf(yaml is None, "PyYAML is not installed on this host")
     def test_verdicts_agree_with_a_real_yaml_parser(self) -> None:

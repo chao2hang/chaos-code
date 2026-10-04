@@ -1,0 +1,131 @@
+# Docker acceptance labs that build this commit and interrogate the binary.
+#
+# `scripts/` ships six files ending in `-in-docker.sh`; five of them are acceptance
+# labs. Two of those labs -- the TLS deployment lab and the M4 remote-workspace lab
+# -- compile the tree they are standing in and then ask the deployed program
+# questions that no unit test can ask (does a browser trusting only a lab CA complete
+# the handshake; does a session survive the tunnel dropping). Their verdict is about
+# the commit under test, so they belong to CI. They are not wired into `ci.yml`
+# because each one pays for a cold cargo build plus a container image build, and a
+# per-push leg would cost more than the two verdicts are worth on every commit. A
+# daily sweep is what keeps them from rotting into archaeology, which is the failure
+# `scripts/ci/check-lab-coverage.py` exists to catch: on 2026-10-04 four of the six
+# files had no workflow that named them and had last been run by a person who happened
+# to remember, 48 to 70 commits behind the tree.
+#
+# `scripts/ci/docker-labs.tsv` records the labs that stay out of CI, with the
+# reason each one cannot be a merge gate. If this file stops naming a lab above,
+# that lab has to gain a ledger row or the gate goes red.
+name: Docker acceptance labs
+
+on:
+  schedule:
+    # 03:17 UTC daily. Off the hour: several repositories in this organisation
+    # schedule on the hour and the queued runners are the reason a scheduled run
+    # sometimes starts an hour late.
+    - cron: "17 3 * * *"
+  # A lab you are changing should be watched while it runs, and a scheduled-only
+  # job gives you no way to ask for a run.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-labs-${{ github.workflow }}-${{ github.ref }}
+  # Two of these runs at once would fight over the fixed ports each lab publishes
+  # (the TLS lab serves the declared origin on 8443, the remote lab tunnels on a
+  # fixed port base), so a superseded run is cancelled rather than left to collide.
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Both labs default to `--offline --locked`, which is right on a developer box
+  # with a warm registry and wrong on a runner that has never fetched this
+  # manifest. Overriding it here rather than in the lab keeps the offline default
+  # where it belongs: a local lab must not start reaching for the network.
+  CARGO_ARGS: "--locked"
+
+jobs:
+  labs:
+    name: web TLS deployment and M4 remote acceptance
+    runs-on: ubuntu-latest
+    # Each lab is a cargo build of 1000+ crates cold plus its own container
+    # topology, and neither has been timed on a GitHub runner: 150 is a budget,
+    # not a measurement. It is stated high because the failure mode of a low one
+    # is worse than the waste of a high one -- a job that hits the ceiling reports
+    # a timeout instead of a verdict, and a scheduled job nobody is watching will
+    # not be re-run that day.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      # socat is the tunnel between the two machines in the remote lab: the
+      # transport dials loopback only, so killing socat is how a dropped network
+      # is produced. openssl mints the lab CA the TLS lab hands to curl. The rest
+      # mirror the `Install Linux deps` step in ci.yml, because both labs build
+      # real binaries on this runner and mount them into the container.
+      - name: Install lab dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev ca-certificates socat openssl
+          socat -V >/dev/null && echo "socat ready"
+          openssl version
+
+      # `bin/protoc` is a dotslash launcher, and the crates with .proto files need
+      # it at build time. Same pin as ci.yml and docker/verify.Dockerfile.
+      - name: Install dotslash
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-linux-musl.x86_64.v0.5.3.tar.gz -o /tmp/dotslash.tar.gz
+          tar -xzf /tmp/dotslash.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
+      - name: Install protoc
+        shell: bash
+        run: bin/protoc --version
+
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel" || { echo "no channel pinned in rust-toolchain.toml" >&2; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      # The same prefix key as the `rust` job in ci.yml, so a scheduled run at the
+      # same Cargo.lock starts from dependencies somebody else already compiled.
+      # Without it this job is two cold workspace builds a day.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: chaos-ci
+
+      # Both labs run their workload inside an image that has never seen this
+      # repository -- that is the whole point of them -- and default to this tag.
+      - name: Build the clean-host image
+        shell: bash
+        run: docker build -f docker/verify.Dockerfile -t chaos-verify:local .
+
+      # The proxy is a stock nginx, not a lab artifact. The lab refuses to run
+      # rather than pulling mid-check, so the pull is stated here.
+      - name: Pull the proxy image
+        shell: bash
+        run: docker pull nginx:1.27-alpine
+
+      - name: Web host behind a TLS-terminating proxy
+        shell: bash
+        run: bash scripts/web-deployment-in-docker.sh
+
+      - name: M4 remote workspace acceptance
+        shell: bash
+        run: bash scripts/remote-acceptance-in-docker.sh

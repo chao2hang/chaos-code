@@ -143,3 +143,51 @@ done from this machine.
   signed-GitHub-release path is `docs/verification/release-signature-v0.4.2-2026-10-02.log`.
 - Anything about `update` behaviour through npm (`GROK_MANAGED_BY_NPM` is set by the
   launcher, but no update was performed).
+
+
+## Re-run 2026-10-04: the same 13 checks, the same red, for the same reason
+
+    $ bash scripts/npm-install-in-docker.sh
+
+    == the machine doing the installing
+       image:      node:22-bookworm-slim (stock, no repo, no npm cache)
+       package:    chaos-code
+       registry:   https://registry.npmjs.org/ (as the container sees it)
+       repo HEAD:  36d0809e
+       ok  the container is up: node v22.23.3, npm 10.9.9
+       ok  the container starts with no npm content cache (/root/.npm/_cacache is absent)
+
+
+    [the install, what landed on disk, the binary on PATH and a real command elided: quoted
+     in full in the run above]
+
+    == the same install asked to resolve for a foreign platform
+         | 
+         | added 2 packages in 188ms
+       note  for win32-x64 npm exited 0 and installed no platform package: the optional dependency was skipped, not resolved
+       ok  with no win32 binary present the launcher fails loudly (exit 1): chaos-code: no platform binary installed for win32-x64.
+       FAILED pinned but unpublished platform packages (npm installs these silently):
+         - chaos-code-win32-arm64@0.2.110 (published: 0.0.1-security)
+         - chaos-code-win32-x64@0.2.110 (published: 0.0.1-security)
+
+    FAILED checks:
+      - pinned but unpublished platform packages (npm installs these silently):
+         - chaos-code-win32-arm64@0.2.110 (published: 0.0.1-security)
+         - chaos-code-win32-x64@0.2.110 (published: 0.0.1-security)
+    13 check(s) run, at least one failed
+
+Exit status 1, 47 lines, finished 16:40 +0800. Nothing the lab judges has changed since the
+run above, 68 commits back at `88903bf7`: the registry still serves `chaos-code@0.2.110`, `npm
+install -g` still lands exactly one platform package (`chaos-code-linux-x64`), and the
+launcher still refuses to invent a binary for `win32-x64`, because the two win32 packages the
+root `package.json` pins exist upstream only at `0.0.1-security`. The green half is the same
+argument it always was -- the trampoline resolves, the right optional dependency is chosen,
+`chaos doctor` answers with JSON -- and the red is the finding, so the lab is recorded in
+`scripts/ci/docker-labs.tsv` with `verdict=red` rather than turned green by deleting the check
+that reports it.
+
+What is new is that a dated row now carries that verdict. `check-lab-coverage.py` refuses a
+ledger row older than its 30-day budget for a lab nothing runs, so this transcript has to be
+refreshed on a schedule whether or not anyone remembers the lab exists, and the lab prints
+`repo HEAD` in its own first section, so a reader can tell which tree a verdict describes
+without asking anyone.

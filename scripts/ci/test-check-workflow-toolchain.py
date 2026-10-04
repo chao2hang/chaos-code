@@ -98,16 +98,18 @@ class WorkflowToolchainTests(unittest.TestCase):
     # ---- the real repository -----------------------------------------------
 
     def test_real_workflows_provision_everything_they_run(self) -> None:
-        real = [
-            str(REPO / '.github' / 'workflows' / 'ci.yml'),
-            str(REPO / '.github' / 'workflows' / 'release.yml'),
-        ]
-        result = run_checker(self.root, *real)
+        # No file names: discovery in the real checkout is what has to cover every
+        # workflow the repository has, including any added after this test was written.
+        shipped = sorted((REPO / '.github' / 'workflows').glob('*.yml'))
+        self.assertGreaterEqual(len(shipped), 3, 'discovery found nothing to check')
+        result = subprocess.run([sys.executable, str(SCRIPT)], cwd=REPO,
+                                capture_output=True, text=True)
         self.assertEqual(
             result.returncode,
             0,
             f'real workflows are missing a tool:\n{result.stderr}',
         )
+        self.assertIn(f'{len(shipped)} workflow file(s)', result.stdout)
 
     # ---- ripgrep ------------------------------------------------------------
 
@@ -216,6 +218,23 @@ class WorkflowToolchainTests(unittest.TestCase):
         result = run_checker(self.root, 'nope.yml')
         self.assertEqual(result.returncode, 1)
         self.assertIn('does not exist', result.stderr)
+
+    def test_a_third_workflow_is_checked_without_anyone_naming_it(self) -> None:
+        # The hole the hard-coded pair left: a workflow file the gates were never told
+        # about installed nothing and needed nothing as far as any of them was
+        # concerned. Discovery means the guard job below is refused from `.github/
+        # workflows/` without appearing in a list.
+        directory = self.root / '.github' / 'workflows'
+        directory.mkdir(parents=True)
+        (directory / 'ci.yml').write_text(
+            workflow(APT_RG + GUARD_STEP, job_name='docs-l10n'), encoding='utf-8')
+        (directory / 'docker-labs.yml').write_text(
+            workflow(GUARD_STEP, job_name='labs'), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(SCRIPT)], cwd=self.root,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('docker-labs.yml', result.stderr)
+        self.assertIn('ripgrep', result.stderr)
 
     def test_no_workflows_at_all_refuses_to_pass(self) -> None:
         result = subprocess.run(
