@@ -24,6 +24,9 @@
 # Environment:
 #   VERIFY_GATES_SOURCE  file to read the gates array from (default
 #                        scripts/verify-in-docker.sh; --self-test points it at fixtures)
+#   VERIFY_GATES_CHANGED newline-separated path list overriding what this runner believes
+#                        is changed (see the NOT COVERED rule below; --self-test sets it so
+#                        its fixtures do not inherit the real checkout's diff)
 #
 # Usage:
 #   scripts/verify-gates.sh                 # cheap gates, in array order
@@ -32,11 +35,22 @@
 #   scripts/verify-gates.sh --list          # print the extracted labels, run nothing
 #   scripts/verify-gates.sh --verbose       # stream every gate's output, not just failures
 #   scripts/verify-gates.sh --self-test     # verify extraction and the failure path
+#   scripts/verify-gates.sh --allow-unbuilt-changes
+#                                           # skip the build gates even with Rust changed
 #
 # --only filters by label, exactly or as a fragment, and filters only: the build gates stay
 # skipped under it unless --with-build is also given, because a fragment that happens to match
 # `cargo test` should not silently turn a fast loop into a workspace rebuild. Its summary says
 # `K of T selected by --only` instead of reading like a sweep.
+#
+# Skipping the build gates is the point of this runner, but the skip is not allowed to come back
+# as a pass. Four of the gates (cargo check/clippy/test, GUI protocol types) are what CI runs on
+# every push, and on 2026-10-04 a batch whose only Rust change was a new test file swept green
+# here -- `all gates passed on the host (35 run, 4 skipped)` -- and CI's clippy leg failed on it
+# within the hour. So when the build gates were skipped and the diff holds a file one of them
+# measures (`*.rs`, `*.toml`, `*.lock`, the generated protocol types), the run ends `NOT COVERED`
+# with exit 1 and names the files, rather than printing a verdict about a tree it never compiled.
+# `--allow-unbuilt-changes` is there for the run where that is the intended answer.
 #
 # Capture evidence with:
 #   scripts/verify-gates.sh 2>&1 | tee verify-gates-$(date +%Y%m%d).log
@@ -65,6 +79,7 @@ bootstrap_prefix='${bootstrap}; '
 mode="run"
 include_build="no"
 verbose="no"
+allow_unbuilt="no"
 # One pattern per line; empty means no filter. Kept as a string rather than an array because
 # the matcher reads it with `read -r` and the file is also sourced by the self-test fixtures.
 only=""
@@ -73,6 +88,7 @@ only_count=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-build) include_build="yes" ;;
+    --allow-unbuilt-changes) allow_unbuilt="yes" ;;
     --verbose) verbose="yes" ;;
     --list) mode="list" ;;
     --self-test) mode="self-test" ;;
@@ -95,7 +111,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "unknown argument: $1 (expected --with-build, --only <label>, --list, --verbose, --self-test or --help)" >&2
+      echo "unknown argument: $1 (expected --with-build, --allow-unbuilt-changes, --only <label>, --list, --verbose, --self-test or --help)" >&2
       exit 2
       ;;
   esac
@@ -130,6 +146,39 @@ is_build_gate() {
     "cargo check" | "cargo clippy" | "cargo test" | "GUI protocol types") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Of the skipped build gates' four, which changed files could change the verdict? `cargo
+# check`, `cargo clippy` and `cargo test` read every Rust source and every manifest in the
+# workspace; `GUI protocol types` compares the schema binary's output against the one
+# generated TypeScript file. Nothing else a diff can hold moves one of those four, so a
+# docs-only sweep keeps the fast loop this runner exists to be.
+is_build_relevant_path() {
+  case "$1" in
+    *.rs | *.toml | *.lock) return 0 ;;
+    apps/chaos-ui/src/generated/protocol.ts) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# What CI is going to compile: everything differing from HEAD (staged and unstaged) plus
+# every commit ahead of the branch this one pushes to. The second half is what catches the
+# flow where the commit happened first and the sweep second. Outside a git checkout, or
+# with no upstream configured, there is nothing to claim and the rule stays quiet rather
+# than inventing a diff; VERIFY_GATES_CHANGED replaces the whole list.
+changed_paths() {
+  if [ -n "${VERIFY_GATES_CHANGED+x}" ]; then
+    printf '%s\n' "${VERIFY_GATES_CHANGED}"
+    return 0
+  fi
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+  git diff --name-only HEAD 2>/dev/null
+  local upstream
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || upstream=""
+  if [ -n "${upstream}" ]; then
+    git diff --name-only "${upstream}..HEAD" 2>/dev/null
+  fi
+  return 0
 }
 
 # Is this label selected by any --only pattern? Exact label or fragment, with the pattern
@@ -244,10 +293,38 @@ run_gates() {
     echo '              the build gates (cargo check/clippy/test, GUI protocol types) need --with-build' >&2
     return 1
   fi
+  # The skipped build gates and the diff are compared only on a run that otherwise looks green,
+  # because that is the shape that gets quoted back as a verdict: 2026-10-04's red batch was
+  # pushed behind `all gates passed on the host (35 run, 4 skipped)`. A skip that leaves
+  # changes unmeasured is its own failure, not a footnote under a pass.
+  local unbuilt="" path unbuilt_count=0
+  if [ "${skipped}" -gt 0 ]; then
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      is_build_relevant_path "$path" || continue
+      unbuilt="${unbuilt}${path}"$'\n'
+      unbuilt_count=$((unbuilt_count + 1))
+    done < <(changed_paths | sort -u)
+  fi
+  if [ "${unbuilt_count}" -gt 0 ] && [ "${allow_unbuilt}" = "no" ]; then
+    echo "NOT COVERED  ${skipped} build gate(s) skipped while ${unbuilt_count} changed file(s) are theirs to measure:" >&2
+    printf '%s' "${unbuilt}" | head -n 5 | sed 's/^/              /' >&2
+    if [ "${unbuilt_count}" -gt 5 ]; then
+      echo "              ... and $((unbuilt_count - 5)) more" >&2
+    fi
+    echo '              run: scripts/verify-gates.sh --with-build' >&2
+    echo '                     (or --allow-unbuilt-changes when those files are not meant to be compiled here)' >&2
+    return 1
+  fi
   if [ "$failures" -ne 0 ]; then
     echo "FAILED gates:${failed}"
     echo "${ran} gate(s) run, ${skipped} skipped, ${failures} failed${scope}"
     return 1
+  fi
+  if [ "${unbuilt_count}" -gt 0 ]; then
+    # The operator said the skip is the intended answer. The pass line still has to carry what
+    # was left unmeasured, or the log reads as a sweep to whoever meets it next.
+    echo "  --allow-unbuilt-changes: ${unbuilt_count} changed file(s) the skipped build gates would have measured"
   fi
   echo "all gates passed on the host (${ran} run, ${skipped} skipped${scope})"
   return 0
@@ -263,6 +340,13 @@ self_test() {
 
   work="$(mktemp -d)"
   cd "$work" || return 2
+
+  # The fixtures below are three lines of fake gates run against this real checkout, so the
+  # diff the NOT COVERED rule reads must come from the fixtures, not from whatever Rust work
+  # the tree happens to hold. Set-but-empty means "nothing changed"; the cases that want a
+  # diff set it themselves.
+  VERIFY_GATES_CHANGED=""
+  export VERIFY_GATES_CHANGED
 
   # The fixture mirrors the real file's placeholder. `bootstrap` is exported so that a
   # surviving prefix expands, inside the gate's own bash, to a command that aborts it: with
@@ -384,6 +468,38 @@ FIXTURE
   expect_line "and says that it skipped" "^SKIP  cargo check"
   run_case "the same gate runs under --with-build" 1 build-gate.sh --with-build
 
+  # The skip has to cost something when there is a diff for the skipped gates to measure.
+  # 2026-10-04: batch 11's only Rust change was a new test file, the sweep here said
+  # `all gates passed on the host (35 run, 4 skipped)`, and CI's `cargo clippy --all-targets`
+  # leg failed on the pushed commit. A green line about a tree this runner never compiled is
+  # the failure mode, so the green line is what is being taken away here.
+  VERIFY_GATES_CHANGED="crates/a.rs
+crates/b.rs"
+  run_case "a skipped build gate with changed Rust is not a pass" 1 build-gate.sh
+  expect_line "it says which gates went unmeasured and why" "^NOT COVERED  1 build gate.s. skipped while 2 changed file.s."
+  expect_line "and it names the files rather than the count alone" "^              crates/a.rs$"
+  expect_line "pointing at the flag that would have covered them" "verify-gates.sh --with-build"
+  run_case "unless told the files are deliberately unbuilt" 0 build-gate.sh --allow-unbuilt-changes
+  expect_line "where the pass line still says what went unmeasured" \
+    "--allow-unbuilt-changes: 2 changed file.s. the skipped build gates would have measured"
+  run_case "and --with-build settles it by running the gate" 1 build-gate.sh --with-build
+  reject_line "where the verdict is the gate's own failure, not the skip" "^NOT COVERED"
+
+  VERIFY_GATES_CHANGED="docs/readme.md"
+  run_case "a change no build gate reads keeps the sweep cheap and green" 0 build-gate.sh
+  reject_line "so the fast loop is not held hostage by an unrelated diff" "^NOT COVERED"
+
+  VERIFY_GATES_CHANGED="apps/chaos-ui/src/generated/protocol.ts"
+  run_case "the generated protocol types count as the GUI gate's" 1 build-gate.sh
+
+  # A filtered run already refuses to read as a sweep (`K of T selected by --only`), so the
+  # unbuilt rule is not layered on top of it; pinned here because both shapes are quoted.
+  VERIFY_GATES_CHANGED="crates/a.rs"
+  run_case "a filtered run is judged by its own disclaimer, not this rule" 0 build-gate.sh \
+    --only "cheap neighbour"
+  reject_line "which did not skip a build gate, so it says nothing about Rust" "^NOT COVERED"
+  VERIFY_GATES_CHANGED=""
+
   # --only. The absent lines matter as much as the present ones: a filter that silently ran
   # everything would satisfy any grep for the gate it was supposed to select.
   run_case "--only runs just the gate it names" 0 all-pass.sh --only "appended entry is picked up"
@@ -497,6 +613,9 @@ case "${mode}" in
     cd "${repo_root}" || exit 2
     echo "== gates extracted from ${gates_source}"
     echo "   host run: the \${bootstrap} prefix is dropped, build gates are $([ "${include_build}" = yes ] && echo included || echo skipped)"
+    if [ "${include_build}" = "no" ]; then
+      echo '   a skipped build gate plus a changed Rust file is a NOT COVERED failure, not a pass'
+    fi
     echo "   env: RUST_MIN_STACK=${RUST_MIN_STACK:-unset} (mirrors the container's --env; set it to override)"
     if [ "${only_count}" -gt 0 ]; then
       echo "   --only is in effect (${only_count} pattern(s)); this is a filtered run, not a sweep"

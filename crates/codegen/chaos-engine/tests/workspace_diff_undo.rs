@@ -695,8 +695,10 @@ fn preview_diff_reports_the_recorded_sides_again() {
         other => panic!("unexpected {other:?}"),
     }
     // A preview read must not consume the undo point.
-    assert!(matches!(
-        error_code(&rollback(&engine, session_id, &proposal_id)).as_deref(),
-        None
-    ));
+    assert!(
+        error_code(&rollback(&engine, session_id, &proposal_id))
+            .as_deref()
+            .is_none(),
+        "the undo point should still be there after a preview read"
+    );
 }

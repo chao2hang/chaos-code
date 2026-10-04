@@ -1218,6 +1218,43 @@ churn 里连跑十五次全绿，而同一时间那个旧形状的探针又丢�
 就是又一次给出假的安心。上限要取自被测量本身（流程真正用掉的轮数），而不是取自旧写法留下的那个
 数字，否则换的只是单位，不是根据。**
 
+## 2026-10-04：同一条「跳过四条编译腿」的判据当天又红了一次，这次把它从散文搬进 runner
+
+上面那节的结论是「缺的不是工具，是收工条件」，判据要求引用一轮宿主门禁时把 `N run, M skipped`
+原样写出来、不要写「全绿」。当天后面的两批把这条判据完整走了一遍：push 前跑过
+`scripts/verify-gates.sh`，它打印了 `all gates passed on the host (35 run, 4 skipped)`，那四条
+被点名的确实是被跳过的四条，人也照着判据读了这句；然后 push，然后 CI 的 `rust check / clippy /
+test` 红在 `crates/codegen/chaos-engine/tests/workspace_diff_undo.rs:698` 那条
+`redundant_pattern_matching` 上（run 37206776703），下一批什么都没碰这个文件、又红一次
+（run 37208735399），顺带把 `platform tests` 那两条长腿 skip 掉。
+
+差别不在有没有说真话，而在谁承担说真话的后果。那句判据管的是一次**引用**：它要求写日志的人把
+skip 写全，它不改变 runner 自己给的结论。于是一轮什么都没编译的 sweep 仍然以退出 0 结束，
+「4 skipped」的含义仍然要由读的人在脑子里补一遍「我这轮改的是 Rust，clippy 恰好只看 Rust」——而
+这一轮改动在他看来只是「一行测试断言的写法」，正是最容易觉得不至于的那一种。凡是只能在人读到
+的那一刻才生效的规则，都会在这种时刻失效。
+
+所以规则搬进 runner：`scripts/verify-gates.sh` 在准备打印那句绿灯之前，把「这轮跳过了哪些门」
+与「这轮改了什么」两件本来都在它手上的事实做一次交叉。归那四条腿管的是 `*.rs`、`*.toml`、
+`*.lock`，加上 `GUI protocol types` 唯一读在 Rust 树外面的输入
+`apps/chaos-ui/src/generated/protocol.ts`；改动取 `git diff --name-only HEAD` 与
+`@{u}..HEAD` 两段，前者是「扫的时候还没提交」，后者是「先提交再扫」。命中就是
+`NOT COVERED`、点名文件、退出 1。`--allow-unbuilt-changes` 留给确实不打算在本机编译的那些改动，
+但它换不来安静：通过行下面必须多一行写明有几个文件没被测到。
+
+被跳过的那条腿值多少也顺手量了：暖缓存下 `cargo clippy --workspace --all-targets --locked --
+-D warnings` 2m52s、93 行 `Checking`/`Compiling`、退出 0。也就是说 fast loop 躲开的东西不到
+三分钟，把一轮 Rust 改动往它那边推是很便宜的建议；真正的成本从来在 `cargo test --workspace`
+那一侧，而它仍然是 `--with-build` 才跑的。规则的非空转性用两条变异验过（各红五条断言、先红退出
+码），真实树上也跑了一遍：那只 `.rs` 改着未提交，sweep 最后点名它并退出 1，同批在 `scripts/` 下
+的另两个文件不计。数字与两段变异前的源码在
+`docs/verification/host-gate-unbuilt-changes-2026-10-04.log`。
+
+**判据：一轮验证的覆盖范围如果取决于本轮改了什么，收工条件就不能写成「引用结果时补一句说明」，
+要写成 runner 能自己拒答的形式——「这轮跳过了什么」与「这轮改了什么」两件事实都在它手上，让它们
+交叉，命中就不给退出 0。凡是只能靠人读到日志才生效的规则，都按这一条重审一遍：它拦住的应该是
+一次放行，不是一句措辞。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

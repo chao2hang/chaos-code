@@ -330,6 +330,8 @@ scripts/verify-gates.sh --list       # what would run, running nothing
 scripts/verify-gates.sh --only fmt   # only the gates whose label contains "fmt"
 scripts/verify-gates.sh --verbose    # stream every gate's output, not just failures
 scripts/verify-gates.sh --with-build # plus cargo check/clippy/test and GUI types
+scripts/verify-gates.sh --allow-unbuilt-changes
+                                     # skip the build gates even with Rust changed
 scripts/verify-gates.sh --self-test  # the runner's own fixture suite
 ```
 
@@ -364,6 +366,20 @@ unlock the build gates: `--only 'cargo test'` on the host still prints `SKIP` un
 turn a fast loop into a workspace rebuild. `--self-test` pins all three, including the negative
 half of each selection case, which asserts that the line of the gate that must not have run is
 absent.
+
+A skipped build gate is not allowed to come back as a pass. The four build gates are what CI runs on
+every push, so a run that skipped them while the diff holds a file one of them measures ends
+`NOT COVERED` with exit 1 and names those files, rather than printing a verdict about a tree it never
+compiled. The files are `*.rs`, `*.toml`, `*.lock`, and `apps/chaos-ui/src/generated/protocol.ts`,
+which is the one input of the `GUI protocol types` gate that lives outside the Rust tree. The diff is
+`git diff --name-only HEAD` plus everything ahead of `@{u}`, so it catches the sweep run before a
+commit and the one run after it; outside a git checkout, or with no upstream configured, it claims
+nothing. `--allow-unbuilt-changes` is for a run where those files are deliberately not compiled
+here, and it buys a pass rather than silence: the summary still prints how many changed files the
+skipped gates would have measured. The rule exists because two batches in a row were pushed behind
+`all gates passed on the host (35 run, 4 skipped)` and CI's clippy leg failed on both, which is also
+what `docs/ci-test-debt.md` draws the lesson from; `--self-test` holds the rule with six runs and
+seven assertions, and both of its conditions die under mutation.
 
 Both runners carry fixtures for their own behaviour, and they are two files because the two
 runners do different jobs. `--self-test` covers the host side. The container entry point owns

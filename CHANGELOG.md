@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### 门禁：跳过编译腿的那一轮宿主门禁，从此不能替这轮改动说「过了」
+
+`45be2b00`（上一批）与 `3811e87e`（再上一批）连着两轮 CI 红在同一条 clippy 上：
+`crates/codegen/chaos-engine/tests/workspace_diff_undo.rs:698` 的
+`assert!(matches!(..., None))` 被判 `redundant_pattern_matching`，`-D warnings` 直接把它变成
+`could not compile chaos-engine (test "workspace_diff_undo")`。一条断言的写法顺带把
+`platform tests` 那两条长腿跳掉了（windows-latest 17m5s、macos-14 23m34s，run 37201938718 量的），
+两次 push 什么都没换回来。
+
+`docs/ci-test-debt.md` 里已经有一节写这四条腿是藏身处，判据是「引用一轮宿主门禁时把
+`N run, M skipped` 原样写出来，不要写全绿」。这一批证明那句话挡不住事：那轮 sweep 确实打印了
+`4 skipped`，也确实被人读过了，改动照样 push 出去红掉。一句关于怎么读日志的话，在需要读日志的
+那一刻就不再是控制。所以规则从散文搬进 runner：跳过的编译腿与 diff 里有它负责的文件同时成立时，
+这一轮的结论是 `NOT COVERED`、退出 1，并点名那些文件。
+
+哪些文件归那四条腿：`*.rs`、`*.toml`、`*.lock`，加上 `GUI protocol types` 那条唯一读在 Rust 树
+外面的输入 `apps/chaos-ui/src/generated/protocol.ts`。diff 取两段：`git diff --name-only HEAD`
+（暂存与未暂存，正是上一批被扫那一刻的状态）与 `@{u}..HEAD`（先提交后扫的人）；不在 git 里、或者
+没有上游分支，就什么都不说，而不是编一个 diff 出来。`--allow-unbuilt-changes` 是留给「这些文件
+本机就是不打算编译」的逃生口，但它换不来安静：通过行会多出一行写明有多少个改动文件没被测到。
+
+代价是量过的：`cargo clippy --workspace --all-targets --locked -- -D warnings` 在暖缓存下
+2m52s 跑完，93 行 `Checking`/`Compiling`，退出 0。fast loop 躲的那条腿不到三分钟，把改动往它
+那边推不是昂贵建议。真实树上验证过一遍——那只 `.rs` 改着未提交，`bash scripts/verify-gates.sh`
+跑完 35 条便宜门禁加 4 条 skip，最后打印 `NOT COVERED 4 build gate(s) skipped while 1 changed
+file(s) are theirs to measure` 并点名它，退出 1；同批在 `scripts/` 下的另两个文件不计，fast
+loop 对该编译的东西之外的改动仍然是快的。
+
+规则本身也被变异过：把 `is_build_relevant_path` 改成任何路径都不归它管，或者把
+`unbuilt_count -gt 0` 改成 `-gt 9999`，`--self-test` 各自红掉五条断言（先红退出码，再红两条
+文案，再各红一条只有该变异能碰到的），恢复后 `cmp exit=0`；基线 63/63 不绿的话驱动根本不动手。
+仍然盖不住的三件事写进证据日志最后一节：它读路径不读内容，已在 HEAD 里且没改的文件不会出现在
+diff 里；那四条腿只有一个平台，`#[cfg(windows)]` 里坏掉的块看不见；逃生口是信任，不是测量。
+
+（2026-10-04；`scripts/verify-gates.sh`、
+`crates/codegen/chaos-engine/tests/workspace_diff_undo.rs`、
+`scripts/ci/test-verify-in-docker.py`、
+`docs/verification/host-gate-unbuilt-changes-2026-10-04.log`、`docs/ci-test-debt.md`）
+
 ### 修复：两只测试把前提押在并不属于自己的资源上，一只押端口号，一只押八秒墙上时间
 
 上一批在跑变异批批时，一扇与本次改动无关的门被另一只正在抖的测试杀掉了，`docs/ci-test-debt.md`

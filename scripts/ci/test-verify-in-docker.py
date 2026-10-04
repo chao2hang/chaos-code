@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fixtures for `scripts/verify-in-docker.sh`, driven with a stubbed `docker`.
 
-The host runner `scripts/verify-gates.sh` carries 50 self-test cases and reads its gate list out
+The host runner `scripts/verify-gates.sh` carries 63 self-test cases and reads its gate list out
 of this very file, so the list is checked from both ends. The entry point that owns that list had
 none: its flag parsing, its `--only` filter, its before/after tree checksums, its preflight, its
 verdict wording and its exit codes had only ever been exercised by hand, against a real image, one

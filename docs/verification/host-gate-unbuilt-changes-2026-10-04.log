@@ -1,0 +1,278 @@
+# A host sweep said "all gates passed" about Rust it never compiled (2026-10-04)
+
+`scripts/verify-gates.sh` reads its gate list out of `scripts/verify-in-docker.sh` and skips
+the four gates that rebuild the workspace (`cargo check`, `cargo clippy`, `cargo test`, `GUI
+protocol types`) unless `--with-build` is given. The skip has always been printed and
+counted. It was not allowed to affect the verdict, so the last line of a run that had
+skipped the only gate able to see a Rust problem read `all gates passed on the host`.
+
+That hazard is written down in `docs/ci-test-debt.md`, in the section headed
+「宿主门禁跳过的那四条腿，正是这一轮两个缺陷的藏身处」, whose 判据 tells the reader
+to quote `N run, M skipped` rather than say "all green". Batch 11 met the same hazard the
+same day anyway: the sweep was honest about the skip, the skip was read, and the batch was
+pushed and went red regardless, because a sentence about how to read a log stops being a
+control the moment there are logs to read.
+
+This batch does two things. It fixes the finding that turned CI red, and it moves the rule
+from prose into the runner: a run that skipped a build gate while the diff holds a file that
+gate measures now ends `NOT COVERED` with exit 1 and names the files.
+
+== 0. What CI said
+
+Batch 11 is commit `45be2b00`. Its run, and batch 12's run on top of it, both failed the
+same leg with the same error. Run 37206776703, `rust check / clippy / test`:
+
+    $ gh run view 37206776703 --log-failed
+
+The raw lines also carry a `rust check / clippy / testUNKNOWN STEP` job-name prefix and
+colour escapes; the excerpt below is the same output with those two removed, so the
+timestamps shown are the log's own.
+
+    2026-10-04T14:17:18.3277913Z error: redundant pattern matching, consider using `is_none()`
+    2026-10-04T14:17:18.3297490Z    --> crates/codegen/chaos-engine/tests/workspace_diff_undo.rs:698:13
+    2026-10-04T14:17:18.3327112Z     |
+    2026-10-04T14:17:18.3357173Z 698 |       assert!(matches!(
+    2026-10-04T14:17:18.3387110Z     |  _____________^
+    2026-10-04T14:17:18.3417603Z 699 | |         error_code(&rollback(&engine, session_id, &proposal_id)).as_deref(),
+    2026-10-04T14:17:18.3457045Z 700 | |         None
+    2026-10-04T14:17:18.3477130Z 701 | |     ));
+    2026-10-04T14:17:18.3507655Z     | |_____^ help: try: `error_code(&rollback(&engine, session_id, &proposal_id)).as_deref().is_none()`
+    2026-10-04T14:17:18.3536967Z     |
+    2026-10-04T14:17:18.3567866Z     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#redundant_pattern_matching
+    2026-10-04T14:17:18.3616102Z     = note: `-D clippy::redundant-pattern-matching` implied by `-D warnings`
+    2026-10-04T14:17:18.3617803Z     = help: to override `-D warnings` add `#[allow(clippy::redundant_pattern_matching)]`
+    2026-10-04T14:17:18.3909458Z error: could not compile `chaos-engine` (test "workspace_diff_undo") due to 1 previous error
+
+Run 37208735399, which is batch 12 (`3811e87e`) and touches nothing in that file, failed the
+same way at 14:27:37, ten minutes after the timestamp above.
+
+    error: redundant pattern matching, consider using `is_none()`
+    error: could not compile `chaos-engine` (test "workspace_diff_undo") due to 1 previous error
+
+Its job list shows what one clippy finding costs on this repository:
+
+    $ gh run view 37208735399 --json jobs --jq '.jobs[] | "\(.conclusion // "-")  \(.name)"'
+    success  docs localization
+    success  GUI engine, Web host and frontend
+    success  secret scan
+    success  npm package scripts
+    success  installer integrity labs
+    failure  rust check / clippy / test
+    success  GUI browser E2E
+    success  workflows present
+    skipped  platform tests (${{ matrix.os }})
+
+The platform legs are the two long ones (17m5s on windows-latest, 23m34s on macos-14,
+measured in run 37201938718) and they never started, so the push bought nothing and lost
+both.
+
+== 1. What the host sweep had said about the same tree
+
+Recorded in `docs/verification/verify-in-docker-entry-blindness-2026-10-04.log:386`, which
+is a sweep of the same runner on this same day:
+
+    all gates passed on the host (35 run, 4 skipped)
+
+Four skipped is four build gates, always all four, because the skip is by exact label.
+Nothing in that line is false and nothing in it is about the Rust in the tree: it is a
+verdict about 35 gates, printed at the end of a run whose own banner said `build gates are
+skipped`.
+
+== 2. The finding, and what the skipped leg actually costs
+
+The fix is the shape clippy asked for.
+`crates/codegen/chaos-engine/tests/workspace_diff_undo.rs` around line 697, after `cargo
+fmt`:
+
+    // A preview read must not consume the undo point.
+    assert!(
+        error_code(&rollback(&engine, session_id, &proposal_id))
+            .as_deref()
+            .is_none(),
+        "the undo point should still be there after a preview read"
+    );
+
+The assertion is the same one batch 11 shipped: a preview read must leave the undo point
+rollback-able. `matches!(x, None)` and `x.is_none()` decide identically; what changed is
+that the message now says which property failed, which `assert!(matches!(..))` could not
+carry.
+
+The whole leg, over the workspace and every target, on a warm cache:
+
+    $ cargo clippy --workspace --all-targets --locked -- -D warnings
+        Checking xai-grok-pager-minimal v0.1.0 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager-minimal)
+        Finished `dev` profile [unoptimized] target(s) in 2m 52s
+
+Exit status 0, 93 `Checking`/`Compiling` lines, no warning left standing. That number
+matters for the design below: the leg the fast loop exists to avoid is under three minutes
+when `target/` is warm, so a rule that pushes a Rust change towards it is not expensive
+advice.
+
+The test target that could not compile runs and passes:
+
+    $ cargo test -q -p chaos-engine --test workspace_diff_undo
+    running 18 tests
+    ..................
+    test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+== 3. The rule, as shipped
+
+Three pieces in `scripts/verify-gates.sh`. Which files belong to the skipped gates:
+
+    is_build_relevant_path() {
+      case "$1" in
+        *.rs | *.toml | *.lock) return 0 ;;
+        apps/chaos-ui/src/generated/protocol.ts) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+
+The generated `.ts` file is the one input of the `GUI protocol types` gate that lives
+outside the Rust tree; everything else that gate reads it generates. What the diff holds:
+
+    changed_paths() {
+      if [ -n "${VERIFY_GATES_CHANGED+x}" ]; then
+        printf '%s\n' "${VERIFY_GATES_CHANGED}"
+        return 0
+      fi
+      git rev-parse --git-dir >/dev/null 2>&1 || return 0
+      git diff --name-only HEAD 2>/dev/null
+      local upstream
+      upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || upstream=""
+      if [ -n "${upstream}" ]; then
+        git diff --name-only "${upstream}..HEAD" 2>/dev/null
+      fi
+      return 0
+    }
+
+`git diff --name-only HEAD` is the staged-plus-unstaged half, which is the shape batch 11
+was in at sweep time; the `@{u}..HEAD` half is the same risk for someone who commits before
+sweeping. Outside a git checkout, or with no upstream configured, the function says nothing
+rather than inventing a diff, and the rule stays quiet.
+
+And the verdict, reached only by a run that would otherwise have printed the green line:
+
+    if [ "${unbuilt_count}" -gt 0 ] && [ "${allow_unbuilt}" = "no" ]; then
+      echo "NOT COVERED  ${skipped} build gate(s) skipped while ${unbuilt_count} changed file(s) are theirs to measure:" >&2
+      ...
+      echo '              run: scripts/verify-gates.sh --with-build' >&2
+      return 1
+    fi
+
+`--allow-unbuilt-changes` is the escape hatch, and it does not buy silence: the pass line
+grows `--allow-unbuilt-changes: N changed file(s) the skipped build gates would have
+measured`.
+
+== 4. The rule on the tree that motivated it
+
+With `crates/codegen/chaos-engine/tests/workspace_diff_undo.rs` modified and uncommitted,
+which is the batch-11 situation exactly:
+
+    $ bash scripts/verify-gates.sh
+
+The run is 35 cheap gates plus the four skips, 311 s:
+
+    PASS  docs localization
+    PASS  localization guard self-tests
+    PASS  secret scan
+    SKIP  cargo check (build gate; --with-build runs it)
+    SKIP  cargo clippy (build gate; --with-build runs it)
+    SKIP  cargo test (build gate; --with-build runs it)
+    SKIP  GUI protocol types (build gate; --with-build runs it)
+
+    NOT COVERED  4 build gate(s) skipped while 1 changed file(s) are theirs to measure:
+                  crates/codegen/chaos-engine/tests/workspace_diff_undo.rs
+                  run: scripts/verify-gates.sh --with-build
+                         (or --allow-unbuilt-changes when those files are not meant to be compiled here)
+    EXIT=1
+
+The two files the same batch had open under `scripts/` are not counted, which is the point
+of `is_build_relevant_path`: the sweep stays cheap for the diffs the build gates cannot see.
+
+== 5. Is the new rule measured, or just written?
+
+The rule has six fixture runs and seven fixture assertions inside `scripts/verify-gates.sh
+--self-test`. A passing self-test proves the fixtures agree with the runner, not that the
+runner enforces anything, so the two load-bearing conditions were mutated one at a time. The
+driver copies the file, checks the baseline is green and refuses to touch anything if it is
+not, and restores with `cp` and compares with `cmp` on every path including a failure inside
+the self-test.
+
+    $ bash scripts/verify-gates.sh --self-test
+    verify-gates self-test: 63/63 cases pass
+
+Mutant A, `is_build_relevant_path` no longer claims any path is the build gates' business:
+
+    *.rs | *.toml | *.lock) return 0 ;;      ->      *.rs | *.toml | *.lock) return 1 ;;
+
+    == mutant: no changed path counts as the build gates' business
+        exit=1  KILLED
+        verify-gates self-test: 58 passed, 5 FAILED
+        not ok a skipped build gate with changed Rust is not a pass (expected exit 1, got 0)
+        not ok it says which gates went unmeasured and why (no line matching: ^NOT COVERED  1 build gate.s. skipped while 2 changed file.s.)
+        not ok and it names the files rather than the count alone (no line matching: ^              crates/a.rs$)
+        not ok pointing at the flag that would have covered them (no line matching: verify-gates.sh --with-build)
+        not ok where the pass line still says what went unmeasured (no line matching: --allow-unbuilt-changes: 2 changed file.s. the skipped build gates would have measured)
+
+Mutant B, the skip is never turned into a verdict:
+
+    if [ "${unbuilt_count}" -gt 0 ] && ...    ->      if [ "${unbuilt_count}" -gt 9999 ] && ...
+
+    == mutant: the skip is never turned into a verdict
+        exit=1  KILLED
+        verify-gates self-test: 58 passed, 5 FAILED
+        not ok a skipped build gate with changed Rust is not a pass (expected exit 1, got 0)
+        not ok it says which gates went unmeasured and why (no line matching: ^NOT COVERED  1 build gate.s. skipped while 2 changed file.s.)
+        not ok and it names the files rather than the count alone (no line matching: ^              crates/a.rs$)
+        not ok pointing at the flag that would have covered them (no line matching: verify-gates.sh --with-build)
+        not ok the generated protocol types count as the GUI gate's (expected exit 1, got 0)
+
+Five fixture assertions die under either mutant: the exit code, then the two message
+assertions, then one that only mutant A reaches (the `--allow-unbuilt-changes` note) and one
+that only mutant B reaches (the generated `.ts` counting as the GUI gate's). The ordering
+inside each run matters -- the fixture asks whether the run refuses to pass before it asks
+whether the run explains itself, so a mutant that only breaks the wording cannot hide behind
+a green exit code.
+
+Once the driver had put the file back:
+
+    == restore byte-identical: cmp exit=0
+
+== 6. The same runner, with the leg switched on
+
+With the fix in place, the whole list including the four build gates:
+
+    $ bash scripts/verify-gates.sh --with-build
+    PASS  docs localization
+    PASS  localization guard self-tests
+    PASS  secret scan
+    PASS  cargo check
+    PASS  cargo clippy
+    PASS  cargo test
+    PASS  GUI protocol types
+
+    all gates passed on the host (39 run, 0 skipped)
+
+39 gates in 1383 s. The `cargo clippy` line there is the command line CI runs, verbatim,
+because the runner parses its list out of `scripts/verify-in-docker.sh`'s `gates` array
+instead of copying it -- which is the whole reason this green line and CI's leg can be
+compared at all. 23 minutes is now the number a Rust batch weighs against the alternative
+that produced this batch: one red CI run and two platform legs that never started.
+
+== 7. What is still not covered
+
+Three limits, none of them closed by this batch.
+
+The rule reads paths, not content. A `.rs` file that was already in HEAD and is unmodified
+cannot appear in the diff, so a workspace that does not compile for a reason unrelated to
+the change (either a bad merge resolution that landed as a commit, or a feature flag the
+sweep does not build) still passes. Only `cargo check` on the tree can see that, and
+`--with-build` remains the only way to ask.
+
+The four build gates are one platform. `cargo check --workspace --all-targets` on Linux
+cannot see a `#[cfg(windows)]` block that stopped compiling; that is what the platform legs
+are for, and they run on push, not locally.
+
+`--allow-unbuilt-changes` is trust, not measurement. It is deliberately loud in the summary
+for that reason, and the fixture asserts the note is printed rather than asserting the flag
+exits 0.
