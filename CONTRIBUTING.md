@@ -99,6 +99,16 @@ that mounts the checkout -- judged by what it mounts, not by its name -- includi
 that the host side of a volume mounted inside the checkout is created by the script itself,
 which a `mkdir` inside a gate command does not satisfy.
 
+That check reads the entry point, so a mount path assembled at runtime is outside its
+reach. `scripts/ci/check-tree-ownership.py` is the runtime half: it walks the tree and
+reports any path whose owner differs from the owner of the checkout itself, which stays
+quiet on a machine with no POSIX ownership and is loud about the one shape that matters.
+Build output is skipped by name, because inside the container that name is the mount
+point of the cargo volume and its root really is root-owned, and so is anything else
+mounted under the checkout. It runs as a gate in both roots, so a leak is measured while
+the container that made it is still running -- and a finding there is not a style
+complaint but a directory you will not be able to delete afterwards.
+
 The run checksums every tracked and untracked file before the first gate and again
 after the last one. A mismatch prints `UNATTRIBUTABLE` and exits non-zero: the
 container reads the live working tree, so a run that overlapped an edit describes

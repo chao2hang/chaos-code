@@ -732,6 +732,13 @@ jobs:
           # container entry point, and covers the image too so `--shell` behaves the same.
           python3 scripts/ci/test-check-container-hygiene.py
           python3 scripts/ci/check-container-hygiene.py
+          # The runtime half of that rule. The check above reads shell text, so a mount path put
+          # together at runtime is outside its reach; this one walks the checkout and compares the
+          # owner of every path against the owner of the checkout itself. Build output is skipped by
+          # name, because in the container that name is the mount point of the cargo volume and what
+          # sits there is legitimately root-owned.
+          python3 scripts/ci/test-check-tree-ownership.py
+          python3 scripts/ci/check-tree-ownership.py
           # Two ratchets over the Rust sources, both from one scanner. The first
           # refuses a crate that gains a production `.unwrap()`, `.expect()`,
           # `panic!` or `unsafe` site; the definition of "production" it uses

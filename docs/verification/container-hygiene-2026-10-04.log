@@ -352,6 +352,35 @@ the build directory was already created host-side, and nothing owned by root is 
 The `12 path(s) differ from HEAD` line is the runner's own honesty check and describes this
 run: the check and its fixtures were not yet committed.
 
+Re-run two commits later in the working tree itself, at `5e8ffb20` with nothing
+uncommitted, where the `differ from HEAD` line is absent because there is nothing
+uncommitted to describe:
+
+$ git status --porcelain | wc -l
+    0
+$ echo "root-owned before: $(find . -path ./target -prune -o -user root -print | wc -l)"
+    root-owned before: 0
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "container hygiene"
+    == source tree: 4014 files, checksum 577050912
+    == --only is in effect: 1 of 34 gates selected, this is not a sweep
+    ...
+    Ran 19 tests in 0.572s
+
+    OK
+    container-hygiene: OK (16 shell script(s) scanned, 1 mounts the checkout, 1 Dockerfile(s), 0 problem(s))
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 34 gates ran, so this is not a full sweep
+$ echo "root-owned after: $(find . -path ./target -prune -o -user root -print | wc -l)"
+    root-owned after: 0
+
+Everything the static rule can see is therefore clean at a committed state, which is the
+state a reader of this document will be in. What the static rule cannot see is measured by
+`scripts/ci/check-tree-ownership.py`, and
+`docs/verification/tree-ownership-2026-10-04.log` records both rules against the same tree
+with a leak in it: the static one says OK, the runtime one names the two paths the
+container had just created.
+
 == 11. What this does not cover
 
 The check is static. A mount path assembled at runtime, a `docker run` assembled inside a

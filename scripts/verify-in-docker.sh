@@ -202,6 +202,11 @@ gates=(
   # could not be deleted by the owner of the tree afterwards. The rule judges who mounts the
   # checkout rather than who is named like a container entry point.
   "container hygiene: python3 scripts/ci/test-check-container-hygiene.py && python3 scripts/ci/check-container-hygiene.py"
+  # The runtime half of the same rule. The check above reads shell text and cannot see a mount path
+  # assembled at runtime; this one walks the tree and asks who owns each path, comparing against the
+  # owner of the checkout itself. Running it here, inside the container, means the leak is measured
+  # at the moment it exists rather than in a review of the script that caused it.
+  "tree ownership: python3 scripts/ci/test-check-tree-ownership.py && python3 scripts/ci/check-tree-ownership.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
   # The census cannot see a Prometheus call whose label count is wrong, because the panic
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says

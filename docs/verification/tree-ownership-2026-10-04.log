@@ -1,0 +1,366 @@
+# Who owns the paths inside the checkout, measured rather than inferred (2026-10-04)
+
+`scripts/ci/check-container-hygiene.py` reads the container entry point and forbids the
+shapes that write root-owned files into a developer's checkout. It is a static read of shell
+text, and its own docstring says what it cannot see: a mount path assembled at runtime, a
+`docker run` assembled inside a variable. `scripts/ci/check-tree-ownership.py` is the other
+half. It walks the tree and asks, of every path, whether it belongs to the same owner as the
+directory that contains it.
+
+The two rules are not redundant, and the difference is not theoretical. Section 3 runs both
+against the same tree with a leak in it: the static rule says the entry point is clean,
+because the entry point *is* clean, and the runtime rule names the two paths the container
+had just created.
+
+Output below is quoted verbatim, including its own punctuation.
+
+== 1. The comparison, and why it is against the root directory
+
+The checkout arrives through a bind mount, so its root carries the uid of whoever cloned it,
+while anything the container creates carries root. The obvious comparison -- "no path may be
+owned by uid 0" -- is wrong on a machine with no POSIX ownership: on Windows every path
+reports uid 0, the root included, so every path would be an intruder and the gate would fire
+on every checkout there. Comparing against the owner of the root says "nothing here
+disagrees with the directory containing it", which is the actual claim, needs no platform
+branch, and is silent wherever one user legitimately owns everything.
+
+$ python3 scripts/ci/check-tree-ownership.py --verbose
+      expected owner: chaos (1003)
+      skipped directory names: target
+      mount points known: 48
+    tree-ownership: OK (13083 path(s) walked under chaos-code, all owned by chaos (1003), 1 path(s) skipped as pruned or mounted)
+
+Thirteen thousand paths, `.git` included, in 0.165 seconds:
+
+$ time python3 scripts/ci/check-tree-ownership.py > /dev/null
+    python3 scripts/ci/check-tree-ownership.py > /dev/null  0.14s user 0.02s system 99% cpu 0.165 total
+
+so the rule is cheap enough to be a normal gate rather than an opt-in diagnostic. For scale,
+the same tree with `find`, both build output and `.git` pruned, is 8103 entries; the gate
+walks those plus everything under `.git` and skips only the pruned name.
+
+== 2. Three things are skipped rather than judged
+
+* Symlinks are statted and never followed, so a link out of the tree cannot make this read
+  files that are not in the checkout. A dangling link still has an owner and is judged like
+  any path.
+* A directory named by `--prune`, `target` by default, is skipped itself and with its
+  contents. Build output was never part of the checkout, and inside the container the name
+  is the mount point of the cargo volume, whose root really is root-owned; judging it there
+  is a false positive. The leak that carve-out could hide -- the `target/` the runtime
+  leaves in the checkout -- is what `check-container-hygiene.py` forbids statically, and it
+  is visible from the host, where no volume is mounted over it.
+* A mount point under the root is skipped with its subtree, read from
+  `/proc/self/mountinfo`. What was deliberately mounted there came from somewhere else on
+  purpose. A checkout that is itself a mount, which is what `/src` is inside the container,
+  is still walked: the root is never one of the entries of its own listing.
+
+The mount rule has a second job. `mountinfo` writes a space in a path as `\040`, so the
+field is unescaped before it is compared;
+`test_a_mount_point_whose_name_needs_an_escape_is_still_matched` pins that, and mutation M19
+shows what happens when the unescaping is removed.
+
+== 3. The leak, made on purpose, inside the container
+
+A clone of `5e8ffb20` carrying the batch's four changed paths, mounted the way
+`scripts/verify-in-docker.sh` mounts it, with the cargo volume over `/src/target`. The
+chaos-owned `scripts/ci/__pycache__` that the clone inherited from the working tree is
+removed first, so the directory the container makes is the container's own:
+
+$ rm -rf /var/tmp/verify-own-clean/scripts/ci/__pycache__
+$ find /var/tmp/verify-own-clean -user root
+    (nothing listed)
+$ docker run --rm --init --workdir /src --volume /var/tmp/verify-own-clean:/src --volume chaos-verify-target:/src/target --env PYTHONDONTWRITEBYTECODE=1 chaos-verify:frozen bash -c 'mkdir -p /src/scripts/ci/__pycache__; touch /src/scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc; mkdir -p /src/target/leak-under-the-volume; stat -c "%n owner=%u" /src/scripts/ci/__pycache__ /src/target; python3 scripts/ci/check-container-hygiene.py; python3 scripts/ci/check-tree-ownership.py --root /src'
+
+Inside that container, in that order:
+
+    -- who owns what the container just made
+    /src/scripts/ci/__pycache__ owner=0
+    /src/scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc owner=0
+    /src/target owner=0
+    -- the static rule, which reads the entry point and finds nothing wrong with it
+    container-hygiene: OK (16 shell script(s) scanned, 1 mounts the checkout, 1 Dockerfile(s), 0 problem(s))
+    -- the runtime rule, which looks at the tree
+    scripts/ci/__pycache__: owned by root (0), not by 1003, which owns src; it came from the other side of the mount, and the owner of the checkout cannot delete a directory the container created -- remove it with a privileged shell and stop whatever writes through the mount from doing it again
+    scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc: owned by root (0), not by 1003, which owns src; it came from the other side of the mount, and the owner of the checkout cannot delete a directory the container created -- remove it with a privileged shell and stop whatever writes through the mount from doing it again
+    tree-ownership: FAIL (2 path(s) not owned by 1003, 0 unreadable, 13016 path(s) walked under /src, 1 path(s) skipped)
+    gate exit=1
+
+`/src/target` is root-owned because it is the root of the named volume, and it is the one
+path here the gate does not report: it is the pruned name. The directory the container made
+under it is not in the walk at all, because the walk stops at the pruned name.
+
+Note `not by 1003` rather than `not by chaos (1003)`: the image is Debian bookworm and has
+no passwd entry for the host's uid, so `user_name()` falls back to the bare number. Both
+spellings appear in this document, and they are the same user.
+
+== 4. What the owner of the checkout can then do about it
+
+$ find /var/tmp/verify-own-clean -user root
+    root ./scripts/ci/__pycache__
+    root ./scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc
+$ cd /var/tmp/verify-own-clean && rm -rf scripts/ci/__pycache__
+    rm: cannot remove 'scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc': Permission denied
+    rm exit=1
+$ ls -ld /var/tmp/verify-own-clean/scripts/ci/__pycache__
+    drwxr-xr-x 2 root root 4096 Oct  4 14:07 ./scripts/ci/__pycache__
+
+That is the whole reason the rule exists: the damage is not a stray file, it is a directory
+the owner of the tree cannot remove. The same gate, run on the host against the same tree,
+says the same thing with the names resolved:
+
+$ cd /var/tmp/verify-own-clean && python3 scripts/ci/check-tree-ownership.py
+    scripts/ci/__pycache__: owned by root (0), not by chaos (1003), which owns verify-own-clean; ...
+    scripts/ci/__pycache__/check-doc-path-refs.cpython-311.pyc: owned by root (0), not by chaos (1003), which owns verify-own-clean; ...
+    tree-ownership: FAIL (2 path(s) not owned by chaos (1003), 0 unreadable, 13016 path(s) walked under /var/tmp/verify-own-clean, 1 path(s) skipped)
+    gate exit=1
+
+The finding text is the same on both sides; only the way the expected owner is written
+changes.
+
+== 5. Removal, and the clean verdict
+
+$ docker run --rm --workdir /src --volume /var/tmp/verify-own-clean:/src chaos-verify:frozen rm -rf /src/scripts/ci/__pycache__ /src/target/leak-under-the-volume
+    removal exit=0
+$ find /var/tmp/verify-own-clean -user root
+    (nothing listed)
+$ cd /var/tmp/verify-own-clean && python3 scripts/ci/check-tree-ownership.py
+    tree-ownership: OK (13014 path(s) walked under verify-own-clean, all owned by chaos (1003), 1 path(s) skipped as pruned or mounted)
+    gate exit=0
+
+== 6. The mounted-path rule, measured rather than argued
+
+A tmpfs mounted inside the checkout, at a name nothing prunes. Docker mounts it mode 770
+owned by root, which is exactly the shape the ownership rule reports:
+
+$ docker run --rm --init --workdir /src --volume /var/tmp/verify-own-clean:/src --tmpfs /var/tmp/verify-own-clean/docs chaos-verify:frozen bash -c 'stat -c "%n owner=%u mode=%a" /src/docs; python3 scripts/ci/check-tree-ownership.py --root /src; python3 scripts/ci/check-tree-ownership.py --root /src --mounts /proc/self/no-such-file'
+
+    -- who owns the mounted directory
+    /src/docs owner=0 mode=770
+    -- the rule as shipped, which reads /proc/self/mountinfo
+    tree-ownership: OK (12910 path(s) walked under src, all owned by 1003, 2 path(s) skipped as pruned or mounted)
+    gate exit=0
+    -- the same run with the mount list made unreadable, i.e. without the rule
+    docs: owned by root (0), not by 1003, which owns src; it came from the other side of the mount, ...
+    tree-ownership: FAIL (1 path(s) not owned by 1003, 0 unreadable, 12911 path(s) walked under /src, 1 path(s) skipped)
+    gate exit=1
+    -- and the count the mounted subtree takes out of the walk
+      skipped directory names: target
+      mount points known: 57
+    tree-ownership: OK (12910 path(s) walked under src, all owned by 1003, 2 path(s) skipped as pruned or mounted)
+
+So the rule is what makes the first verdict an OK rather than a false alarm, and the second
+run proves it is the rule doing it and not the tree being clean. The walked counts differ by
+one, not by the size of `docs/`, because a mount *hides* what is underneath: the 400-odd
+tracked files under `docs/` were not in either walk. That the subtree of a mounted path is
+not descended into is measured by the fixture instead, where a synthetic `mountinfo` naming
+one directory takes the walk from nine judged paths down to three.
+
+== 7. Both gates through the real entry point, at one tree state
+
+The clone at the state the batch will be committed in -- `5e8ffb20` plus the two new scripts
+and the two wiring edits -- so the two runs below describe the same fingerprint:
+
+$ cd /var/tmp/verify-own-clean && IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "tree ownership"
+    == source tree: 4016 files, checksum 1392260633
+       4 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    == --only is in effect: 1 of 35 gates selected, this is not a sweep
+    preflight: OK
+    ...
+    Ran 28 tests in 1.009s
+
+    OK (skipped=1)
+    tree-ownership: OK (13033 path(s) walked under src, all owned by 1003, 1 path(s) skipped as pruned or mounted)
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 35 gates ran, so this is not a full sweep
+
+$ cd /var/tmp/verify-own-clean && IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "container hygiene"
+    == source tree: 4016 files, checksum 1392260633
+       4 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    == --only is in effect: 1 of 35 gates selected, this is not a sweep
+    preflight: OK
+    Ran 19 tests in 0.595s
+
+    OK
+    container-hygiene: OK (16 shell script(s) scanned, 1 mounts the checkout, 1 Dockerfile(s), 0 problem(s))
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 35 gates ran, so this is not a full sweep
+
+Neither run leaves anything behind. After both, plus the leak and its removal above:
+
+$ find /var/tmp/verify-own-clean -user root
+    (nothing listed)
+
+The clone does hold `scripts/__pycache__/check-doc-l10n.cpython-310.pyc`, timestamped Sep 23
+and owned by chaos. It came across with the clone from the working tree, it predates
+`PYTHONDONTWRITEBYTECODE=1`, and being chaos-owned it is neither a finding nor a problem.
+The ownership fixtures shell the gate out rather than importing it, so unlike the sixteen
+`importlib` test modules they write no bytecode of their own.
+
+== 8. What the fixtures cover, and where each one runs
+
+Twenty-eight cases in `scripts/ci/test-check-tree-ownership.py`. Most of them cannot use
+genuine ownership: creating a path owned by somebody else needs privileges, and on a host
+without them a left-behind root-owned file is precisely the damage the gate reports -- it
+would need root to clean up, on every run. So the per-path comparison is driven through
+`--assume-owner-uid`, the seam the gate documents, and one class does it for real wherever
+the process can undo what it creates:
+
+$ python3 scripts/ci/test-check-tree-ownership.py 2>&1 | tail -3
+    Ran 28 tests in 1.074s
+
+    OK (skipped=1)
+
+On the host the skipped one is `test_a_directory_nobody_can_read_is_a_finding_not_a_silence`
+-- root reads a `000` directory, so the branch cannot be reached there -- and
+`RealOwnershipTests` is skipped as a class. Inside the container it is the other way round,
+and the real-ownership case is the one that runs:
+
+    test_only_the_path_another_owner_left_behind_is_flagged (__main__.RealOwnershipTests.test_only_the_path_another_owner_left_behind_is_flagged)
+    One root-owned directory in a tree owned by someone else: exactly one finding. ... ok
+    ...
+    `chmod 000` is how a root-created directory looks to the owner of the tree. ... skipped 'root reads a 000 directory, so the branch cannot be reached here'
+
+Both classes together mean neither environment is the only one holding up the rule: the
+unreadable branch is proven on the host, genuine second-uid ownership in the container.
+
+The container run earned its place immediately. The first version of that fixture passed on
+the host, where the class is skipped, and failed the first time it actually ran:
+
+    FAIL: test_only_the_path_another_owner_left_behind_is_flagged (__main__.RealOwnershipTests.test_only_the_path_another_owner_left_behind_is_flagged)
+    One root-owned directory in a tree owned by someone else: exactly one finding.
+    ------
+    Traceback (most recent call last):
+      File "/src/scripts/ci/test-check-tree-ownership.py", line 369, in test_only_the_path_another_owner_left_behind_is_flagged
+        self.assertIn("1 path(s) not owned by 4242", proc.stderr)
+    AssertionError: '1 path(s) not owned by 4242' not found in 'dangling: owned by root (0), not by 4242, ...
+    link: owned by root (0), not by 4242, ...
+    scripts/ci/__pycache__: owned by root (0), not by 4242, ...
+    tree-ownership: FAIL (3 path(s) not owned by 4242, 0 unreadable, 11 path(s) walked under /tmp/tmpb6qw79si/repo, 1 path(s) skipped)
+
+Three paths instead of one, because `os.chown` follows symlinks: it re-owns the target and
+leaves the link itself, so the fixture's own two symlinks stayed root-owned. The gate was
+right and the fixture was wrong; `follow_symlinks=False` in the fixture's setup is what the
+failure bought.
+
+== 9. The mutation matrix
+
+`scripts/ci/test-check-tree-ownership.py` against twenty-two single-line mutations of the
+gate. The driver refuses to report anything unless the baseline is green, treats an anchor
+that does not match exactly once as survived, and restores the gate with a plain copy,
+checked byte-for-byte afterwards:
+
+    baseline green: Ran 28 tests in 1.121s
+    killed   M1 owner comparison never matches: 12 failing (Ran 28 tests in 1.054s)
+    killed   M2 owner comparison always matches: 11 failing (Ran 28 tests in 1.112s)
+    killed   M3 --assume-owner-uid ignored in scan: 11 failing (Ran 28 tests in 1.109s)
+    killed   M4 expected owner in the verdict is a literal 0: 1 failing (Ran 28 tests in 1.102s)
+    killed   M5 prune rule dead: 13 failing (Ran 28 tests in 14.265s)
+    killed   M6 mount rule dead: 3 failing (Ran 28 tests in 1.121s)
+    killed   M7 symlinks followed when deciding to descend: 13 failing (Ran 28 tests in 1.133s)
+    killed   M8 ownership stat follows symlinks: 14 failing (Ran 28 tests in 1.110s)
+    killed   M9 no recursion into subdirectories: 14 failing (Ran 28 tests in 0.699s)
+    killed   M10 only the first entry of each directory: 17 failing (Ran 28 tests in 0.727s)
+    killed   M11 unreadable paths not counted: 1 failing (Ran 28 tests in 1.085s)
+    killed   M12 skipped paths not counted: 5 failing (Ran 28 tests in 1.087s)
+    killed   M13 cap on printed findings removed: 1 failing (Ran 28 tests in 1.071s)
+    killed   M14 the summary of hidden findings never printed: 1 failing (Ran 28 tests in 1.081s)
+    killed   M15 an empty walk accepted as a pass: 2 failing (Ran 28 tests in 1.092s)
+    killed   M16 findings printed to stdout: 8 failing (Ran 28 tests in 1.061s)
+    killed   M17 unreadable alone does not fail the run: 1 failing (Ran 28 tests in 1.068s)
+    killed   M18 the failing exit code is 0: 3 failing (Ran 28 tests in 1.164s)
+    killed   M19 mountinfo escapes left unescaped: 1 failing (Ran 28 tests in 1.141s)
+    killed   M20 wrong mountinfo field taken as the mount point: 3 failing (Ran 28 tests in 1.139s)
+    killed   M21 default prune list emptied: 13 failing (Ran 28 tests in 14.282s)
+    killed   M22 a file passed to --root is accepted: 1 failing (Ran 28 tests in 1.078s)
+    == 22 mutations, 0 survived
+
+M5 and M21 take fourteen seconds against the other mutations' one second, because with the
+prune rule gone the walk descends into this machine's real `target/` directory. That is the
+cost of the carve-out and the reason it is a default rather than a policy.
+
+Two of the properties in the gate are guaranteed by the shape of the walk rather than by a
+condition, and are said here instead of being counted as mutations: the root of the walk is
+never one of the entries of its own listing, which is why a checkout that is itself a mount
+is still walked, and the findings cap is applied to what is printed while `foreign` and
+`unreadable` count every path. The fixtures for both
+(`test_a_mount_point_at_the_root_does_not_empty_the_walk`,
+`test_findings_are_capped_but_the_counts_are_not`) are contracts against a future rewrite of
+the walk, not against a condition that exists today.
+
+== 10. Wiring
+
+The gate is in both roots, as `scripts/ci/check-guard-wiring.py` requires:
+
+$ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (65 files in scripts/ci/, 64 reachable, 60 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+$ bash scripts/verify-gates.sh --list | grep -n ownership
+    19:tree ownership
+$ bash scripts/verify-gates.sh --only 'tree ownership'
+    PASS  tree ownership
+
+    all gates passed on the host (1 run, 0 skipped, 1 of 37 selected by --only)
+$ bash scripts/verify-gates.sh --self-test | tail -1
+    verify-gates self-test: 47/47 cases pass
+$ bash scripts/verify-gates.sh | tail -1
+    all gates passed on the host (33 run, 4 skipped)
+
+The host runner counts 37 because it keeps the two build gates in its list and skips them;
+the container counts 35 and runs all of them.
+
+== 11. What this does not cover
+
+* A path that is a mount point is not judged, so a mount point the runtime created *inside*
+  the checkout is invisible while something is mounted on it. It becomes visible the moment
+  the container exits, which is when it matters: the developer is the one who then cannot
+  delete it. Section 3 of `docs/verification/container-hygiene-2026-10-04.log` measures that
+  leak.
+* Only ownership is measured, not permissions. A root-owned file that is world-writable is
+  reported, and so is one that is not; a chaos-owned file with mode 000 is not.
+* Group ownership is not compared. Two users sharing a checkout through a shared group would
+  need that, and nothing in this repository's workflow does.
+* The gate says "it came from the other side of the mount", which is the cause it exists
+  for. A finding can also come from `sudo` on the host. Either way the remedy in the message
+  is the same.
+* `.git` is walked, on purpose: `git status` run as root inside the container refreshes the
+  index, and an index that belongs to root is the same problem in a more surprising place.
+  It was measured clean after the runs above.
+* Nothing here stops the container from running as root. That is a deliberate property of
+  the entry point, recorded in `docs/ci-test-debt.md`.
+
+== 12. Reproduce it
+
+The clean verdict, and the cost of the walk:
+
+    python3 scripts/ci/check-tree-ownership.py --verbose
+
+The three skip rules, each with its own fixture:
+
+    python3 scripts/ci/test-check-tree-ownership.py -k prune
+    python3 scripts/ci/test-check-tree-ownership.py -k mount
+    python3 scripts/ci/test-check-tree-ownership.py -k symlink
+
+The leak, in a clone so that nothing is risked in a real checkout. Any clone will do; the
+paths the container creates are what is being measured:
+
+    git clone --no-hardlinks . /var/tmp/verify-own-clean
+    cd /var/tmp/verify-own-clean
+    mkdir -p target
+    docker run --rm --init --workdir /src --volume /var/tmp/verify-own-clean:/src --volume chaos-verify-target:/src/target chaos-verify:frozen bash -c 'mkdir -p /src/scripts/ci/__pycache__ && touch /src/scripts/ci/__pycache__/probe.pyc && python3 scripts/ci/check-container-hygiene.py; python3 scripts/ci/check-tree-ownership.py --root /src'
+
+The first check exits 0 and the second exits 1 over the same tree. To take the leak away,
+which needs the privileges that made it:
+
+    docker run --rm --workdir /src --volume /var/tmp/verify-own-clean:/src chaos-verify:frozen rm -rf /src/scripts/ci/__pycache__
+
+The mounted-path rule, where the absence of a mount list is what makes the gate complain:
+
+    docker run --rm --init --workdir /src --volume /var/tmp/verify-own-clean:/src --tmpfs /var/tmp/verify-own-clean/docs chaos-verify:frozen bash -c 'python3 scripts/ci/check-tree-ownership.py --root /src; python3 scripts/ci/check-tree-ownership.py --root /src --mounts /proc/self/no-such-file'
+
+Both gates through the entry point, and the ownership class that only a privileged run
+executes:
+
+    IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "tree ownership"
+    IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "container hygiene"

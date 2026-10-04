@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### 门禁：新增 `check-tree-ownership.py`，静态那条看不见运行时拼出来的挂载路径，这一条到树上去量
+
+`scripts/ci/check-container-hygiene.py` 读的是 shell 文本，它自己在 docstring 里就写了看不见什么：
+运行时拼出来的挂载路径、塞在变量里的 `docker run`。这一条是另一半：走一遍工作树，逐条问
+「你和包含你的那个目录是同一个主人吗」。
+
+比的是根目录的归属，不是字面上的 uid 0：Windows 上每条路径报的都是 0，连根目录也是，那样整棵树都
+成了入侵者；比根目录自己等于说「这里没有东西跟它所在的目录作对」，那才是要紧的断言，也不需要平台
+分支。实测宿主上 13083 条路径（含 `.git`）0.165 秒走完，便宜到能当常规门禁跑。
+
+三类东西只跳过不判：符号链接只 stat 不跟（断链也照样判归属）；`--prune` 点名的目录（默认 `target`）
+连自己带内容一起跳过，因为容器里那个名字是 cargo 命名卷的挂载点，卷的根本就是 root 所有的，在那里
+判它是假警报；`/proc/self/mountinfo` 里的挂载点连子树一起跳过（那份文件把路径里的空格写成 `\040`，
+得先反转义）。而 `/src` 本身在容器里就是一个 bind-mount——根不会是它自己目录列表里的一项，所以树
+一定走得到。
+
+实测那一幕：`5e8ffb20` 的克隆按入口的方式挂进容器，容器里 `mkdir -p /src/scripts/ci/__pycache__`
+再加一个 `.pyc`，然后两条检查一起跑——静态那条说 `OK (… 0 problem(s))`，因为入口确实没毛病；新的
+这条报出 2 处、exit 1。回到宿主：`find . -user root` 两条，`rm -rf` 报 `Permission denied`、
+exit 1，`ls -ld` 还是 `root root`——这才是这条规则存在的理由：损害不是多出一个文件，是树的主人
+删不掉的那个目录。挂载点那一条也现场量了：`--tmpfs /src/docs` 挂进去之后带着 mountinfo 是 OK，
+把挂载表指到一个读不到的文件上就报 `docs` 归 root，证明是规则在起作用，而不是那棵树本来就干净。
+
+28 例 fixture：真归属那一类只在有权力撤销的地方跑（容器里以 root 跑，宿主上跳过），`chmod 000`
+那条正好反过来（root 读得进去，容器里跳过）。容器第一遍跑到那一类就抓出 fixture 自己的 bug：
+`os.chown` 默认跟随符号链接，把目标改了归属而链接本身还是 root 所有，于是报出 3 条而不是 1 条——
+门禁是对的，fixture 是错的。22 个变异 0 存活（M5 与 M21 各花 14 秒，因为把 prune 摘掉之后走的是
+这台机器真实的 `target/`），变异后 `cp` 还原、`cmp` 复核字节一致。接线在 `.github/workflows/ci.yml`
+与 `scripts/verify-in-docker.sh` 的 `gates=()`（`check-guard-wiring.py`：65 文件、64 可达、60 由
+入口跑），`--list` 排第 19。
+
+边界：挂载点不判，所以容器在树里造出来的挂载点，在还挂着东西的时候是看不见的，容器一退出就看得见
+（也正是在那时候才轮到开发者头疼）；只比归属，不比权限和属组；消息里说「来自挂载的另一侧」讲的是
+这条规则存在的原因，宿主上 `sudo` 也能造出同一个形状，解法是一样的。
+
+（2026-10-04；`scripts/ci/check-tree-ownership.py`、`scripts/ci/test-check-tree-ownership.py`、
+`docs/verification/tree-ownership-2026-10-04.log`、`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`）
+
 ### 修复：容器入口通过 bind mount 把 root 所有的文件写进工作树，那个目录连 `rm -rf` 都删不掉
 
 `scripts/verify-in-docker.sh` 以 root 身份在容器里跑门禁，工作树 bind-mount 在 `/src`。经那个挂载
