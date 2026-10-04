@@ -724,6 +724,14 @@ jobs:
           # `.unwrap()` on the 82 registrations unreachable rather than merely unlikely.
           python3 scripts/ci/test-check-metric-labels.py
           python3 scripts/ci/check-metric-labels.py
+          # tokio spawns the child inside `.output()` / `.status()` themselves and leaves it
+          # running once the future is dropped (tokio-1.52.3/src/process/mod.rs:202, :641), so
+          # `timeout(budget, cmd.output())` cancels the waiting and not the work. The clippy
+          # spawn ban cannot reach this shape -- `ProcessScope::enroll` takes a `&Child` that
+          # `.output()` never hands back -- and 10 of the 12 sites on this tree were already
+          # marked while 2 were not, with nothing distinguishing the two groups.
+          python3 scripts/ci/test-check-timeout-child.py
+          python3 scripts/ci/check-timeout-child.py
           # A test that changes the process working directory and leaves it inside a
           # directory something else deletes breaks every sibling in the same libtest
           # process: gix_discover::is_git calls current_dir() before it looks at the

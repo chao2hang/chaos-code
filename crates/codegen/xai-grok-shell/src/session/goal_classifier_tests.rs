@@ -3627,3 +3627,90 @@ async fn baseline_capture_returns_none_outside_git_repo() {
     assert!(baseline.is_none());
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }
+
+/// The `git` that the capture budget gave up on must not keep running.
+///
+/// `capture_git_baseline` bounds the wait with `tokio::time::timeout`, which drops the
+/// `output()` future while the child is still alive, and tokio lets a spawned child
+/// outlive that drop unless the command was built with `kill_on_drop(true)`. The shim
+/// below records its own pid and then blocks, so the assertion is about the process the
+/// shipped function really started, not about a flag in its source.
+///
+/// Linux rather than `cfg(unix)` because `/proc/<pid>/stat` is the observation: on a
+/// platform without it every check below would pass for the wrong reason.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn baseline_capture_timeout_kills_the_git_it_abandoned() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    assert!(
+        std::fs::read_to_string("/proc/self/stat").is_ok(),
+        "/proc has to be readable for this test to observe anything"
+    );
+
+    // Bounded on purpose: a run that fails this assertion must not leave a process
+    // behind for the rest of the session.
+    const SHIM_LIFETIME_SECS: u64 = 8;
+
+    let dir = tempfile::TempDir::new().expect("tempdir for the git shim");
+    let pid_path = dir.path().join("shim.pid");
+    let shim = dir.path().join("hanging-git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nexec sleep {SHIM_LIFETIME_SECS}\n",
+            pid_path.display()
+        ),
+    )
+    .expect("write the git shim");
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+        .expect("make the git shim executable");
+
+    let _guard = crate::env::EnvVarGuard::set("GIT_BIN_PATH", &shim.to_string_lossy());
+
+    let started = Instant::now();
+    let baseline = capture_git_baseline(dir.path()).await;
+    assert!(
+        baseline.is_none(),
+        "a git that never answers must yield no baseline, got {baseline:?}"
+    );
+
+    let pid = loop {
+        if let Ok(raw) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                break pid;
+            }
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the git shim never recorded its own pid"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    // Gone from /proc means reaped; state `Z` means the kill landed and only the
+    // runtime's background reap is outstanding. Either one is a dead child.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let state = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat
+                .rsplit(')')
+                .next()
+                .and_then(|rest| rest.split_whitespace().next())
+                .unwrap_or("?")
+                .to_string(),
+            Err(_) => break,
+        };
+        if state == "Z" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the abandoned git shim (pid {pid}) was still in state {state} {:?} after \
+             the capture budget expired",
+            started.elapsed(),
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}

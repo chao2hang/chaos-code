@@ -939,6 +939,9 @@ impl HostService {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            // `detach_command` puts `git` in its own session, so nothing else can
+            // reach it once the timeout below drops this future.
+            .kill_on_drop(true)
             .envs(xai_tty_utils::pager_env());
         xai_tty_utils::detach_command(&mut cmd);
 

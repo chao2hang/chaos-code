@@ -335,7 +335,12 @@ pub(crate) fn parse_skeptic_terminal_response(text: &str) -> Option<bool> {
 /// The caller treats `None` as "no baseline": each skeptic renders `CHANGES_FILE: (unavailable)` and the verifier prompt's rule 5 takes over.
 pub(crate) async fn capture_git_baseline(workspace_root: &Path) -> Option<String> {
     let mut cmd = tokio::process::Command::new(crate::util::subprocess::git_bin());
-    cmd.arg("rev-parse").arg("HEAD").current_dir(workspace_root);
+    cmd.arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(workspace_root)
+        // The budget below drops this future while `git` is still running, and a
+        // spawned child survives that drop unless told otherwise.
+        .kill_on_drop(true);
 
     let output = match tokio::time::timeout(GIT_BASELINE_CAPTURE_TIMEOUT, cmd.output()).await {
         Ok(Ok(output)) => output,

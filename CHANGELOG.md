@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### 修复：`timeout` 到点放弃的是等待，不是那个 `git`，两处调用点把孩子留在了进程表里
+
+`tokio::process::Command::output()` 自己就在函数体里 `self.spawn()`
+（`tokio-1.52.3/src/process/mod.rs:1069`），而模块文档 `:201-203` 写得很明白：与 future 惯常的
+「丢弃即取消」不同，spawn 出来的子进程在 `Child` 句柄被丢弃之后默认继续运行；改变这件事的是
+`kill_on_drop`，默认值在 `:641` 是 `false`。
+于是 `timeout(budget, cmd.output())` 到点取消的是等待，活儿还在跑。本仓库 12 处这种形状的调用点里
+有两处从来没写那个标记：`capture_git_baseline` 的 1 秒预算（`session/goal_classifier.rs:345`）与
+`git_diff_since` 的 20 秒预算（`session/workflow/host_service.rs:948`）。后者更糟一点，它走
+`xai_tty_utils::detach_command`，`setsid` 已经把 `git` 放进了自己的会话，future 被丢弃之后连一个
+能被父进程信号的进程组都不剩了。
+
+新测试 `baseline_capture_timeout_kills_the_git_it_abandoned` 盯的是真进程而不是源码里的标记：把
+`GIT_BIN_PATH`（`util/subprocess.rs:32` 认这个环境变量）指到一个先写下自己 pid、再 `exec sleep` 的
+壳脚本，让被测试的函数自己去 spawn，然后断言预算耗尽之后那个 pid 不复存在。它因此只在 Linux 上跑
+——观察手段是 `/proc/<pid>/stat`，Windows 与 macOS 都没有，`Err(_) => break` 在那边会让下面每一条
+断言都因为错误的原因通过；测试开头先断言 `/proc/self/stat` 可读，就是为了不让这件事静悄悄。
+
+把 `.kill_on_drop(true)` 从 `capture_git_baseline` 里删掉，其余一字不改，同一份代码：
+
+        cargo test -p xai-grok-shell --lib ... -- --exact → ok：finished in 1.02s
+        同一命令，删掉标记后                                  → exit=101：the abandoned git shim
+            （pid 82103）was still in state S 6.006851092s after the capture budget expired
+
+（2026-10-04；`crates/codegen/xai-grok-shell/src/session/goal_classifier.rs`、
+`crates/codegen/xai-grok-shell/src/session/workflow/host_service.rs`、
+`crates/codegen/xai-grok-shell/src/session/goal_classifier_tests.rs`）
+
+### 门禁：`timeout` 丢掉的那个子进程，编译器、clippy 的 spawn 禁令与测试三样都看不见
+
+前提是依赖自己的文字，写进门禁的 docstring，并且在 fixture 里对质：`Cargo.lock` 钉住 tokio 1.52.3，
+fixture 一条把 docstring 引的版本号与 `Cargo.lock` 对起来，一条在被 vendor 的源码里逐行核对门禁引用的
+六个行号（`:202` 那句「dropping-implies-cancellation」、`:641` 的默认值、`:974` 与 `:1037` 那两句析构
+说明、`:1003` 与 `:1069` 那两次 `self.spawn()`），引用飘走会在测试里红。另一条断言
+`ProcessScope::enroll` 与 `enroll_std` 收的都是 `&Child`——这正是 clippy 那条 spawn 禁令到不了这里的
+原因：`.output()` 与 `.status()` 从来不交出句柄，被禁的那一个反而是唯一有替代写法的调用。
+
+规则收窄到有证据的那一个形状：`timeout(...)` 拿到的 future 以 `tokio::process::Command` 的
+`.output()` / `.status()` 结尾。从 `Command::new` 到调用点这条路按三种写法读——链式调用本身、
+局部绑定加它之后碰到它的那些语句、以及 body 在树上的 builder 或 mutator；helper 名字先在本 crate 内
+解析，因为 `git_command` 一个名字在这里就有三处定义，其中两处造的还是 std 命令。读不出来的一律算
+finding 而不是通过（`unreadable-future`、`unreadable-receiver`、`unknown-helper`、`ambiguous-command`），
+确实该放过的写进 `scripts/ci/timeout-child-allowlist.tsv`， finding 消失之后那一行会以 stale 变红。
+夹具 36 例里成对出现的那些才是重点：同名 helper 一个设了标记一个没设，只找到字符串的门禁过不了；
+两个 crate 各自定义同名 helper 必须互不干扰，同一个 crate 里冲突必须报出来而不是取扫到的最后一个；
+`let drained = ...; drained.output()` 因为 `output(&mut self)` 要求 `mut` 而被排除，这是真树上唯一一处
+误报教出来的判据。
+
+门禁在 ci.yml 与 `scripts/verify-in-docker.sh` 各接线一处，`bash scripts/verify-gates.sh` 由 29 段变
+30 段。（2026-10-04；`scripts/ci/check-timeout-child.py`、
+`scripts/ci/test-check-timeout-child.py`、`scripts/ci/timeout-child-allowlist.tsv`、
+`CONTRIBUTING.md`）
+
 ### 门禁：metric 调用的数组多一个值，进程当场 abort，编译器、普查和台账三样都看不见它
 
 `with_label_values` 是 prometheus 的语法糖，实现是把带检查的那个解包：0.14.0（`Cargo.lock`

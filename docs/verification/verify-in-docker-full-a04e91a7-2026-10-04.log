@@ -1,0 +1,236 @@
+# The full container run at a04e91a7: 33 gates, 31 593 tests, nothing failed (2026-10-04)
+
+`scripts/verify-in-docker.sh --full` was run end to end against the committed tree at
+`a04e91a7` and passed: 33 gates, 386 test-result blocks, 31 593 tests passed, 485 ignored,
+0 failed, exit 0. This log records the verdict lines, the size of each leg, the two fixtures
+that skipped inside the container and why, and what the run does not cover. It is the
+counterpart to `docs/verification/verify-in-docker-frozen-6b8b3dad-2026-10-03.log`, which
+covered the previous commit; the numbers moved because gates and tests were added since.
+
+The full 3.0 MB / 35 869-line transcript is not committed. Every line quoted below is copied
+out of it, and section 6 gives the commands to reproduce it and to re-measure the counts.
+
+== 0. Why the run sits in its own clone
+
+`scripts/verify-in-docker.sh` bind-mounts the repository root it was invoked from, and it
+fingerprints the working tree once before the gates and once after; on any movement it prints
+`UNATTRIBUTABLE: the source tree changed while the gates ran.` and exits 1. Running it in the
+live checkout would have meant a 25-minute verdict attributed to a tree that was being edited
+throughout, so the run went to a self-contained clone:
+
+    $ git clone <this repository> /var/tmp/verify-frozen-a04e91a7
+    $ cd /var/tmp/verify-frozen-a04e91a7 && git checkout --detach a04e91a7
+    HEAD is now at a04e91a7 feat(ci): metric 调用的数组多一个值就当场 abort，编译器与 panic 普查都看不见它
+    $ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full \
+          > /var/tmp/verify-full-a04e91a7.log 2>&1; echo "DOCKER-FULL-EXIT=$?" \
+          > /var/tmp/verify-full-a04e91a7.exit
+
+`git worktree` is not an option here: the script's first action is a preflight in which the
+container reads the mounted `/src` with git, and a worktree's `.git` is a text pointer to a
+file inside the parent repository that does not exist inside the container, so the preflight
+refuses the tree. A clone carries its own object store, so the preflight passes.
+
+`--detach` pins the tree to that one commit rather than to a branch head. The clone's
+`git status --porcelain` was empty before the run and is empty now, which is what makes the
+checksum below a claim about `a04e91a7` and not about a working state.
+
+== 1. The verdict, as printed
+
+    == building chaos-verify:frozen from docker.io/library/debian:bookworm-slim
+    == preparing cargo cache volumes
+    == source tree: 3996 files, checksum 4160701699
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == toolchain matches the pin
+    rustc 1.94.0 (4a4ef493e 2026-03-02)
+    cargo 1.94.0 (85eff7c80 2026-01-15)
+
+    == pinned protoc launcher
+    libprotoc 29.3
+
+    ...
+
+    all gates passed in chaos-verify:frozen
+
+and the exit code, from the `echo` appended to the command rather than from the script:
+
+    $ cat /var/tmp/verify-full-a04e91a7.exit
+    DOCKER-FULL-EXIT=0
+
+The run did not print `UNATTRIBUTABLE`. The script recomputes the same checksum after the last
+gate and prints that sentence only on a mismatch, so its absence is the statement that all 33
+gates, and the 31 593 tests inside them, belong to the tree whose checksum is 4160701699 and
+that no file moved while they ran.
+
+Elapsed time was 1 521 seconds (25 minutes 21 seconds), from the transcript's creation to its
+last write. That is not a cold-cache figure: the cargo registry, the cargo git checkouts and
+`target/` live in three named volumes (`chaos-verify-cargo-registry`,
+`chaos-verify-cargo-git`, `chaos-verify-target`) that earlier runs had already filled, and the
+image layers were reused. `IMAGE_TAG=chaos-verify:frozen` only renames the build. On a clean
+machine the same command takes considerably longer, and 25 minutes should not be read as a
+baseline.
+
+== 2. What ran
+
+`scripts/verify-gates.sh --list` in that clone prints 33 gate names, which is the `gates=()`
+array of `scripts/verify-in-docker.sh` at that commit. The transcript carries 40 `== ` lines:
+the 33 gates, 4 lines printed before the array is entered (`building chaos-verify:frozen`,
+`preparing cargo cache volumes`, `source tree:`, `preflight:`, of which the last three are
+preamble rather than gates) and 3 sub-headings that two gates print for themselves. In the
+`--list` order, with those sub-headings indented:
+
+    toolchain matches the pin
+    pinned protoc launcher
+    cargo fmt
+    ignored-test baseline
+    brand/protocol guard
+    protocol mirror coverage
+    TODO status doc
+    evidence paths in docs
+    docs path references
+    documented commands
+    CI guard wiring
+    host gate runner self-test
+    workflow shells
+    workflow toolchain
+    workflow yaml
+    script portability
+    panic-site census
+    metric labels
+    cwd-change census
+    spawn-cwd portability
+    platform-gated tests
+    load-bearing features
+    version lockstep
+       == the release version and everything that must equal it
+       == crates that are deliberately not the release version
+    upstream recon
+    installer guards
+       == the asset a release publishes, and the four places that ask for it
+    npm package guards
+    docs localization
+    localization guard self-tests
+    secret scan
+    cargo check
+    cargo clippy
+    cargo test
+    GUI protocol types
+
+The host-side runner is a subset of the same array: `bash scripts/verify-gates.sh` on this
+machine skips the four legs that need the container toolchain (`cargo check`, `cargo clippy`,
+`cargo test`, `GUI protocol types`) and runs the other 29. The container is the only place all
+33 are executed, which is the reason for doing this at all rather than trusting the host sweep.
+
+Three gates print a count worth recording, because they are the ones that read the whole tree:
+
+    ignored-test baseline: 429 total, 0 approved bare, 0 new
+    ignored-tests: all 429 ignored attributes carry a reason
+    ignored-tests: baseline matches; 429 ignored attributes total
+    panic-site census: baseline holds: 97 crates, 0 fewer production sites than recorded
+    metric labels hold: 83 registrations, 155 label-value call sites, 0 recorded
+
+== 3. The three cargo legs, and the GUI check
+
+Those four legs are the expensive ones and the ones no host-side command reaches:
+
+    == cargo check    Finished `dev` profile [unoptimized] target(s) in 3m 34s
+    == cargo clippy   Finished `dev` profile [unoptimized] target(s) in 2m 52s
+    == cargo test     386 `test result:` blocks, listed in section 4
+    == GUI protocol types
+    GUI protocol types are up to date
+
+`cargo clippy` is run with `-D warnings`, and the section between its heading and the next one
+carries zero lines starting with `warning`. That matters for the reading of section 4: the test
+counts below are taken from a tree that also compiles clean under the lint set, so a passing
+test is not standing in for a build problem elsewhere.
+
+== 4. The size of the test leg
+
+    $ grep -c "^test result: ok" /var/tmp/verify-full-a04e91a7.log
+    386
+    $ grep -oE "^test result: ok\. [0-9]+ passed; [0-9]+ failed; [0-9]+ ignored" \
+          /var/tmp/verify-full-a04e91a7.log | awk -F'[ ;]+' \
+          '{p+=$4; f+=$6; i+=$8} END {print "passed:", p, " failed:", f, " ignored:", i}'
+    passed: 31593  failed: 0  ignored: 485
+    $ grep -c "^test result: FAILED" /var/tmp/verify-full-a04e91a7.log
+    0
+
+The leg is invoked with `--no-fail-fast` (`cargo test --workspace --locked --no-fail-fast`), so
+"0 failed" is a conclusion drawn after all 386 blocks were run rather than a sweep that stopped
+at the first red test.
+
+The 485 ignored break down as 436 unit and integration tests plus 49 doctests, which cargo
+reports in the same line shape (`test path/to/lib.rs - item (line 15) ... ignored`):
+
+    $ grep "\.\.\. ignored" /var/tmp/verify-full-a04e91a7.log | grep -v "\.rs - " | wc -l
+    436
+    $ grep -E "^test [^ ]+\.rs - .* \.\.\. ignored" /var/tmp/verify-full-a04e91a7.log | wc -l
+    49
+
+That is not the same population as the `ignored-test baseline` gate's "429 total", which counts
+`#[ignore]` attributes in the tracked sources and so sees neither the doctests nor an attribute
+that the scan cannot attach to a test function. The two numbers answer different questions and
+are not expected to be equal.
+
+== 5. Two fixtures skipped inside the container, and why
+
+The full run is green, but two of its own fixtures declined to check anything, and both are
+worth stating rather than leaving buried in an `OK (skipped=1)`:
+
+    test_verdicts_agree_with_a_real_yaml_parser (__main__.WorkflowYaml...) ...
+        skipped 'PyYAML is not installed on this host'
+    note: PyYAML absent -- running the check's own assertions only
+    Ran 7 tests in 0.365s
+    OK (skipped=1)
+
+    test_the_dependency_unwraps_the_lookup (__main__.Premise...) ...
+        skipped 'the prometheus source is not vendored on this host'
+    Ran 33 tests in 16.991s
+    OK (skipped=1)
+
+Neither is a hole in this run that a host run closes; both skip in the container and in CI for
+the same reason, and in each case the gate keeps working without it. `check-workflow-yaml.py`
+parses `.github/workflows/*.yml` with its own line-oriented reader, and the skipped fixture is
+the one that cross-checks that reader against a real YAML parser; `check-metric-labels.py` cites
+`prometheus-0.14.0` source for its premise, and the skipped fixture is the one that reads the
+`unwrap` out of the vendored crate. Both fixtures do run where the dependency is present, which
+is why the premises are still checked somewhere:
+
+    $ python3 scripts/ci/test-check-workflow-yaml.py 2>&1 | tail -3
+    Ran 7 tests in 0.383s
+
+    OK
+    $ python3 scripts/ci/test-check-metric-labels.py \
+          Premise.test_the_dependency_unwraps_the_lookup 2>&1 | tail -3
+    Ran 1 test in 0.062s
+
+    OK
+
+Seven tests with no skip line means PyYAML was importable and the cross-check ran; the same
+seven in the container carry `skipped 'PyYAML is not installed on this host'`. An image carrying
+PyYAML and the prometheus sources would make the container leg strictly stronger at the cost of
+no longer being a `debian:bookworm-slim` with a Rust toolchain and nothing else, and that
+trade-off belongs to whoever maintains the image rather than to this run.
+
+== 6. Reproducing it, and what this record is not
+
+    $ git clone <this repository> /var/tmp/verify-frozen-a04e91a7
+    $ cd /var/tmp/verify-frozen-a04e91a7 && git checkout --detach a04e91a7
+    $ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full
+
+What the run does not cover:
+
+- This is `a04e91a7`, the commit before the `timeout children` gate. The `gates` array at that
+  commit has 33 entries and does not include `check-timeout-child.py`; that gate, its two fixed
+  call sites and its behavioural test are recorded separately in
+  `docs/verification/timeout-child-2026-10-04.log`. This run therefore says nothing about them.
+- Not a cold cache, and not a baseline. See section 1 about the named volumes.
+- Linux only. The entry point is a Debian bookworm-slim container; the macOS and Windows
+  conclusions come from their own runners, recorded in
+  `docs/verification/platform-ci-2026-10-02.log` and
+  `docs/verification/windows-test-failures-2026-10-04.log`.
+- No browser. Nothing in the 33 gates drives a UI, and the image has no node_modules and no
+  browser binary, so "all gates passed" and "the TUI and the desktop flows behave" remain two
+  separate conclusions.

@@ -1,0 +1,20 @@
+# Sites where `timeout(budget, cmd.output())` is allowed to walk away from its child.
+#
+# One row per site: repository-relative path, `::`, the enclosing function name, then a
+# category, then the reason a person agreed to. The key names a function rather than a line
+# because a line moves every time anything above it is edited, and a ledger that has to be
+# rewritten to stay green stops being a ledger.
+#
+# Categories, from scripts/ci/check-timeout-child.py:
+#   no-kill-on-drop     the command provably does not set the flag, so the timeout really
+#                       does orphan the child -- fix the code unless the child is *meant* to
+#                       outlive the wait, in which case say so here
+#   kill-on-drop-false  the command sets `kill_on_drop(false)` on purpose
+#   unreadable-future   what the timeout drops is not a plain `.output()`/`.status()` call
+#   unreadable-receiver the command is not a plain local (`self.cmd`, a field, a parameter)
+#   unknown-helper      the command is built or mutated through a function whose body this
+#                       gate cannot read (a macro, a generic, a crate outside the scan)
+#   ambiguous-command   a bare `Command::new` in a file that imports both std and tokio
+#
+# A row is stale the moment nothing matches it, and a stale row is a failure: the code it
+# excused is gone and the exemption went with it.

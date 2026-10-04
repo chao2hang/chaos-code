@@ -1,0 +1,266 @@
+# A timeout that walks away from a child process leaves the child running (2026-10-04)
+
+Two calls in the session code hand a `tokio::process::Command` future to
+`tokio::time::timeout` and, when the budget expires, walk away from a `git` that is still
+running. This log records what the dependency actually promises, what the tree contains, what
+was changed, and what the new gate `scripts/ci/check-timeout-child.py` can and cannot see.
+Everything below ran on the working tree at `a04e91a7` plus the changes described here; the
+source mutations in section 4 are undone in section 6 and verified undone.
+
+== 0. The premise, read out of tokio rather than out of memory
+
+`Cargo.lock` pins tokio 1.52.3, and a fixture asserts that the version the gate's docstring
+cites is the version the lockfile names. The six lines the argument rests on:
+
+    $ grep -n 'paradigm of dropping-implies-cancellation\|this value is assumed to be\|The destructor of the future returned by this function will kill\|let child = self.spawn();' ~/.cargo/registry/src/*/tokio-1.52.3/src/process/mod.rs
+        202://! paradigm of dropping-implies-cancellation, a spawned process will, by
+        641:    /// By default, this value is assumed to be `false`, meaning the next spawned
+        974:    /// The destructor of the future returned by this function will kill
+        1003:        let child = self.spawn();
+        1037:    /// The destructor of the future returned by this function will kill
+        1069:        let child = self.spawn();
+
+Line 202 is inside the module documentation at `:201-203`:
+
+    Similar to the behavior to the standard library, and unlike the futures
+    paradigm of dropping-implies-cancellation, a spawned process will, by
+    default, continue to execute even after the `Child` handle has been dropped.
+
+`:974` belongs to `pub fn status(&mut self) -> impl Future<...>` at `:1002` and `:1037` to
+`pub fn output(&mut self) -> impl Future<...>` at `:1065`; the two `self.spawn()` lines are
+inside those bodies, so the child exists before anything is awaited. That leaves one lever,
+`kill_on_drop`, and `:641` says the default is `false`.
+
+The lint that looks like it covers this cannot reach the shape, because the calls in question
+never hand out the handle the lint's alternative needs:
+
+    $ grep -n 'Command::spawn' clippy.toml
+        46:    { path = "std::process::Command::spawn", reason = "an unenrolled child outlives its session; use xai_tty_utils::ProcessScope::enroll" },
+        49:    { path = "tokio::process::Command::spawn", reason = "an unenrolled child outlives its session; use xai_tty_utils::ProcessScope::enroll", allow-invalid = true },
+
+    $ grep -n 'pub fn enroll' crates/codegen/xai-tty-utils/src/process_scope.rs
+        137:    pub fn enroll(&self, child: &tokio::process::Child) -> io::Result<Arc<ProcessGroup>> {
+        158:    pub fn enroll_std(&self, child: &std::process::Child) -> io::Result<Arc<ProcessGroup>> {
+
+`spawn()` is the one call in this family that returns a `Child` to enroll. `.output()` and
+`.status()` return a future over the output, so a site can satisfy the ban and still orphan
+its child. The gate checks the half the ban cannot reach, and its fixtures assert the two
+signatures above so that the argument cannot rot quietly if `ProcessScope` ever grows a
+handle-free variant.
+
+== 1. What the tree contains
+
+    $ python3 scripts/ci/check-timeout-child.py --print
+        crates/codegen/xai-grok-shell/src/session/goal_classifier.rs:345       killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:351 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:409 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:447 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:494 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:542 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:575 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:605 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:634 killed               cmd.output()
+        crates/codegen/xai-grok-shell/src/session/workflow/host_service.rs:948 killed               cmd.output()
+        crates/codegen/xai-grok-tools/src/implementations/codex/grep_files/tool.rs:98 killed               command.output()
+        crates/codegen/xai-grok-update/src/auto_update.rs:1543                 killed               cmd.output()
+        timeout children hold: 12 timeout-abandoned output/status site(s), 12 kill their child on drop, 0 are std commands, 0 recorded
+
+That is the tree after the fix. The same script run against `a04e91a7` itself, in a throwaway
+clone of that commit with the two new files copied in, reported exactly the two sites that the
+fix then marked:
+
+    $ python3 scripts/ci/check-timeout-child.py
+        FAIL timeout children: 2 unrecorded site(s), 0 ledger/config problem(s)
+        crates/codegen/xai-grok-shell/src/session/goal_classifier.rs:340: no-kill-on-drop: crates/codegen/xai-grok-shell/src/session/goal_classifier.rs::capture_git_baseline hands `cmd.output()` to a timeout, which drops the future while the child it spawned is still running; mark the command kill_on_drop(true) or record it in timeout-child-allowlist.tsv
+        crates/codegen/xai-grok-shell/src/session/workflow/host_service.rs:945: no-kill-on-drop: crates/codegen/xai-grok-shell/src/session/workflow/host_service.rs::git_diff_since hands `cmd.output()` to a timeout, which drops the future while the child it spawned is still running; mark the command kill_on_drop(true) or record it in timeout-child-allowlist.tsv
+
+and exited 1. Both were the identical shape:
+
+    // goal_classifier.rs, capture_git_baseline, GIT_BASELINE_CAPTURE_TIMEOUT = 1 s
+    cmd.arg("rev-parse").arg("HEAD").current_dir(workspace_root);
+
+    let output = match tokio::time::timeout(GIT_BASELINE_CAPTURE_TIMEOUT, cmd.output()).await {
+
+    // workflow/host_service.rs, git_diff_since, DIFF_TIMEOUT = 20 s
+        xai_tty_utils::detach_command(&mut cmd);
+
+        let output = tokio::time::timeout(DIFF_TIMEOUT, cmd.output())
+            .await
+
+The second one is the worse of the two. `detach_command` installs a `pre_exec` hook that
+`setsid`s the child into its own session (`xai-tty-utils/src/lib.rs:198`), so once the future
+is dropped there is no process group left that the parent's teardown could signal; and unlike
+`detach_search_command` at `:216`, which calls `cmd.kill_on_drop(true)` for exactly this
+reason, it sets nothing.
+
+The 10 already-correct sites are correct in three different ways, which is what the scanner
+had to learn to read: 8 through the `git_command` builder at
+`session/goal_classifier/evidence.rs:49`, 1 through `detach_search_command(&mut command)` in
+`grep_files/tool.rs`, and 1 with the flag written inline in `auto_update.rs`.
+
+== 2. The fix
+
+    let mut cmd = tokio::process::Command::new(crate::util::subprocess::git_bin());
+    cmd.arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(workspace_root)
+        // The budget below drops this future while `git` is still running, and a
+        // spawned child survives that drop unless told otherwise.
+        .kill_on_drop(true);
+
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("diff")
+        .arg(commit)
+        .current_dir(&self.params.cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // `detach_command` puts `git` in its own session, so nothing else can
+        // reach it once the timeout below drops this future.
+        .kill_on_drop(true)
+        .envs(xai_tty_utils::pager_env());
+    xai_tty_utils::detach_command(&mut cmd);
+
+== 3. A test that observes the process, not the flag
+
+A test that takes the timeout asserts on the timeout, so the fix above is exactly the kind of
+change a green suite cannot distinguish from no change. The new test therefore points the
+binary the shipped function resolves -- `GIT_BIN_PATH`, honoured by `util::subprocess::git_bin`
+at `util/subprocess.rs:32` -- at a shell script that records its own pid and then blocks:
+
+    #!/bin/sh
+    echo $$ > '/tmp/.tmpXXXX/shim.pid'
+    exec sleep 8
+
+`capture_git_baseline` spawns that shim itself, the 1 s budget expires, and the test then
+watches `/proc/<pid>/stat` until the pid is either gone or a zombie. State `Z` counts as dead:
+the kill landed and only the runtime's background reap is outstanding.
+
+The gate is `#[cfg(target_os = "linux")]`, not `cfg(unix)`, and the reason is honesty about
+the observation. On macOS there is no `/proc`, `read_to_string` fails on the first iteration,
+and the loop's `Err(_) => break` would let every assertion below pass for the wrong reason.
+The test asserts `/proc/self/stat` is readable before it starts, so a host without `/proc`
+fails loudly instead of vacuously; `kill_on_drop` itself is tokio's own code and behaves the
+same on every unix.
+
+    $ cargo test -p xai-grok-shell --lib session::goal_classifier::tests::baseline_capture_timeout_kills_the_git_it_abandoned -- --exact
+        running 1 test
+        test session::goal_classifier::tests::baseline_capture_timeout_kills_the_git_it_abandoned ... ok
+
+        test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6893 filtered out; finished in 1.02s
+
+1.02 s is the 1 s capture budget plus the loop's first look at the pid file.
+
+== 4. The test is not decorative, and neither is the gate
+
+The behavioural test, with `.kill_on_drop(true)` removed from `capture_git_baseline` and
+nothing else changed:
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-shell --lib session::goal_classifier::tests::baseline_capture_timeout_kills_the_git_it_abandoned -- --exact
+
+        thread 'session::goal_classifier::tests::baseline_capture_timeout_kills_the_git_it_abandoned' (82102) panicked at crates/codegen/xai-grok-shell/src/session/goal_classifier_tests.rs:3700:9:
+        the abandoned git shim (pid 82103) was still in state S 6.006851092s after the capture budget expired
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6893 filtered out; finished in 6.01s
+        RED-EXIT=101
+
+State `S` is interruptible sleep, which is what `exec sleep 8` does for the remaining 5 s of
+its life; 6.01 s is the capture budget plus the assertion's own 5 s deadline, so a red run
+leaks nothing long-lived. The file was restored from a copy and compared with
+`filecmp(shallow=False)`: byte-identical.
+
+The gate itself, mutated in five places on this tree. Each case is one write, one run, one
+restore:
+
+    --- M1 crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs
+        exit=1
+        .../goal_classifier/evidence.rs:351: no-kill-on-drop: ...::git_untracked_files hands `cmd.output()` to a timeout, which drops the future while the child it spawned is still running (built by git_command() at crates/codegen/xai-grok-shell/src/session/goal_classifier/evidence.rs:49); mark the command kill_on_drop(true) or record it in timeout-child-allowlist.tsv
+        FAIL timeout children: 8 unrecorded site(s), 0 ledger/config problem(s)
+        restored byte-identical: True
+    --- M2 crates/codegen/xai-grok-shell/src/session/goal_classifier.rs
+        exit=1
+        .../goal_classifier.rs:344: no-kill-on-drop: ...::capture_git_baseline hands `cmd.output()` to a timeout, which drops the future while the child it spawned is still running; mark the command kill_on_drop(true) or record it in timeout-child-allowlist.tsv
+        FAIL timeout children: 1 unrecorded site(s), 0 ledger/config problem(s)
+        restored byte-identical: True
+    --- M3 crates/codegen/xai-grok-shell/src/session/workflow/host_service.rs
+        exit=1
+        .../workflow/host_service.rs:948: kill-on-drop-false: ...::git_diff_since hands `cmd.output()` to a timeout, which drops the future while the child it spawned is still running; mark the command kill_on_drop(true) or record it in timeout-child-allowlist.tsv
+        FAIL timeout children: 1 unrecorded site(s), 0 ledger/config problem(s)
+        restored byte-identical: True
+    --- M4 crates/codegen/xai-tty-utils/src/lib.rs
+        exit=1
+        .../codex/grep_files/tool.rs:98: no-kill-on-drop: ...::run_rg_search hands `command.output()` to a timeout, which drops the future while the child it spawned is still running; mark the command kill_on_drop(true) or record it in timeout-child-allowlist.tsv
+        FAIL timeout children: 1 unrecorded site(s), 0 ledger/config problem(s)
+        restored byte-identical: True
+
+M1 takes the flag out of the builder and lights up all 8 call sites that depend on it, which is
+what proves the builder is read rather than the file containing the string `kill_on_drop`
+somewhere. M3 writes the flag as `false` and is reported under its own category, so the
+argument is read and not the token. M4 changes a helper in a different crate and moves the
+finding to the site in `xai-grok-tools` that goes through it.
+
+M5 is the ledger rule, run against this tree with a row whose finding is gone:
+
+    --- M5 a ledger row whose finding is gone, run against the real tree
+        exit=1
+        stale-allowlist.tsv: recorded no-kill-on-drop for crates/codegen/xai-grok-tools/src/implementations/codex/grep_files/tool.rs::run (this call was rewritten and nobody deleted the row), but nothing here matches that row any more; delete it or fix the code it excuses
+        FAIL timeout children: 0 unrecorded site(s), 1 ledger/config problem(s)
+
+== 5. What the fixtures pin, and what the gate learned from this tree
+
+    $ python3 scripts/ci/test-check-timeout-child.py
+        Ran 36 tests in 47.071s
+
+        OK
+
+Each negative case sits next to a positive case of the same shape, so a scanner that stopped
+matching cannot pass by reporting nothing. Four of the 36 run the gate on this repository, one
+of them asserting that both sites this gate found are still marked. Three of the judgements
+exist because the first version of the scanner was wrong about this tree, and each has its own
+case now:
+
+- `git_command` is defined in three crates here, two of them building a `std::process::Command`,
+  so an unqualified name resolves inside the calling crate first. The case pairs two crates
+  whose `git_command` disagree (only the broken crate is reported) with two definitions of
+  `git_command` inside one crate (reported as ambiguous rather than resolved by whichever the
+  scan reached last).
+- `use std::process::Command as StdCommand;` inside a `#[cfg(test)] mod tests` made a
+  tokio-only file read as ambiguous. Aliases are now excluded and `{...}` use trees are parsed
+  entry by entry.
+- `timeout(d, dispatch(drained.output()))` in a test is a tool output, not a child. The
+  discriminator is the compiler's own: `Command::output` takes `&mut self`, so a receiver that
+  is not a `let mut` binding cannot be one.
+
+== 6. The tree afterwards
+
+    $ python3 scripts/ci/check-timeout-child.py
+        timeout children hold: 12 timeout-abandoned output/status site(s), 12 kill their child on drop, 0 are std commands, 0 recorded
+
+    $ git status --porcelain | wc -l
+        11
+
+Eleven entries, all of them this batch's own work: eight modified files and three new ones. No
+mutation residue survived, and `git diff --stat` taken before the first mutation and after the
+last is identical.
+
+== 7. What is deliberately not covered
+
+Stated in the gate's docstring as well, because a gate that only records what it caught invites
+the reader to assume the rest is fine.
+
+- `kill_on_drop` signals the child's pid, not its process group. A `git` that spawns `grep`
+  and then dies by the flag can leave the grandchild. Nothing here checks that; it is a
+  different question with a different rule.
+- A future wrapped before it reaches `timeout` (`timeout(d, run(cmd))`,
+  `cmd.output().map(..)`) is reported as `unreadable-future` rather than judged, because what
+  reaches the child cannot be read from the call site.
+- A command that is not a plain local -- a field, a `&mut` parameter of another function --
+  is `unreadable-receiver`.
+- A helper whose body is not in the tree is `unknown-helper`. `xai_tty_utils::mystery(&mut cmd)`
+  is a fixture, not a finding anyone has to live with: the fix is to mark the command or record
+  the row.
+- `std::process::Command` is counted separately and never reported, because its `.output()`
+  blocks the calling thread until the child exits, so there is no future to walk away from.
+- A command reaching `.output()` with no timeout at all is left alone, including one inside a
+  helper that a `timeout` happens to call. Cancellation can still come from the surrounding
+  task, but "somebody might drop this task" is not a locally checkable property, so the gate
+  judges only the sites where the code itself schedules the drop.

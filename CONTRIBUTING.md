@@ -180,6 +180,48 @@ function call is `unresolved-receiver`. Where one of those is correct as written
 `scripts/ci/metric-labels-allowlist.tsv` records it, and a row whose finding has gone away
 fails as stale.
 
+### A timeout that abandons a child process leaves the child running
+
+tokio spawns the child inside `Command::output()` and `Command::status()` themselves
+(`tokio-1.52.3/src/process/mod.rs:1069` and `:1003`), and the module documentation is explicit
+about what happens next, at `:201-203`: "unlike the futures paradigm of
+dropping-implies-cancellation, a spawned process will, by default, continue to execute even
+after the `Child` handle has been dropped". `kill_on_drop` is what changes that, and the
+default is off (`:641`). So `tokio::time::timeout(budget, cmd.output())` cancels the waiting
+and not the work, unless somebody put the flag on `cmd`.
+
+Nothing else sees the omission. The compiler cannot: `kill_on_drop` is an ordinary `&mut self`
+builder method, and leaving a builder method out of a chain has never been a type error. The
+lint that looks like it covers this cannot either: `clippy.toml` bans `std::process::Command::spawn`
+and `tokio::process::Command::spawn`, and `spawn` is the one call that has an alternative --
+`ProcessScope::enroll` takes the `&Child` it returns -- while `.output()` and `.status()` never
+hand out a handle to enroll. A test that takes the timeout asserts on the timeout, so it goes
+green while the child it abandoned keeps running. `detach_command` makes an unmarked site worse
+rather than better, because it `setsid`s the child into its own session, so once the future is
+dropped there is no process group left that the parent's teardown could signal.
+
+`scripts/ci/check-timeout-child.py` judges only the shape where the code itself schedules the
+drop: a `timeout(...)` call handed a future that ends in `.output()` or `.status()` on a
+`tokio::process::Command`. The path from `Command::new` to the call is read three ways: the
+method chain, a local binding plus the statements that touch it afterwards, and a builder or
+mutator function whose body is in the tree. Helper names resolve inside the calling crate
+first, because `git_command` alone is defined in three crates here and two of them build a
+`std::process::Command`, which the rule does not apply to: its `.output()` blocks until the
+child exits, so there is no future to walk away from, and those sites are counted separately.
+What the gate cannot read is a finding and never a pass (`unreadable-future`,
+`unreadable-receiver`, `unknown-helper`, `ambiguous-command`); where one of those is correct as
+written, a row in `scripts/ci/timeout-child-allowlist.tsv` records it and fails as stale once
+the finding it excuses is gone.
+
+The scanner found the rule by being run once. Of the 12 timeout-abandoned sites on this tree,
+10 already killed their child and 2 did not, behind an identical call shape, and nothing
+outside the script distinguished the two groups. Both are marked now, and
+`baseline_capture_timeout_kills_the_git_it_abandoned` in
+`xai-grok-shell/src/session/goal_classifier_tests.rs` proves the flag is what stops the
+process: it points `GIT_BIN_PATH` at a shim that records its own pid and then blocks, and
+asserts the pid stops existing once the capture budget expires. Take the flag out and that
+test goes red, which is the difference between this gate and a grep.
+
 ## Fast local gate loop
 
 The container answers "does a fresh clone work?". It does not answer "did my edit

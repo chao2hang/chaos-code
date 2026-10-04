@@ -163,6 +163,10 @@ gates=(
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says
   # so. This pairs each label-value call with the labels its metric registration declares.
   "metric labels: python3 scripts/ci/test-check-metric-labels.py && python3 scripts/ci/check-metric-labels.py"
+  # tokio spawns the child inside `.output()` itself and leaves it running after the future is
+  # dropped, so `timeout(budget, cmd.output())` cancels the waiting and not the work. The clippy
+  # spawn ban cannot cover it: `ProcessScope::enroll` needs a `&Child` that call never returns.
+  "timeout children: python3 scripts/ci/test-check-timeout-child.py && python3 scripts/ci/check-timeout-child.py"
   "cwd-change census: python3 scripts/ci/test-cwd-change-census.py && python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv"
   "spawn-cwd portability: python3 scripts/ci/test-check-spawn-cwd-portability.py && python3 scripts/ci/check-spawn-cwd-portability.py"
   # A `#[cfg(unix)]` on a test is not a skip: the test stops existing on the other platform, so it
