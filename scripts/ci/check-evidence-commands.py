@@ -62,6 +62,18 @@ Of the 5 absences that remain, all 5 are recorded: 3 are transcripts quoting an 
 the finding itself, 1 names a file retired the next day, and 1 is a sample hook script
 calling a script that belongs to whoever reads the guide.
 
+Existence is answered from git rather than from the filesystem, and that choice is a rule of
+its own. Asked of the filesystem, this guard was green on the machine that wrote the
+transcript -- whose tree carries a 143M `apps/chaos-ui/node_modules` -- and red on a runner
+that checked the same commit out into a tree without one. A verdict about a commit has to be
+a property of the commit, so a path counts as content when git tracks it, when it is a
+directory holding tracked content, or when .gitignore declares it generated: reading that
+last kind is a recipe with a build step in front of it, which is what
+`du -sh target .git apps/chaos-ui/node_modules` is. The ignore rule asks both shapes because
+a pattern written `dir/` matches only directories, and asking about `dir` alone would put the
+host-versus-runner split back one level down. A path that is neither tracked nor ignored is a
+claim even when this particular checkout happens to have the file.
+
 Exemptions are recorded, not silent. `scripts/ci/evidence-commands-allowlist.tsv` carries
 `key<TAB>category<TAB>reason`, with a reason of at least 20 characters; the key is the
 thing the finding names, which is the path a command points at for the three path
@@ -158,6 +170,47 @@ class Repo:
         self.root = root
         self.files = self._git(["ls-files", "-z"])
         self.tops = {f.split("/", 1)[0] for f in self.files}
+        # `git ls-files` lists files, never the directories holding them, and a command
+        # line may well read a directory. Every ancestor of a tracked file is therefore
+        # content of the repository too.
+        self.dirs: set[str] = set()
+        for rel in self.files:
+            parts = rel.split("/")
+            for i in range(1, len(parts)):
+                self.dirs.add("/".join(parts[:i]))
+        # Existence is asked of git, not of the filesystem: the same commit has to give
+        # the same verdict in a fresh clone and in a tree somebody finished building in.
+        # Answering from the filesystem is what made this guard green on the machine it
+        # was written on and red in CI, because `apps/chaos-ui/node_modules` sits in that
+        # machine's tree and is not in the commit.
+        self._ignored: dict[str, bool] = {}
+
+    def presents(self, rel: str) -> bool:
+        """Is `rel` content of the repository: tracked, or generated and ignored?"""
+        bare = rel.rstrip("/")
+        if bare in self.files or bare in self.dirs:
+            return True
+        return self.is_ignored(bare)
+
+    def is_ignored(self, rel: str) -> bool:
+        """Does .gitignore declare `rel` as something the repository does not carry?
+
+        A command line reading an ignored path is a recipe with a build step in front of
+        it, not a reference to a file that went missing. Both shapes are asked in one
+        call: a pattern written as `dir/` matches only a directory, so `git check-ignore`
+        answers "not ignored" for `dir` in a tree that was never built and "ignored" in
+        one that was, which is the very host-versus-CI difference this method exists to
+        remove. Asked per path, because the paths that get here are the handful whose
+        first segment is tracked and which are not tracked themselves.
+        """
+        if rel not in self._ignored:
+            proc = subprocess.run(
+                ["git", "-C", str(self.root), "check-ignore", "-q", "--stdin"],
+                input=f"{rel}\n{rel}/\n", capture_output=True, text=True)
+            if proc.returncode not in (0, 1):
+                raise RuntimeError(f"git check-ignore {rel}: {proc.stderr.strip()}")
+            self._ignored[rel] = proc.returncode == 0
+        return self._ignored[rel]
 
     def _git(self, args: list[str]) -> set[str]:
         proc = subprocess.run(["git", "-C", str(self.root), *args],
@@ -296,7 +349,7 @@ def check_paths(repo: Repo, rel: str, lineno: int, cmd: str) -> list[tuple[str, 
                 bare = found[2:] if found.startswith("./") else found
                 if bare.split("/")[0] not in repo.tops:
                     continue
-                if (repo.root / bare).exists():
+                if repo.presents(bare):
                     continue
                 hits.append((bare, f"{rel}:{lineno}"))
     return hits

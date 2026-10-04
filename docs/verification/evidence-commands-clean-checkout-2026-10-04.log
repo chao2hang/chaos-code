@@ -1,0 +1,267 @@
+# Clean-checkout verdicts for check-evidence-commands.py -- 2026-10-04
+
+One sentence: the guard asked the filesystem whether a path a document names is there, so
+two checkouts of the same commit gave different verdicts, and the red one was CI.
+
+This is the second half of that guard. `docs/verification/evidence-commands-2026-10-04.log`
+covers what the two rules find and why the exclusions are shaped as they are; this one
+covers the one question both rules rest on -- what counts as present -- and the fact that it
+used to be answered from the wrong place.
+
+== 1. What CI said
+
+Run 37179588831 pushed `11cdd8a2`. The `docs localization` job was red on one step of nine,
+and every step before it had passed, so the docs rules upstream were not implicated:
+
+$ gh api repos/chao2hang/chaos-code/actions/jobs/111371888182 --jq '.steps[] | [.number, .name, .status, (.conclusion // "-")] | @tsv'
+    1   Set up job  completed   success
+    2   Run actions/checkout@v4 completed   success
+    3   Install ripgrep completed   success
+    4   user guide, reference docs and tutorials    completed   success
+    5   guard self-tests    completed   success
+    6   TODO status document matches TODO.md    completed   success
+    7   Committed docs do not cite scratch paths    completed   success
+    8   Docs path references resolve or are recorded    completed   success
+    9   Documented commands can actually be run completed   failure
+
+Step 9 runs the fixtures and then the gate over the checkout. The log download refuses while
+the run is in flight, so the finding was recovered by running that step locally, and the
+guard's own repository case carried it. That reproduction is at `778d4dae`, which is why it
+names line 406:
+
+    FAIL: test_the_repository_this_guard_was_written_for_is_clean (__main__.ScanTests)
+    AssertionError: 1 != 0 : check-evidence-commands: docs/verification/pipefail-report-gate-2026-10-04.log:406: `apps/chaos-ui/node_modules` names a file that is not in the repository, so this command line reproduces nothing (unrecorded)
+    check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 6 dangling path(s), 6 recorded; 1 problem(s)
+
+That fixture runs the shipped gate over the real checkout, which is what makes it the one
+case that can disagree with a developer's machine. The line it names is a transcript line,
+and it is accurate about the run it captured:
+
+$ grep -n 'du -sh target .git' docs/verification/pipefail-report-gate-2026-10-04.log
+    406:$ du -sh target .git apps/chaos-ui/node_modules
+$ git show 11cdd8a2:docs/verification/pipefail-report-gate-2026-10-04.log | grep -n 'du -sh target'
+    387:$ du -sh target .git apps/chaos-ui/node_modules
+
+At `11cdd8a2` the same text sits at 387, so that is the number the CI message carried; later
+batches appended to that log and pushed it to 406.
+
+== 2. The reason it was green here: the file is in this tree
+
+    $ ls -d apps/chaos-ui/node_modules
+    apps/chaos-ui/node_modules
+    $ du -sh apps/chaos-ui/node_modules
+    143M    apps/chaos-ui/node_modules
+    $ git check-ignore -v apps/chaos-ui/node_modules/
+    .gitignore:33:apps/chaos-ui/node_modules/   apps/chaos-ui/node_modules/
+    $ git ls-files apps/chaos-ui/node_modules | wc -l
+    0
+
+An installed dependency tree, 143M of it, ignored on purpose and in no commit. The rule that
+anchors a claim already asked git -- a path only counts when its first segment is a tracked
+top-level entry, which is what keeps `target/` and an absolute scratch path out of the scan
+-- but the follow-up question then asked the filesystem. Half git, half filesystem is
+exactly the shape of this failure: on the machine that wrote the transcript the directory
+exists, so the claim is honoured; on a runner that checked the commit out into an empty
+workspace it does not, so the same bytes are a finding.
+
+The matrix below is two depth-1 clones of one commit, `778d4da`, differing only in whether
+an empty `apps/chaos-ui/node_modules/` sits in the tree. Each tree ran the committed guard,
+then this change:
+
+    tree=clean  commit=778d4da
+      node_modules on disk: no
+      tracked by git       : 0 file(s)
+      ignored by .gitignore: yes
+      --- committed guard (answers existence from the filesystem)
+          ... pipefail-report-gate-2026-10-04.log:406: `apps/chaos-ui/node_modules` names a file ...
+          check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 6 dangling path(s), 6 recorded; 1 problem(s)
+          exit=1
+      --- this change (answers existence from git)
+          check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+          exit=0
+
+    tree=built  commit=778d4da
+      node_modules on disk: yes
+      tracked by git       : 0 file(s)
+      ignored by .gitignore: yes
+      --- committed guard (answers existence from the filesystem)
+          check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+          exit=0
+      --- this change (answers existence from git)
+          check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+          exit=0
+
+One commit, two verdicts before; one verdict after. The real working tree is the `built`
+case with 143M instead of an empty directory.
+
+== 3. Why the ignore rule asks git twice
+
+Generated content is what `.gitignore` describes, so a command line reading it is a recipe
+with a build step in front of it, not a reference to a file that went missing. Asking git
+about the path as written would have reproduced the same split one level down, because the
+pattern is `apps/chaos-ui/node_modules/` and a pattern with a trailing slash only matches
+directories, which git can only tell from a directory that exists:
+
+    git check-ignore -v apps/chaos-ui/node_modules
+        -> exit 1  no match
+    git check-ignore -v apps/chaos-ui/node_modules/
+        -> exit 0  .gitignore:33:apps/chaos-ui/node_modules/   apps/chaos-ui/node_modules/
+    git check-ignore -v apps/chaos-ui/node_modules/react/index.js
+        -> exit 0  .gitignore:33:apps/chaos-ui/node_modules/   apps/chaos-ui/node_modules/react/index.js
+
+Both the second and the third question are answerable without a workspace, so `is_ignored`
+asks the bare path and the path with a trailing slash in one `git check-ignore -q --stdin`
+call and treats either match as generated. The result is cached per path, and only paths
+that are neither tracked nor a tracked directory get asked, which on this repository is
+seven paths per run.
+
+== 4. The rule as shipped
+
+`Repo.presents(rel)` is now the only way rule 2 answers presence, and it says yes when git
+tracks the path, when git tracks something under it (`git ls-files` lists files and never
+the directories holding them, so `ls docs/verification` is a claim that holds), or when
+`.gitignore` declares it generated. Everything else is a finding, including a file that this
+particular checkout happens to have and no commit carries.
+
+The ledger stayed at six rows and the gate did not need a new exemption, which is the point:
+a rule that fires on generated output is a wrong rule and gets fixed in the script, and the
+stale check would have failed the moment a row stopped describing a live finding.
+
+== 5. Fixtures
+
+Three cases, on top of the nineteen already there:
+
+- `test_generated_output_is_no_claim_built_or_unbuilt` names an ignored directory and an
+  ignored file, runs the gate with neither on disk, runs it again with both present, and
+  asserts the two stdout bodies are byte-identical. This is the CI-versus-machine contract
+  written as a test, and it is the case that would have caught the red job;
+- `test_only_this_checkout_having_a_file_is_not_a_clean_verdict` is its mirror: a path
+  neither tracked nor ignored, sitting on disk, is still a finding. Answering from the
+  filesystem forgave exactly this, so a fix that only special-cased the first case would
+  pass one and fail the other;
+- `test_a_tracked_directory_can_be_what_a_command_reads` reads two tracked directories and
+  one missing one, and counts the findings rather than grepping the message, because a
+  finding line quotes the citing document and therefore contains `docs/verification`.
+
+The fixture repository gained `scripts/vendor/` (a directory pattern) and `docs/secret.env`
+(a file pattern) under tracked top-level entries, so the top-level filter cannot excuse them
+and the ignore rule has to.
+
+    $ python3 scripts/ci/test-check-evidence-commands.py 2>&1 | tail -3
+        Ran 22 tests in 1.512s
+
+    OK
+
+== 6. Mutation matrix
+
+Each mutant is one string replacement on a pristine copy, the fixtures run, the gate is
+restored with a plain copy and verified with `cmp`. The baseline was checked green first; a
+mutant whose anchor does not match exactly once is counted as survived rather than skipped.
+
+    M1 answer existence from the filesystem (the behaviour that shipped)
+        killed by 2: test_generated_output_is_no_claim_built_or_unbuilt,
+                     test_only_this_checkout_having_a_file_is_not_a_clean_verdict
+    M2 existence is the tracked file list only
+        killed by 2: test_a_tracked_directory_can_be_what_a_command_reads,
+                     test_the_repository_this_guard_was_written_for_is_clean
+    M3 ask the ignore rule about the bare path only
+        killed by 1: test_generated_output_is_no_claim_built_or_unbuilt
+    M4 forgive every untracked path
+        killed by 9: including test_only_this_checkout_having_a_file_is_not_a_clean_verdict
+    M5 tracked-or-dir, never asking the ignore rule
+        killed by 2: test_generated_output_is_no_claim_built_or_unbuilt,
+                     test_the_repository_this_guard_was_written_for_is_clean
+    M6 ancestors stop at depth one
+        killed by 2: test_a_tracked_directory_can_be_what_a_command_reads,
+                     test_the_repository_this_guard_was_written_for_is_clean
+
+    mutants: 6, survived: 0
+    restored: cmp identical
+    after restore: green
+
+M1 is the interesting one: it is not a made-up weakening but the code that was in the
+repository this morning, and two fixtures name it.
+
+== 7. Wiring
+
+No wiring change was needed, which is why this went red only in CI and only after the guard
+had already been run on both roots many times. Both roots invoke the pair, and the gate
+count and labels are unchanged:
+
+    .github/workflows/ci.yml          python3 scripts/ci/test-check-evidence-commands.py
+                                      python3 scripts/ci/check-evidence-commands.py
+    scripts/verify-in-docker.sh       "documented commands can be run: python3 scripts/ci/test-check-evidence-commands.py && python3 scripts/ci/check-evidence-commands.py"
+
+The container is a third checkout, and it reproduces the CI verdict when its tree is clean.
+The entry point mounts the tree it was launched from, so the runs below differ only in that
+tree and in which version of the gate the tree carried. Image `chaos-verify:frozen`, one
+label:
+
+$ IMAGE_TAG=chaos-verify:frozen bash scripts/verify-in-docker.sh --only 'documented commands'
+
+    tree=depth-1 clone of 778d4da, node_modules absent, gate before the change
+        AssertionError: 1 != 0 : check-evidence-commands: docs/verification/pipefail-report-gate-2026-10-04.log:406: `apps/chaos-ui/node_modules` names a file that is not in the repository, so this command line reproduces nothing (unrecorded)
+        check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 6 dangling path(s), 6 recorded; 1 problem(s)
+        Ran 19 tests in 1.155s
+        FAILED (failures=1)
+        FAILED gates: documented commands
+          --only was in effect: 1 of 35 gates ran, so this is not a full sweep
+
+    tree=depth-1 clone, node_modules absent, gate with this change
+        OK
+        check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+        selected gates passed in chaos-verify:frozen
+
+    tree=depth-1 clone plus an empty node_modules, gate with this change
+        OK
+        check-evidence-commands: 333 files, 1344 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+        selected gates passed in chaos-verify:frozen
+
+    tree=this working tree with the dependency installed, gate with this change
+        Ran 22 tests in 1.567s
+        OK
+        check-evidence-commands: 334 files, 1352 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+        selected gates passed in chaos-verify:frozen
+          --only was in effect: 1 of 35 gates ran, so this is not a full sweep
+
+The first run is the CI failure reproduced inside the image, which is the useful direction:
+a clean tree is enough, no runner needed. The second and third are the point of the change,
+one verdict whether or not the dependency is installed. The last counts 334 files and 1352
+command lines because this log is staged in this index and absent from the clones, since
+`Repo.scanned()` walks tracked content only. The pre-fix gate on a tree that has the
+dependency was not run in the container, because §2 already measured that pair on the host
+and the mount makes the two cases the same tree.
+
+== 8. What this does not cover
+
+- A document may still name a path that exists only inside a container (`/src/...`) or only
+  after a build whose output is not ignored; neither is a claim about the commit and neither
+  is checked. `check-doc-path-refs.py` covers `path-refs`, not command lines, and has the
+  same tracked-anchor start.
+- The repository case in the fixtures still asserts a property of the working tree, so an
+  uncommitted edit to a document moves it. That is deliberate -- it is the case that keeps
+  the gate honest about the tree it was written for -- but it is not a check of the commit.
+- Ignore rules are consulted as git sees them from the repository root, so a path ignored by
+  a user's global gitignore or by `.git/info/exclude` counts as generated here too. That is
+  the same direction as the fix and is noted rather than argued away; `.gitignore` is the
+  durable half of that set, and it is what the repository's own generated paths are named
+  in.
+- Rule 1 (wrong interpreter) reads only the script operand and is untouched by this change.
+
+== 9. Reproduce
+
+    git clone --no-hardlinks --depth 1 . /var/tmp/clean-checkout-evcmd
+    cd /var/tmp/clean-checkout-evcmd
+    python3 scripts/ci/check-evidence-commands.py      # exit 0 with this change
+    git show HEAD~1:scripts/ci/check-evidence-commands.py > scripts/ci/check-evidence-commands.py
+    python3 scripts/ci/check-evidence-commands.py      # exit 1: the finding CI saw
+
+The two verdicts differ only because that tree has no `apps/chaos-ui/node_modules`, which is
+how a runner looks. Re-running the reverted guard after `mkdir -p
+apps/chaos-ui/node_modules` turns it green again without one byte of the commit changing,
+and that is the whole defect.
+
+    cd /home/chaos/hunt/dev/projects/chaos-code
+    python3 scripts/ci/test-check-evidence-commands.py
+    git check-ignore -v apps/chaos-ui/node_modules     # exit 1: no match, asked as a file
+    git check-ignore -v apps/chaos-ui/node_modules/    # the trailing slash is the difference

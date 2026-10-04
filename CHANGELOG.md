@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### 门禁：`check-evidence-commands.py` 拿文件系统回答「这条路径在不在」，同一个 commit 于是宿主绿、CI 红
+
+第 9 步 `Documented commands can actually be run` 在 `11cdd8a2` 上红了，而本地全量门禁跑过它好几次。
+差异只有一处：那条规则先用 git 判断「这条路径算不算对仓库内容的断言」（首段得是被跟踪的顶层条目），
+接着却拿 `(root / path).exists()` 回答「它在不在」。CI 的 workspace 是干净 checkout，本地那棵树里躺着
+143M 的 `apps/chaos-ui/node_modules`——它被 `.gitignore` 第 33 行点名，一行没进过 commit。同一个
+`778d4dae`，深度 1 的克隆重跑出 `6 dangling path(s)，1 problem(s)`，有那棵树的宿主重跑是
+`5 dangling path(s)` 全绿。
+
+改成只问 git：被跟踪的是内容，跟踪文件的祖先目录也是内容（`git ls-files` 只列文件不列目录，
+`ls docs/verification` 那种断言得算成立），`.gitignore` 点名的是仓库声明自己不带 generated 产物——读
+它是「前面还有一步构建」的配方，不是「某个文件不见了」。剩下的才算断言，包括只有你这棵树上恰好有、
+哪个 commit 里都没有的文件。问 `.gitignore` 得一次问两种形状：那条规则写的是 `apps/.../node_modules/`，
+带斜杠的模式只匹配目录，而 git 只能从真实存在的目录看出它是目录——只问不带斜杠的那条，宿主与 runner
+的分裂就往下挪一层原样复现。
+
+fixture 从 19 例加到 22 例：新增的三例把「同一个 commit 只该有一个结论」写成断言（同一份转写稿，产物
+不在时跑一次、在时再跑一次，两次的 stdout 必须逐字节相同），镜像那一例钉住「没被跟踪也没被忽略的文件
+即使躺在盘上仍然是断言」，第三例钉住目录也算内容。6 个变异 0 存活，其中 M1 就是把那行改回今天上午还在
+仓库里的写法，两例点名咬住它；变异后一律 `cp` 还原、`cmp` 复核字节一致。台账还是 6 行，一条豁免都没加
+——规则误判 generated 产物就是规则错了，该改脚本，而失效检查会在某行不再描述活着的发现的当场就红。
+
+顺带记下两处看不见的位置：容器挂载的是工作树而不是干净 checkout，所以依赖装好的宿主上 `--full` 会在
+CI 判定有问题的 commit 上报绿；fixture 里那例「对着本仓库跑」断言的是工作树的性质，不是 commit 的性质。
+测量与变异矩阵记在 `docs/verification/evidence-commands-clean-checkout-2026-10-04.log`。
+
+（2026-10-04；`scripts/ci/check-evidence-commands.py`、`scripts/ci/test-check-evidence-commands.py`）
+
 ### 门禁：新增 `check-tree-ownership.py`，静态那条看不见运行时拼出来的挂载路径，这一条到树上去量
 
 `scripts/ci/check-container-hygiene.py` 读的是 shell 文本，它自己在 docstring 里就写了看不见什么：

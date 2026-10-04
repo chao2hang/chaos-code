@@ -21,6 +21,13 @@ Four things are pinned that are easy to get wrong and hard to notice:
 - that rule 2 anchors on *tracked* top-level entries, so `target/`, an absolute scratch
   path and a directory that exists only on disk are not claims about this repository,
   while `scripts/gone.sh` is;
+- that the verdict is a property of the commit and not of the checkout: an ignored build
+  directory is no claim whether or not this tree was built, while an untracked file that
+  only this checkout has is a claim even though the filesystem says it is there. Answering
+  existence from the filesystem is what made the gate green on the machine that wrote a
+  transcript naming `apps/chaos-ui/node_modules` and red on a runner with a clean tree;
+- that a directory is content too, since `git ls-files` lists files only, so `ls docs/...`
+  reads as a claim that holds while `ls scripts/nope` does not;
 - that a recorded absence cannot rot: an allowlist entry whose finding is gone fails as
   stale, so the ledger cannot become a graveyard of fixed command lines;
 - that each rule is recorded by its own key, a path for an absent file and the exact
@@ -115,7 +122,10 @@ def build(root: Path) -> Path:
     # Only tracked content can anchor a claim, so this directory exists on disk and owns
     # nothing: a path into it is not a claim about this repository.
     write(root, "on_disk_only/x.py", "print(1)\n")
-    write(root, ".gitignore", "on_disk_only/\n")
+    # Two generated shapes sitting under a *tracked* top-level entry, where the top-level
+    # filter lets them through and only the ignore rule can excuse them: a directory
+    # pattern, which git matches only against a directory, and a plain file pattern.
+    write(root, ".gitignore", "on_disk_only/\nscripts/vendor/\ndocs/secret.env\n")
     git(root, "add", "-A")
     return root
 
@@ -287,6 +297,53 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(guard.check_paths(
             guard.Repo(self.root), "d.log", 1, "ls docs/exists.md"), [])
+
+    def test_generated_output_is_no_claim_built_or_unbuilt(self) -> None:
+        # The verdict has to be a property of the commit, not of the checkout: this is the
+        # difference between green on the machine that wrote the transcript and red in CI.
+        # A build directory is named by .gitignore, so reading it is a recipe with a build
+        # step in front of it rather than a reference to a file that went missing.
+        write(self.root, "docs/verification/gen.log",
+              "    $ du -sh scripts/vendor\n"
+              "    $ cat docs/secret.env\n")
+        git(self.root, "add", "-A")
+        self.assertFalse((self.root / "scripts" / "vendor").exists())
+        unbuilt = run(self.root)
+        self.assertEqual(unbuilt.returncode, 0, unbuilt.stderr)
+        (self.root / "scripts" / "vendor").mkdir()
+        (self.root / "scripts" / "vendor" / "lib.js").write_text("export 1\n", encoding="utf-8")
+        (self.root / "docs" / "secret.env").write_text("TOKEN=1\n", encoding="utf-8")
+        built = run(self.root)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        # Same commit, same verdict, built or not.
+        self.assertEqual(unbuilt.stdout, built.stdout)
+
+    def test_only_this_checkout_having_a_file_is_not_a_clean_verdict(self) -> None:
+        # The mirror image of the case above: neither tracked nor declared generated, so
+        # the path is a claim about the repository even though this checkout has the file.
+        # Answering rule 2 from the filesystem forgave exactly this.
+        write(self.root, "scripts/only_here/tool.py", "print(1)\n")
+        write(self.root, "docs/verification/mine.log",
+              "    $ python3 scripts/only_here/tool.py\n")
+        git(self.root, "add", "docs/verification/mine.log")
+        self.assertTrue((self.root / "scripts" / "only_here" / "tool.py").exists())
+        proc = run(self.root)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertIn("scripts/only_here/tool.py", proc.stderr)
+
+    def test_a_tracked_directory_can_be_what_a_command_reads(self) -> None:
+        # `git ls-files` never lists directories, so a transcript reading a directory
+        # would be reported as missing if existence were answered from that list alone.
+        write(self.root, "docs/verification/dirs.log",
+              "    $ ls scripts/ci\n"
+              "    $ ls docs/verification\n"
+              "    $ ls scripts/nope\n")
+        git(self.root, "add", "-A")
+        proc = run(self.root)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        findings = [ln for ln in proc.stderr.splitlines() if "names a file" in ln]
+        self.assertEqual(len(findings), 1, proc.stderr)
+        self.assertIn("scripts/nope", findings[0])
 
     def test_recorded_absence_that_no_longer_happens_fails_as_stale(self) -> None:
         ledger = write(self.root, "ledger.tsv",
