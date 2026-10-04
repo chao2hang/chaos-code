@@ -1,0 +1,282 @@
+# Container entry point fixtures, and the empty --only pattern -- 2026-10-04
+
+One sentence: `scripts/verify-in-docker.sh` owns the gate list that every other runner and
+CI step mirrors, it had no fixtures of its own, and writing them turned up `--only ""` running
+the entire list while printing a verdict that reads exactly like an unfiltered sweep.
+
+The host twin `scripts/verify-gates.sh` carries a `--self-test` suite (47 cases before this
+change, 50 after) and derives its gate list by parsing the `gates` array of the container
+script, so the list is exercised from the reading end. Nothing exercised the file being read.
+Its flag parsing, `--only` filter, preflight, tree checksums, verdict wording and exit codes
+had been run by hand, against a real image, one gate per sitting -- which is how the `diff`
+defect recorded in `docs/verification/pipefail-report-gate-2026-10-04.log` reached a real
+164-second run before anyone saw it.
+
+== 1. The wiring guard is what asked for this
+
+The new file was written before it was wired, and the guard that exists to stop exactly that
+said so. Both halves of its message fired on the same path:
+
+$ python3 scripts/ci/check-guard-wiring.py
+    scripts/ci/test-verify-in-docker.py is not invoked by any workflow or by
+    scripts/verify-in-docker.sh; wire it into a CI step and the `gates` array, or record
+    why in EXEMPT
+    scripts/ci/test-verify-in-docker.py runs in CI but not in
+    scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs
+    in scripts/ci/docker-entry-ci-only.tsv
+    check-guard-wiring: 2 problem(s)
+
+The second line is the guard reasoning about a file it can see in `git ls-files` but not in
+any workflow, which is the state a new fixture is in for a few minutes. House policy is no
+allow list, so the answer was to wire it, not to record it.
+
+== 2. The defect: an empty pattern is not a filter
+
+Two copies of the repository, the same stub `docker` on `PATH`, the only difference being
+which revision of the entry point is in `scripts/`. "before" is the version at `HEAD`, "after"
+is the working tree. The stub answers `build` and `volume`, and appends one line per `run`, so
+the count is how many containers the script actually asked for:
+
+    --- before (git HEAD version = before, working tree = after)
+    rc=0  docker invocations=36
+        == --only is in effect: 35 of 35 gates selected, this is not a sweep
+        all gates passed in stub:1
+    --- after (git HEAD version = before, working tree = after)
+    rc=2  docker invocations=0
+        --only needs a gate label (list them with: scripts/verify-gates.sh --list)
+
+Three separate things are wrong in the "before" block, and the third is the ugly one:
+
+- exit 0. The command refused to filter and then reported success.
+- 36 `docker` invocations. One preflight plus every gate in the quick list, which is the run
+  the caller least wanted and, at 23 to 25 minutes for `--full`, the most expensive one.
+- it printed `all gates passed in stub:1`, not the filtered wording. The summary filter is
+  `[ "${#gates[@]}" -ne "${total_gates}" ]`, and an empty pattern selects `total_gates` of
+  `total_gates`, so a run started with an explicit `--only` produced the one sentence the
+  `--only` design exists to reserve for unfiltered sweeps. This is the property recorded in
+  `CONTRIBUTING.md` "Fast local gate loop": a filtered run cannot be quoted back as a sweep.
+
+`--only ""` is not a hypothetical invocation. It is what a loop over an unset variable
+produces, and `--only "$label"` with an empty `$label` is one shell typo away from a full
+sweep that reports itself as scoped.
+
+== 3. The guard tested the wrong word, on both sides
+
+The container entry point did have a guard, and its own comment states the intent:
+
+    # An empty pattern matches every label, which would make `--only ""` a full sweep.
+    if [ $# -lt 2 ] || [ -z "$1" ]; then
+
+`$1` is the literal `--only` at that point in the `while`/`case` loop, so the second test can
+never fire. The value is `$2`. The fix is one character, plus the comment that says why the
+distinction is there, because the line reads as a harmless redundancy otherwise:
+
+$ grep -n -A4 'value is ..2. here' scripts/verify-in-docker.sh
+    49:      # value is `$2` here, not `$1`: `$1` is the literal `--only` and can never be empty, so
+    50:      # testing it let `--only ""` select every gate and print a verdict claiming a filter was
+    51:      # in effect. Measured on 2026-10-04 against a stubbed docker: exit 0, whole list run.
+    52:      if [ $# -lt 2 ] || [ -z "$2" ]; then
+    53-        echo "--only needs a gate label (list them with: scripts/verify-gates.sh --list)" >&2
+
+The host runner had the mirror-image hole. Its parser refused a missing value but accepted an
+empty one, and `matches_only` skips empty lines (`[ -n "$pattern" ] || continue`), so nothing
+matched:
+
+$ bash scripts/verify-gates.sh --only "" --list; echo "rc=$?"
+    rc=0
+
+Run mode was less quiet -- `nothing ran: every selected gate was skipped (0 of 37 gates
+selected by --only)` and exit 1 -- because that runner aggregates rather than aborts and has a
+guard for measuring nothing. `--list` said nothing and exited 0, which is a command that
+cannot be distinguished from "this label does not exist yet". Both sides now refuse the empty
+value at parse time with the same message, so the flag behaves identically whichever runner
+receives it.
+
+== 4. What the fixtures drive
+
+`scripts/ci/test-verify-in-docker.py`, 26 cases. The script under test is copied
+byte-identically into a throwaway git repository, because it derives its own `repo_root` from
+`$0` and the copy is what makes the fixture hermetic; `PATH` is prefixed with a directory
+holding a `docker` that records every invocation it is given. Every assertion is therefore
+about what the entry point asked for, not about what this repository's text says:
+
+$ python3 scripts/ci/test-verify-in-docker.py 2>&1 | tail -4
+    ----------------------------------------------------------------------
+    Ran 26 tests in 2.007s
+
+    OK
+
+Four classes, one per thing that was only ever checked by eye:
+
+- `FlagTests` -- `--help` reaches no `docker` at all, an unknown argument exits 2, `--only`
+  with no value and with an empty value are both refused, a pattern matching no label is an
+  error rather than a green run, a label that `--full` appends says so in quick mode and is
+  found in full mode, and `--shell` hands the terminal over without running a gate.
+- `SelectionTests` -- `--only` reaches exactly one gate (preflight plus one run, and the
+  gate it did not name is absent from the log), a fragment reaches all three labels containing
+  it, two patterns give the union, the command line arrives without its label attached, a
+  filtered run gets the filtered wording and never the sweep wording, and an unfiltered run
+  runs the whole list, which pins the size of that list so an entry added or dropped trips it.
+- `VerdictTests` -- a failing gate is named and exits 1, a later gate still runs after it, a
+  failing gate that prints nothing on stdout is still named, a passing gate that prints
+  nothing still ends with a verdict, a failed preflight runs no gate and names
+  `safe.directory` as the thing to fix, a tree that moves mid-run prints `UNATTRIBUTABLE`
+  *and* a verdict, and a file nobody committed is both counted in the fingerprint and declared
+  before the first gate line.
+- `MountContractTests` -- every gate run carries the five `--env` entries and the mounts, the
+  three cargo volumes are created by name rather than bind-mounted, the checkout is mounted at
+  `/src`, the image is built exactly once and before any run, and `target/` exists at the
+  moment the first container starts.
+
+The last one is measured from inside the stub rather than asserted about the script text. The
+entry point creates `target/` so that the runtime does not create the volume's mount point as
+root inside the checkout, and a stub that reports `[ -d ... ]` at the moment `docker run` is
+called is the difference between "the mkdir is in the file" and "the directory was there when
+the container started".
+
+Two fixture details are load-bearing for the tree-checksum cases. The fixture repository
+carries a `.gitignore` with `stub-bin/` and `target/`, because the fake `docker` is not
+repository content and a fixture that asserts "the tree was at rest" has to be able to tell
+that from the absence of the caveat line. And the stub records one invocation per line,
+escaping embedded newlines, because a gate command line is multi-line: the `${bootstrap}`
+prefix is three `git config` lines, and a wrapped record splits one run across several lines.
+
+== 5. Mutation matrix
+
+Thirteen anchored single edits, one baseline check first, each mutant reverted before the
+next, and both runners compared byte-for-byte against a copy taken before the first edit. An
+anchor that fails to match counts as SURVIVED, never as a pass. Killers are the named failing
+cases.
+
+    M1  the diff keeps its `|| true` removed (revert of 021b5453)      killed
+        FAIL: test_a_tree_that_moves_mid_run_is_unattributable_and_still_gives_a_verdict
+    M2  the build output directory is not created first                killed
+        FAIL: test_the_build_output_directory_precedes_the_first_run
+    M3  the git ownership env entries are dropped                      killed
+        FAIL: test_every_gate_run_carries_the_env_the_leak_fixes_depend_on
+    M4  the --only guard tests $1 again (today's bug)                  killed
+        FAIL: test_an_empty_pattern_is_refused_rather_than_selecting_everything
+    M5  an unmatched pattern is warned about instead of refused        killed
+        FAIL: test_a_label_that_only_full_mode_appends_says_so
+        FAIL: test_a_pattern_matching_no_label_is_an_error_not_a_green_run
+    M6  a filtered run uses the sweep wording                          killed
+        FAIL: test_a_filtered_run_cannot_be_quoted_as_a_sweep
+        FAIL: test_a_silent_passing_gate_still_ends_with_a_verdict
+        FAIL: test_a_tree_that_moves_mid_run_is_unattributable_and_still_gives_a_verdict
+    M7  a failed preflight does not stop the run                       killed
+        FAIL: test_a_failing_preflight_runs_no_gate_and_says_what_to_fix
+    M8  the label is passed to the container as part of the command    killed
+        FAIL: test_the_command_line_reaches_the_container_without_its_label
+    M9  --only stops filtering                                         killed
+        12 cases, including every selection case and both verdict-wording cases
+    M10 untracked files leave the fingerprint                          killed
+        FAIL: test_a_file_nobody_committed_is_counted_and_declared
+        FAIL: test_a_tree_that_moves_mid_run_is_unattributable_and_still_gives_a_verdict
+    M11 the uncommitted-path caveat is never printed                   killed
+        FAIL: test_a_file_nobody_committed_is_counted_and_declared
+    M12 --shell runs the gate list                                     killed
+        FAIL: test_shell_mode_hands_the_terminal_over_and_runs_no_gate
+    M13 the host runner's --only guard tests $1 again                  killed
+        not ok an empty --only pattern is refused, not parsed (expected exit 2, got 1)
+        not ok naming the flag instead of selecting nothing (no line matching: needs a gate label)
+
+    13/13 mutants killed, 0 survived
+
+M1 is a verbatim revert of the fix recorded in
+`docs/verification/pipefail-report-gate-2026-10-04.log`, and it is now caught by a fixture in
+under a tenth of a second instead of by a 164-second container run. M4 and M13 are reverts of
+the fix this log is about, one per runner: the container mutant is killed by the new fixture,
+the host mutant by the three new `--self-test` cases. M6 is killed by three cases rather than
+one, which is the sign that the wording is asserted wherever a verdict is asserted.
+
+The host self-test gained those three cases and no more; the whole suite is 50:
+
+$ bash scripts/verify-gates.sh --self-test 2>&1 | grep -B1 -A2 'empty --only pattern'
+    ok    --only without a value is refused
+    ok    an empty --only pattern is refused, not parsed
+    ok    naming the flag instead of selecting nothing
+    ok    and no gate ran on the way to the error
+
+$ bash scripts/verify-gates.sh --self-test 2>&1 | tail -1
+    verify-gates self-test: 50/50 cases pass
+
+== 6. Wiring, and the fixtures run inside the image
+
+The new entry sits next to the one that reads the array, so the two ends of the same list are
+adjacent in both places the list is mirrored -- the `gates=()` array and the guard step of the
+`docs localization` job:
+
+  "host gate runner self-test: bash scripts/verify-gates.sh --self-test"
+  "container runner fixtures: python3 scripts/ci/test-verify-in-docker.py"
+
+Running the new gate inside the image is a different question from running it on the host: the
+image is a stock Debian bookworm with no cargo volumes needed and no repository state to
+inherit, so it answers whether the fixtures assume anything about a developer machine.
+
+$ IMAGE_TAG=chaos-verify:frozen bash scripts/verify-in-docker.sh --only 'container runner fixtures'
+    == --only is in effect: 1 of 36 gates selected, this is not a sweep
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == container runner fixtures
+    test_a_label_that_only_full_mode_appends_says_so (__main__.FlagTests) ... ok
+    [...]
+    test_the_first_gate_to_fail_does_not_stop_the_others (__main__.VerdictTests) ... ok
+
+    ----------------------------------------------------------------------
+    Ran 26 tests in 2.244s
+
+    OK
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 36 gates ran, so this is not a full sweep
+
+The middle is the other 24 case names, each `ok`; elided for length, not for omission. The
+same empty pattern that used to start 36 containers is then refused against the real daemon,
+and the container list confirms nothing was created:
+
+$ IMAGE_TAG=chaos-verify:frozen bash scripts/verify-in-docker.sh --only ""
+    --only needs a gate label (list them with: scripts/verify-gates.sh --list)
+
+$ docker ps -a --filter ancestor=chaos-verify:frozen --format '{{.ID}}' | wc -l
+    0
+
+That refusal happens before `docker build`, so it costs no image resolution either, which is
+the difference between the parser catching this and the filter catching it.
+
+== 7. What this does not cover
+
+The stub is not `dockerd`. It answers four subcommands and records argv, so these fixtures
+cannot see anything about what happens inside a container: no image build, no volume contents,
+no `/src` mount actually resolving, no gate exit status that the real tools produce. What they
+own is the other half -- every decision the entry point makes before and after handing a
+command line to the runtime, which is exactly the half that had no fixtures and that two
+defects had already been found in.
+
+The real sweep remains the evidence for the container side, and it stays expensive on purpose:
+`--full` covers `cargo check`, `cargo clippy` and `cargo test --workspace`, which no stub can
+stand in for. The two verdicts each kind of run produces are different claims and are recorded
+apart; see `docs/verification/pipefail-report-gate-2026-10-04.log` for the last `--full` run.
+
+`--shell` is pinned only as "one run, `bash`, no `-c`, no fingerprint". The interactive
+session itself, and the `-it` flags that require a terminal, are not exercised: under the stub
+the pseudo-terminal allocation is a string in argv, and claiming more than that from it would
+be the kind of assertion that passes while the feature is broken.
+
+== 8. Reproduce
+
+    git clone --no-hardlinks --depth 1 . /var/tmp/container-entry-fixtures
+    cd /var/tmp/container-entry-fixtures
+
+    python3 scripts/ci/test-verify-in-docker.py
+    bash scripts/verify-gates.sh --self-test
+    python3 scripts/ci/check-guard-wiring.py
+    bash scripts/verify-in-docker.sh --only 'container runner fixtures'
+
+The first two are the suites, the third is the rule that keeps the file wired, the fourth
+needs the image and is the same command as in section 6 with a locally built tag. To watch the
+defect itself rather than its fixture, check out the version of the entry point from before
+this change and give it an empty pattern with a stub on `PATH`: the exit status is 0, the
+verdict reads as a sweep, and the number of `docker run` invocations equals the size of the
+quick list plus the preflight.

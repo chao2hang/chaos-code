@@ -307,15 +307,31 @@ run only applies under `--with-build` can be asked of the container directly wit
 `scripts/verify-in-docker.sh --only 'cargo clippy'`, which costs about three minutes with warm
 cargo volumes instead of the 23 to 25 minutes of a `--full` sweep. Three rules keep a filtered
 run from being quoted back as a sweep. A pattern matching no label exits 2 and names the
-pattern, so a typo cannot select nothing and print a verdict about nothing. A filtered summary
+pattern, so a typo cannot select nothing and print a verdict about nothing. An empty value is
+refused the same way on both runners, and it is a different mistake: a pattern of zero
+characters matches every label, so `--only ""` -- what a loop over an unset variable produces
+-- ran the whole list and printed the unfiltered wording, exit 0. A filtered summary
 carries the counts (`K of T selected by --only` on the host, `--only was in effect: K of M
 gates ran` in the container), while an unfiltered host sweep says
-`all gates passed on the host (30 run, 4 skipped)` and only that. And the filter does not
+`all gates passed on the host (34 run, 4 skipped)` and only that. And the filter does not
 unlock the build gates: `--only 'cargo test'` on the host still prints `SKIP` unless
 `--with-build` is also given, because a fragment that happens to match a build gate should not
 turn a fast loop into a workspace rebuild. `--self-test` pins all three, including the negative
 half of each selection case, which asserts that the line of the gate that must not have run is
 absent.
+
+Both runners carry fixtures for their own behaviour, and they are two files because the two
+runners do different jobs. `--self-test` covers the host side. The container entry point owns
+the `gates` array that the host side parses, and it had no fixtures at all until 2026-10-04;
+`scripts/ci/test-verify-in-docker.py` (26 cases) copies the shipped script into a throwaway git
+repository and puts a recording `docker` stub at the front of `PATH`, so each assertion is
+about which containers the entry point asked for and with which flags: `--only` reaching
+exactly one gate, a failed preflight reaching none, a filtered run never given the sweep
+wording, a tree that moves mid-run still producing a verdict next to `UNATTRIBUTABLE`, and
+every gate run carrying the `RUST_MIN_STACK`, `PYTHONDONTWRITEBYTECODE` and `GIT_CONFIG_*`
+entries the leak fixes depend on. It runs as the `container runner fixtures` gate, right after
+`host gate runner self-test`, so both ends of the array are checked in every sweep. Writing
+those fixtures is what found the `--only ""` defect described above.
 
 The other labs (`install-sh-in-docker.sh`, `install-integrity-in-docker.sh`,
 `npm-install-in-docker.sh`, `remote-acceptance-in-docker.sh`) start their containers

@@ -45,8 +45,11 @@ while [ $# -gt 0 ]; do
     --full) MODE="full" ;;
     --shell) MODE="shell" ;;
     --only)
-      if [ $# -lt 2 ] || [ -z "$1" ]; then
-        # An empty pattern matches every label, which would make `--only ""` a full sweep.
+      # An empty pattern matches every label, which would make `--only ""` a full sweep. The
+      # value is `$2` here, not `$1`: `$1` is the literal `--only` and can never be empty, so
+      # testing it let `--only ""` select every gate and print a verdict claiming a filter was
+      # in effect. Measured on 2026-10-04 against a stubbed docker: exit 0, whole list run.
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
         echo "--only needs a gate label (list them with: scripts/verify-gates.sh --list)" >&2
         exit 2
       fi
@@ -183,6 +186,13 @@ gates=(
   # fixture cases of scripts/verify-gates.sh --self-test include parsing this real file,
   # which fails here if the entry format changes and no local runner notices.
   "host gate runner self-test: bash scripts/verify-gates.sh --self-test"
+  # The other end of the same array. This entry point is the one that owns the list, and until
+  # 2026-10-04 its own behaviour -- the `--only` filter, the preflight, the tree checksums, the
+  # verdict wording, the exit codes -- had been exercised only by hand against a real image, one
+  # gate per sitting. These fixtures drive this shipped file with a stub `docker` on `PATH` and
+  # read back every invocation it makes; writing them is what turned up `--only ""` running the
+  # whole list while reporting that a filter had been in effect.
+  "container runner fixtures: python3 scripts/ci/test-verify-in-docker.py"
   # No argument on purpose: the CI step runs it with none, and pointing this one at
   # ci.yml alone left release.yml -- the workflow with the Windows matrix, which is
   # the whole reason the check exists -- unexamined locally.

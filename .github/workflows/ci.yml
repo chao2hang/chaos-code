@@ -739,6 +739,14 @@ jobs:
           # sits there is legitimately root-owned.
           python3 scripts/ci/test-check-tree-ownership.py
           python3 scripts/ci/check-tree-ownership.py
+          # The other end of the container entry point. `scripts/verify-in-docker.sh` owns the gate
+          # list that every step in this job mirrors, and its own behaviour had been exercised only
+          # by hand against a real image. These fixtures drive the shipped script with a stub
+          # `docker` on PATH and assert against every invocation it records: `--only` reaching
+          # exactly one gate, a failed preflight running nothing, a filtered run refusing the sweep
+          # wording, the UNATTRIBUTABLE path still printing a verdict, and each gate run carrying
+          # the `--env` entries this file's own steps had to discover the hard way.
+          python3 scripts/ci/test-verify-in-docker.py
           # Two ratchets over the Rust sources, both from one scanner. The first
           # refuses a crate that gains a production `.unwrap()`, `.expect()`,
           # `panic!` or `unsafe` site; the definition of "production" it uses

@@ -77,7 +77,10 @@ while [ $# -gt 0 ]; do
     --list) mode="list" ;;
     --self-test) mode="self-test" ;;
     --only)
-      if [ $# -lt 2 ]; then
+      # The value is `$2`, not `$1`: `$1` is the literal `--only`. An empty pattern is refused
+      # rather than parsed, because `matches_only` skips empty lines and so `--only ""` would
+      # select nothing -- in `--list` mode that is an exit 0 with no output at all.
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
         echo "--only needs a gate label (list them with: scripts/verify-gates.sh --list)" >&2
         exit 2
       fi
@@ -415,6 +418,12 @@ FIXTURE
   reject_line "and not the others" "^always passes$"
 
   run_case "--only without a value is refused" 2 all-pass.sh --only
+
+  # An empty string survives `[ $# -lt 2 ]`, and `matches_only` skips empty lines, so an
+  # unparsed empty pattern selected nothing: `--list` came back exit 0 with no output at all.
+  run_case "an empty --only pattern is refused, not parsed" 2 all-pass.sh --only ""
+  expect_line "naming the flag instead of selecting nothing" "needs a gate label"
+  reject_line "and no gate ran on the way to the error" "^PASS  always passes"
 
   container_stack="$(sed -n 's/.*--env RUST_MIN_STACK=\([0-9][0-9]*\).*/\1/p' \
     "${repo_root}/scripts/verify-in-docker.sh" | head -n 1)"

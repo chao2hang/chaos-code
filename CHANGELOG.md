@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### 修复：`--only ""` 在两个 runner 上都不是过滤器，容器把整张表跑完还打出全量措辞
+
+那条守卫本来就把意图写在上面（「空 pattern 匹配每一个标签，于是 `--only ""` 会是一次全量扫描」），可它判
+的是 `$1`，而那一刻 `$1` 是字面量 `--only`，永远非空。空串于是顺利走到过滤器，空 pattern 匹配每一个标
+签：同一份 `docker` 桩、只差 `scripts/verify-in-docker.sh` 是哪个 revision，`HEAD` 那份 `rc=0`、
+36 次 `docker run`（预检加 quick 表全部 35 条），并且打的是 `all gates passed in stub:1`——过滤摘要的判据
+是「选中数 ≠ 总数」，而空 pattern 恰好选中全部，于是带 `--only` 起跑的运行，打印出了 `--only` 那套设计专
+门留给未过滤扫描的那一句。修复是一个字符（改判 `$2`），外加一条说明它凭什么在那里的注释，否则那半句读起
+来像多余的冗余。宿主侧是同一个洞的镜像：解析器只拒绝「没有值」，`matches_only` 又
+靠 `[ -n "$pattern" ] || continue` 跳过空行，于是 `--only "" --list` 什么都不打、退出 0，「这条标签还不
+存在」与「这条命令什么也没做」在那一刻无从区分（跑模式下另有 `nothing ran` 那条护栏兜着，退出 1）。两边
+现在同在解析期用同一句话拒绝空值。`--only ""` 不是假想的调用形式：它是遍历一个未设变量的循环所产出的东
+西。
+
+（2026-10-04；`scripts/verify-in-docker.sh`、`scripts/verify-gates.sh`、`CONTRIBUTING.md`）
+
+### 门禁：容器门禁入口第一次有自己的夹具，26 例把「它到底让容器跑了什么」写成断言
+
+`scripts/verify-in-docker.sh` 是那张 `gates` 表的主人，宿主 runner 逐条解析它，于是这张表从读取那一端被
+反复检验，被读的那一端一次也没被检验过。它的参数解析、`--only` 过滤、预检、树指纹、判决措辞与退出码此前
+只被人手对着真实镜像跑过，一次一条门——`docs/verification/pipefail-report-gate-2026-10-04.log` 里那
+次 164 秒的 `diff` 缺陷就是这么被看见的。新增 `scripts/ci/test-verify-in-docker.py` 26 例：把被测脚本逐
+字节复制进一次性 git 仓库（它从 `$0` 推自己的 `repo_root`，复制才是夹具封闭的原因），`PATH` 前置一个把每
+次调用逐条记下来的 `docker` 桩，断言因此落在「它到底让容器跑了什么」上：`--only` 只到那一条门、预检失败
+一条门都不跑、被过滤的运行拿不到全量措辞、门禁把树改写时 `UNATTRIBUTABLE` 与判决同时出现、每次 run 都带
+着那五条 `--env` 与三个命名卷、`target/` 在第一次 run 那一刻就已存在（这一条是从桩里 `[ -d ]` 量出来的，
+不是从脚本文本里看出来的）。两处细节是承重的：夹具仓库的 `.gitignore` 收掉 `stub-bin/` 与 `target/`，否
+则「树是静的」没法用「没有那句 caveat」来断言；桩每条调用记一行并把内嵌换行转义，因为门禁命令行本来就是
+多行的——`${bootstrap}` 是三行 `git config`，折行会把一次 run 拆成好几行。13 发变异 0 存活，`cmp` 证明两
+个 runner 逐字节还原；其中 M1 是 `021b5453` 那次修复的逐字回退（如今 0.1 秒被咬住），M4 与 M13 是本轮修
+复在两个 runner 上各自的回退。宿主 `--self-test` 随之 47 → 50 例。新门禁 `container runner fixtures` 紧
+挨 `host gate runner self-test` 接线，一张表的两端因此在每轮扫描里都被查到；容器内实跑 26 例全绿，宿主全
+量 `34 run, 4 skipped`。桩不是 `dockerd`：镜像构建、卷内容、`/src` 挂载是否真能解析、真实工具的退出码都
+不在它的能力之内，那半部分仍由 `--full` 负责。测量、变异矩阵与容器内实跑记
+在 `docs/verification/container-entry-fixtures-2026-10-04.log`。
+
+（2026-10-04；`scripts/verify-in-docker.sh`、`scripts/ci/test-verify-in-docker.py`）
+
+
 ### 门禁：`check-evidence-commands.py` 拿文件系统回答「这条路径在不在」，同一个 commit 于是宿主绿、CI 红
 
 第 9 步 `Documented commands can actually be run` 在 `11cdd8a2` 上红了，而本地全量门禁跑过它好几次。
