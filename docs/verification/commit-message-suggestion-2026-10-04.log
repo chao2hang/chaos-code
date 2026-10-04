@@ -1,0 +1,702 @@
+# A commit form that drafts its own words, and a sidebar naming the repository (2026-10-04)
+
+`TODO.md` said the AI commit-message suggestion and its edit form were "尚未实现". They are
+implemented now: the host reads the staged diff through the Git adapter, hands it to
+whatever Provider the host was started with, cleans the answer, and offers it in an editable
+commit box that still requires the two confirmations before anything is committed. Driving
+that in a real browser also turned up a second, older defect that has nothing to do with
+commit messages: on a host started with `CHAOS_WORKSPACE_ROOT`, the sidebar never listed the
+workspace the session was sitting in, so nothing on screen said which repository the panels
+were pointed at. Both are measured here.
+
+Headline figures: 14 engine tests in the new group, 3 WebSocket tests against a self-built
+inference endpoint plus the 4 in `host_info_flow.rs`, 59 reducer tests
+(`apps/chaos-ui/src/session.test.ts`, 13 of them added across this feature), 123 vitest tests
+overall, 2 browser spec files holding 7 cases on two viewports (14 browser cases), the full
+browser suite at 75 passed / 6 skipped plus 14 passed, and 28 source mutants of which 27 are
+caught by a named test and 1 only fails to compile -- which is why the replay test has a
+second mutant aimed at the same behaviour. Section 10 and 11 are the Safe Web Mode round;
+section 12 is what is still not covered.
+
+== 0. Nothing outside a test module could see the staged diff
+
+`GitAdapter` had `stage`, `unstage`, `commit`, `checkout_branch` and `discard`. There was no
+way to read what a commit *would* record, so any suggestion would have had to be written
+from the file names alone. The trait gained one defaulted method, so the fixtures that only
+assert on mutations keep compiling and answer "this adapter cannot read the staged diff"
+instead of lying:
+
+    fn staged_diff(&self) -> Result<StagedDiff, String> {
+        Err("Git adapter 不支持读取暂存差异".into())
+    }
+
+`ProcessGitAdapter` implements it by spawning `git -C <cwd> diff --cached --no-color` and
+draining both pipes on their own threads -- git that could not write to stderr would block,
+and the `wait()` behind it would never return. The read is bounded to `COMMIT_DIFF_LIMIT`
+(24 KiB) because the diff goes into a prompt and the browser can stage a generated file of
+any size; when it stops short the result says so, and that flag travels all the way to the
+browser panel.
+
+Two things the tests pin that are easy to get wrong and hard to notice:
+
+    $ cargo test -q -p chaos-engine --lib -- commit_message staged_diff normalize_commit \
+        empty_stage a_provider_failure a_replayed a_suggestion_built
+
+    running 10 tests
+    ..........
+    test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 192 filtered out; finished in 0.02s
+
+`staged_diff_reports_only_what_is_staged` edits the same file twice, stages one of the two
+edits, and requires `+two` in the text and `+three` absent. Reading `git diff` instead of
+`git diff --cached` passes that test's first half and fails its second, which is mutant M1
+below. `staged_diff_stops_at_the_limit_and_says_so` stages a 48 KiB change and asserts the
+flag, the `[diff truncated]` marker, and that the retained text is not over the limit --
+`truncated` is a claim about bytes, so it is checked against bytes rather than about the
+model's opinion.
+
+== 1. What a model wraps around an answer
+
+The answer arrives as SSE deltas. A chatty model wraps it in a code fence, bullets it, or
+opens with 「这是建议：」, and all of that would otherwise be pasted into `git commit -m`.
+`normalize_commit_message` strips fence lines, leading blanks, one leading label line of at
+most 40 bytes ending in `:` or `：`, bullet and colon prefixes, and surrounding quotes; it
+keeps everything after that, body paragraphs included. Dropping a paragraph the Provider
+judged worth writing is a worse failure than leaving one explanatory line the user can
+delete in the box. The result is cut at `COMMIT_MESSAGE_LIMIT` (600 bytes) on a character
+boundary.
+
+Both ends wrap and unwrap for real rather than agreeing on a clean fixture. The browser's
+mock endpoint answers in three fenced frames, and the WebSocket test's scripted reply is
+fenced too:
+
+    // apps/chaos-ui/e2e/support/mock-provider.mjs
+    const replyFrames = ['```text\n', replyText, '\n```']
+
+    // crates/codegen/xai-grok-web/tests/commit_message_flow.rs
+    provider.set_response("```text\ndocs: 改写 note.txt 的说明\n\n旧措辞描述的是上一个版本。\n```");
+
+Both then assert the *unfenced* string. Skipping the normalisation call is mutant M9; it
+survives the engine group (its fake answers in plain text) and is caught by the WebSocket
+test, which is the reason that reply is fenced.
+
+== 2. Two ways the feature can be missing, named separately
+
+An empty staged area and an unconfigured Provider both end in an error frame, but they are
+not the same problem for the person at the keyboard, and neither is answered by asking the
+endpoint:
+
+    ClientMessage::SuggestCommitMessage { ... } => {
+        ...
+        if diff.text.trim().is_empty() {
+            return vec![Self::error("nothing_staged", "暂存区为空，先 stage 文件再请求提交信息建议")];
+        }
+        let Some(adapter) = &self.adapter else {
+            return vec![Self::error(
+                "commit_suggestion_unavailable",
+                "没有配置 Provider，无法生成提交信息建议；提交信息仍可手动填写",
+            )];
+        };
+
+The order matters and is asserted: `empty_stage_is_named_before_the_provider_is_asked` uses
+an engine with no Provider at all and still expects `nothing_staged`, so a missing Provider
+cannot hide the fact that there was nothing to suggest about. The browser spec checks the
+same ordering on the wire: after 建议提交信息 on an unstaged file, the panel alerts
+暂存区为空 *and* the endpoint's prompt log is still empty, so the refusal is proven to have
+happened before any request left. A Provider that answers 401 surfaces as `agent_failed`
+with the endpoint's text, and one that answers with whitespace-only text is
+`commit_suggestion_empty`; neither is delivered as an empty suggestion, which is what the
+browser would otherwise show as a blank commit message.
+
+== 3. A suggestion is wording, not an action
+
+The handler emits `Ack` + `CommitMessageSuggestion` and bumps `session.sequence` only. It
+requests no approval, runs no command, and the tests check the repository rather than the
+intent: HEAD must still point at the commit made before the request, `git diff --cached
+--name-only` must still list the staged file, and no `ToolApprovalRequested` may appear in
+the events. The browser spec goes one step further and commits after the suggestion,
+asserting that `git log -1 --format=%s` records the message the *user* left in the box
+(`chore: 我自己写的提交信息`), not the Provider's wording.
+
+The box is only filled while it still holds what it held when the request went out
+(`commitDraftAcceptsSuggestion`), so a suggestion that lands late is offered beside the box
+instead of overwriting typed text. That branch is reached without sleeping: the mock
+endpoint holds its reply while a hold file exists, the spec types 我自己的草稿, removes the
+file, and then asserts `commit-suggestion-offer` shows the wording while the box keeps the
+draft, and that 填入建议 is what finally puts it in.
+
+== 4. What the browser found that was not about commit messages
+
+`openCommitForm` had been opening the Git tab without checking the sidebar, and a screenshot
+taken to inspect the new form showed the sidebar section 工作区与会话 empty. Reproduced as
+an assertion rather than left as a pixel:
+
+    $ npx playwright test --config playwright.git.config.ts --grep "fits the screen" --repeat-each=3
+
+    Error: expect(locator).toBeVisible() failed
+    Locator: getByRole('button', { name: '默认工作区' })
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+6 failures out of 6, on both viewports. The cause is an ordering in `connect()`: the client
+asks for the workspace list as the socket opens and then, in the same tick, sends
+`create_session` -- and on a fresh host that is the message that creates the fallback
+workspace. The list was answered before the thing it would list existed, and `CreateSession`
+returns only `SessionCreated`, so the sidebar was never told. (The breadcrumb looked correct
+the whole time, which is why nobody had noticed: it reads the workspace name off the
+session, not off the list.)
+
+The client fix is a state-driven re-ask rather than a reordering, so it also covers a
+workspace appearing by any other route, and it asks at most once per active workspace id so
+a host that keeps answering without it cannot turn this into a request loop:
+
+    const workspaceId = session.activeWorkspaceId
+    if (!session.sessionId || !workspaceId) return
+    if (session.workspaces.some((workspace) => workspace.id === workspaceId)) return
+    if (workspaceListAskedFor.current === workspaceId) return
+    workspaceListAskedFor.current = workspaceId
+    send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
+
+An engine-side push (appending `Workspaces` to the `CreateSession` answer, which is what
+`CreateWorkspace` already does) was tried and rejected on measured cost: five WebSocket
+tests read frames positionally after `create_session` (`workspace_diff_flow.rs` alone has
+nine `next_message` reads), so the extra frame would have needed nine `let _ =
+next_message(...)` lines that each weaken an assertion. The client asks, and the protocol
+stays as it was.
+
+With the fix in, all 8 browser cases pass, and the assertion is not decorative: deleting the
+`send` line from the new effect brings the failure back at both viewports.
+
+    M  workspace row effect: send({ type: 'list_workspaces', ... }) removed
+       -> ✘ [desktop-chromium] an empty staged area is refused before the endpoint is asked
+       -> ✘ [mobile-chromium]  an empty staged area is refused before the endpoint is asked
+
+The full suite was re-run afterwards to make sure a new in-flight `list_workspaces` request
+breaks nothing that reads the sidebar: 75 passed / 6 skipped on the main config plus 8 on
+this one, with the phone-shell drawer and workspace-isolation specs included.
+
+== 5. Screenshots, actually looked at
+
+Layout was inspected at 1440x1000 and 390x844 (six captures, reviewed). The commit form at
+phone width keeps the textarea, both buttons and the note inside the panel with no
+horizontal overflow; the late-arrival state at 390 shows the draft still in the box with
+「Provider 建议：...」 under it, and the refusal state shows the placeholder
+「自己写，或点「建议提交信息」让 Provider 起草」 plus the alert text. The screenshot setting
+was flipped for the capture and restored byte-identically (`cmp` clean), so nothing in the
+committed config captures images on a green run. The layout facts are also pinned as a
+durable case rather than left to the eye: 建议提交信息, 填入建议, the textarea and 执行 Git
+操作 are each asserted to have a bounding box inside the viewport, and
+`document.documentElement.scrollWidth - window.innerWidth` must be <= 0.
+
+== 6. Self-built endpoint and throwaway repository
+
+The suite needs a host started with a Provider, and `CHAOS_PROVIDER_*` replaces the demo
+responder every other spec asserts on, so it runs under a second Playwright config that
+`e2e-runner.mjs` runs right after the first one; `npm run test:e2e` is still the single
+command, and CI needs no new job. The endpoint (`e2e/support/mock-provider.mjs`) speaks the
+wire format the shipped `HttpPromptAdapter` parses: bearer auth, `/v1/models`, SSE `data:
+{"choices":[{"delta":...}]}` frames, and each request body appended to a prompt log the
+specs read back. The repository is rebuilt per test under the ignored
+`.chaos/e2e-git-workspace/` -- one commit, one staged edit, one deliberately unstaged edit
+-- so nothing a commit test writes can land in the tracked tree.
+
+    $ cd apps/chaos-ui && npx playwright test --config playwright.git.config.ts
+
+      ✓  1 [desktop-chromium] › e2e/commit-message.pw.ts:62:1 › a suggested message fills the commit form and only an approved commit writes (979ms)
+      ✓  2 [desktop-chromium] › e2e/commit-message.pw.ts:93:1 › an empty staged area is refused before the endpoint is asked (721ms)
+      ✓  3 [desktop-chromium] › e2e/commit-message.pw.ts:104:1 › the commit form fits the screen it is shown on (838ms)
+      ✓  4 [desktop-chromium] › e2e/commit-message.pw.ts:129:1 › a suggestion that lands after the user typed is offered beside the box (856ms)
+      ✓  5 [mobile-chromium] › e2e/commit-message.pw.ts:62:1 › a suggested message fills the commit form and only an approved commit writes (1.1s)
+      ✓  6 [mobile-chromium] › e2e/commit-message.pw.ts:93:1 › an empty staged area is refused before the endpoint is asked (834ms)
+      ✓  7 [mobile-chromium] › e2e/commit-message.pw.ts:104:1 › the commit form fits the screen it is shown on (835ms)
+      ✓  8 [mobile-chromium] › e2e/commit-message.pw.ts:129:1 › a suggestion that lands after the user typed is offered beside the box (934ms)
+
+      8 passed (8.7s)
+
+The prompt the browser caused to be sent is asserted on the endpoint side, not the client
+side: exactly one `/chat/completions` call per click, `Authorization: Bearer
+sk-commit-token-0123456789`, the body containing `+第二版说明` between the two `STAGED DIFF`
+delimiters and the branch line, and `third, unstaged` absent from it.
+
+== 7. Mutations
+
+Each mutant is applied to a source, the targeted suite runs, and the source is restored and
+compared with `cmp`; the driver aborts on a restore mismatch or a non-green baseline.
+Failing test names are the ones the driver recorded, not the ones expected afterwards.
+
+    M1  staged read becomes `git diff`              → staged_diff_reports_only_what_is_staged,
+                                                       staged_diff_stops_at_the_limit_and_says_so,
+                                                       and 6 more in the group
+    M2  read limit multiplied by 8                  → staged_diff_stops_at_the_limit_and_says_so,
+                                                       a_suggestion_built_from_a_truncated_diff_says_so
+    M3  branch line renamed in the prompt           → commit_message_prompt_marks_a_truncated_diff
+    M4  empty-stage guard removed                   → empty_stage_is_named_before_the_provider_is_asked
+                                                       (and both viewports in the browser)
+    M5  fence stripping disabled                    → normalize_commit_message_removes_..._an_answer
+    M6  error code renamed to agent_failed          → commit_message_suggestion_names_the_missing_half
+    M7  dedup match arm deleted                     → does not compile (E0004): no test verdict
+    M8  truncated flag hardwired to false           → a_suggestion_built_from_a_truncated_diff_says_so
+    M9  normalisation call skipped                  → the_staged_diff_reaches_the_endpoint_..._comes_back
+    M10 this message exempted from the dedup gate   → a_replayed_suggestion_request_asks_the_provider_once
+    M11 unknown-session refusal returns nothing     → a_session_the_host_no_longer_holds_is_refused_before_anything_is_read
+    M12 no-adapter refusal relabelled as nothing    → a_host_without_a_git_adapter_refuses_rather_than_inventing_wording
+    M13 unreadable diff treated as an empty stage   → a_staged_diff_that_cannot_be_read_names_git_as_the_failure
+    T1  draft-overwrite rule always true            → fills the commit box only while it still holds
+                                                       what it held at the request (vitest), and both
+                                                       viewports in the browser
+    T2  suggestion not projected onto state         → projects a suggestion onto the commit form...,
+                                                       says when the diff behind the wording was cut short
+    T3  nothing_staged dropped from the code list   → names a refused suggestion without failing the
+                                                       turn or dropping a pending approval
+    T4  session_not_found dropped from the list     → names a refused suggestion without failing the
+                                                       turn or dropping a pending approval (vitest)
+    T5  safe_web_mode_blocked dropped from the list → the same test as T4, on the other code (vitest)
+    T6  unrelated code claimed by the commit form   → keeps waiting when the refusal was about
+                                                       something else (vitest)
+    N1  process group left alive after wait()       → a_diff_driver_background_process_does_not_outlive_the_staged_diff_read
+    S1  sidebar re-ask send removed                 → an empty staged area is refused before the
+                                                       endpoint is asked (both viewports, §4)
+
+21 mutants, 20 caught by a named test, 1 caught only by the compiler. M7 is recorded rather
+than counted: dropping a variant from that match arm makes the match non-exhaustive, so the
+run dies before any test executes and proves nothing about the replay behaviour. M10 asks
+the same question in a way that compiles -- exempt exactly this message from the dedup gate
+-- and `a_replayed_suggestion_request_asks_the_provider_once` goes red on it, which is what
+makes that test's bite real. N1 and S1 are the two properties that came out of this batch
+after the feature itself was done: §4 records S1, and §8 records N1 together with the fact
+that the first version of its test survived this same mutant by accident. M11 to M13 and T4
+to T6 are the second round, added after the full gate run found the two gaps §9 records; each
+was applied to the source the same way as the rows above, with a green baseline before and a
+green restored tree after. N0 is absent from
+this table because it is not a mutant of the shipped source -- it is the un-enrolled form this
+code had before the workspace ban on `Command::spawn` rejected it, which is a verdict from the
+lint rather than from a test (§8).
+
+== 8. A git read that can spawn, and a test that passed for the wrong reason
+
+`git diff --cached` is not a leaf process when the repository says otherwise: a
+`diff <name>.command` entry in the repo's own config, picked up by a `.gitattributes` line,
+makes git exec a program the repository chose, and that program can leave something running
+after it exits. The first version of `staged_diff()` spawned git directly. The workspace bans
+that call, so this surfaced on the build leg before any test could run. The diagnostic,
+reproduced from the shipped source by deleting the enrolled block:
+
+    $ cargo clippy -q -p chaos-engine --lib -- -D warnings
+
+    error: use of a disallowed method `std::process::Command::spawn`
+       --> crates/codegen/chaos-engine/src/lib.rs:276:14
+        |
+    276 |             .spawn()
+        |              ^^^^^
+        |
+        = note: an unenrolled child outlives its session; use xai_tty_utils::ProcessScope::enroll
+    (… 3 lines elided here: the lint-name help, the implied-by note, the override help)
+
+    error: could not compile `chaos-engine` (lib) due to 1 previous error
+
+The shape it was fixed into is the one `ProcessTerminalAdapter::run` in the same file already
+uses -- start the child in a process group of its own, enroll it in a scope, and kill that
+group once `wait()` has returned:
+
+    xai_tty_utils::detach_std_command(&mut builder);
+    let process_scope = xai_tty_utils::ProcessScope::new();
+    #[allow(clippy::disallowed_methods)] // reaped by wait() below and kill_all() after it
+    let mut child = builder.spawn().map_err(|error| format!("无法启动 git: {error}"))?;
+    let _process_group = match process_scope.enroll_std(&child) {
+        Ok(group) => group,
+        Err(error) => { let _ = child.kill(); let _ = child.wait(); return Err(…); }
+    };
+    (… 15 lines elided here: the comment about draining, and taking and draining both pipes)
+    let status = child.wait().map_err(|error| format!("等待 git 失败: {error}"))?;
+    process_scope.kill_all();
+
+`ProcessScope` has no `Drop` impl, so that last line is a call someone has to write, not
+something the borrow checker guarantees, and the `allow` carries the reason the ban asks for.
+
+What was missing was a test for it.
+`a_diff_driver_background_process_does_not_outlive_the_staged_diff_read` writes a driver
+script that backgrounds `sleep 120` and records its pid, points the repository's own diff
+config at it (`diff.chaos.command`, selected by `*.txt diff=chaos`), calls the real
+`staged_diff()`, then asks `/proc/<pid>/stat` whether that pid is still alive -- a missing
+`/proc` entry is death and a `Z` state is not life. It is `#[cfg(target_os = "linux")]` for
+exactly those two reasons, and the reason is written into its row in
+`scripts/ci/platform-gated-tests.tsv`, which is what keeps the ledger gate green:
+
+    $ python3 scripts/ci/test-platform-gated-tests.py
+    (… 2 lines elided here: the per-test progress dots and the timing rule line)
+    Ran 42 tests in 15.038s
+
+    OK
+
+    $ python3 scripts/ci/platform-gated-tests.py --quiet --check-baseline \
+        scripts/ci/platform-gated-tests.tsv --max-unreviewed 1106 --max-blind-windows 74 \
+        --max-blind-macos 11 --max-assumption-free 427
+
+    (no output, exit code 0)
+
+The first version of that test was vacuous, and the only thing that found it was a mutant
+surviving. With `process_scope.kill_all();` deleted it went green, after 120 seconds:
+
+    $ cargo test -q -p chaos-engine --lib -- a_diff_driver
+
+    running 1 test
+    test tests::a_diff_driver_background_process_does_not_outlive_the_staged_diff_read has been running for over 60 seconds
+    .
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 202 filtered out; finished in 120.04s
+
+Nothing was reaped in that run; the sleep simply ran out its own 120 seconds. The reason the
+read could take that long was the driver script rather than the code under test: `sleep 120 &`
+inherits git's stdout, which is the write end of the very pipe this read drains, so the reader
+thread saw no EOF until the sleep exited on its own. The lifetime of the read was bounded by
+the leaked process instead of by the reaping, and by the time the test looked, the pid was
+gone for a reason unrelated to `kill_all()`. Redirecting the background process's own
+descriptors (`sleep 120 >/dev/null 2>&1 &`) takes the pipe out of the picture:
+
+    $ cargo test -q -p chaos-engine --lib -- staged_diff a_diff_driver
+
+    running 4 tests
+    ....
+    test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 199 filtered out; finished in 0.02s
+
+    $ cargo test -q -p chaos-engine --lib -- a_diff_driver
+
+    thread 'tests::a_diff_driver_background_process_does_not_outlive_the_staged_diff_read' (372006) panicked at crates/codegen/chaos-engine/src/lib.rs:4905:9:
+    pid 372022 outlived the staged-diff read; nothing reaped the driver's process group
+    (… 6 lines elided here: the backtrace note, two blank lines and the failures list)
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 202 filtered out; finished in 5.06s
+
+0.02 s green against 5.06 s red is the pair that makes the assertion worth keeping; 120 s on
+both sides was not a test. Each mutated source was restored and compared with `cmp`
+(byte-identical after all three runs), and the process the vacuous run leaked was a `sleep`
+that ended on its own -- a scan of `/proc` afterwards found no process from any of these runs
+still alive.
+
+== 9. Two gaps the full gate found that a filtered run did not
+
+Before shipping, the batch went through `bash scripts/verify-gates.sh --with-build`. The
+engine and web legs of this feature had been run earlier with a name filter -- `cargo test -p
+chaos-engine --lib -- commit` and the commit-suggestion socket test by name -- and both had
+been green, which left the impression that the touched crates were covered. They were not.
+Adding a protocol message breaks two guards that carry no word of the feature in their names,
+and the whole-target run is the only thing that said so:
+
+    $ bash scripts/verify-gates.sh --with-build
+    (elided above: the doctest summaries of the crates that passed, printed before the verdict)
+
+    error: 2 targets failed:
+        `-p chaos-engine --lib`
+        `-p xai-grok-web --test host_info_flow`
+    PASS  GUI protocol types
+
+    FAILED gates: cargo test
+    39 gate(s) run, 0 skipped, 1 failed
+
+The first failure was in the guard whose whole job is to be told about a new message. The
+refusal list had gained `suggest_commit_message`, but the sample list the guard asks about had
+not:
+
+    $ cargo test -p chaos-engine --lib
+
+    thread 'tests::safe_mode_policy_never_refuses_the_read_only_surface' (672379) panicked at crates/codegen/chaos-engine/src/lib.rs:5526:21:
+    suggest_commit_message is listed as refused but no client message carries that tag
+
+    test result: FAILED. 202 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.12s
+
+`every_client_message()` needed the new variant and `assert_eq!(tags.len(), 33, ...)` needed
+to become 34. Without that sample the guard is not merely red -- it is the specific kind of
+green that means nothing: a refusal named in the list, with no message in the test corpus
+carrying that tag, would leave `safe_mode_allows` untested for the one message this batch
+added.
+
+The second failure was the same shape one crate over. `host_info_flow.rs` holds a sample per
+protocol tag and drives each one through a real safe-mode socket:
+
+    $ cargo test -p xai-grok-web --test host_info_flow
+
+    thread 'every_protocol_message_has_a_sample_to_ask_with' (668601) panicked at crates/codegen/xai-grok-web/tests/host_info_flow.rs:337:5:
+    these protocol messages have no sample here, so the safe-mode list was never asked about them: ["suggest_commit_message"]
+
+    test the_refusal_list_matches_what_the_socket_actually_refuses ... FAILED
+    thread 'the_refusal_list_matches_what_the_socket_actually_refuses' (668603) panicked at crates/codegen/xai-grok-web/tests/host_info_flow.rs:366:51:
+    covered by the other test
+
+    test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+The second panic is the interesting one: it is not an assertion about safe mode at all, it is
+`.expect("covered by the other test")` firing because the first test's premise had stopped
+holding. Both went green once the sample was added, and adding it is what makes the
+socket-level claim about this message real rather than intended -- that test asserts, per
+protocol message, that the code coming back over the socket is exactly
+`safe_web_mode_blocked`.
+
+Reading those two failures led to a third gap, in the browser this time. `session.ts` ends the
+waiting state on six error codes; the codes this handler can actually answer with are eight. A
+safe-mode host -- which is the case the socket test above refuses message by message --
+answers `safe_web_mode_blocked`, and a host that was restarted answers `session_not_found`.
+Neither code was in the list, so the commit form would have sat on 建议生成中 forever: the
+refusal is the only answer that button ever gets, and there is no suggestion coming after it.
+The list is now a named constant, `commitSuggestionFailureCodes`, with all eight codes and a
+note about why each belongs. On the engine side three refusals had no test at all -- an
+unknown session id, an engine with no Git adapter, and a staged diff that cannot be read (the
+repository removed from under a running host). Each now has one, so the engine group is 14
+tests, and each is mutation-proven below.
+
+The six mutants were driven as §7 describes -- applied to the source, the named test run, the
+source restored and compared with `cmp`, driver aborting on a non-green baseline:
+
+    summary: [('E1', 'KILLED'), ('E2', 'KILLED'), ('E3', 'KILLED'), ('U1', 'KILLED'),
+    ('U2', 'KILLED'), ('U3', 'KILLED')]
+    survivors: none
+
+E1 drops the unknown-session refusal to an empty answer; U3 puts an unrelated code into the
+list, so the claim being tested is the negative half -- a refusal the commit form did not ask
+about must leave the request pending and settle the turn instead. Baseline was green before
+the first mutation and green after the last restore; every restore compared byte-identical.
+The restored runs:
+
+    $ cargo test -p chaos-engine --lib
+    test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.12s
+
+    $ cargo test -p xai-grok-web --test host_info_flow --test commit_message_flow
+    test result: ok. 3 passed; 0 failed; ... (commit_message_flow)
+    test result: ok. 4 passed; 0 failed; ... (host_info_flow)
+
+    $ npx vitest run src/session.test.ts
+    Tests  52 passed (52)
+
+What this section is really recording is a rule about runs, not about this feature: the two
+guards that caught the gaps are whole-target tests with names that share no substring with the
+feature under change, so `--lib -- commit` was a green light that meant nothing. A filtered
+run proves the tests it filtered in.
+
+== 10. A refusal that names no request, and the panels left waiting for one
+
+Safe Web Mode is a host started with `CHAOS_SAFE_WEB_MODE` set to anything other than `0` or
+`false`. It refuses twenty client messages -- every workspace and host mutation, all five
+attachment messages, `list_workspaces`, `get_git_status`, `propose_terminal`,
+`propose_git_mutation`, `validate_provider`, `suggest_commit_message` -- from the socket loop
+in `crates/codegen/xai-grok-web/src/lib.rs`, before the engine is asked anything:
+
+    if safe_web_mode && !safe_mode_allows(&message) {
+        let event = ServerMessage::Error {
+            code: "safe_web_mode_blocked".into(),
+            message: "Safe Web Mode 禁止此操作".into(),
+        };
+
+That answer carries no `session_id` and nothing naming the message it refused. `Error` has
+exactly those two fields in the protocol mirror, so no client can route it back to a request;
+a reducer can only ask which panel is still waiting. The previous round had taught the commit
+form to read the code, and no other panel had been given the same treatment.
+
+The strand that lost was found by writing the assertions first and then taking the fix away,
+on the shipped path: `apps/chaos-ui/e2e/commit-message-safe-mode.pw.ts` starts its own host on
+an ephemeral port (the mode is a process-level variable, so it cannot be shared with the host
+the other commit spec drives), and the driver ran it green on both viewports, replaced the
+three pieces of the fix with their pre-fix forms, rebuilt `dist`, and ran it again:
+
+    $ npx playwright test --config playwright.git.config.ts commit-message-safe-mode \
+        --project=desktop-chromium --project=mobile-chromium
+
+    Running 6 tests using 1 worker
+
+      ✘  1 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button (5.4s)
+      ✘  2 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops showing work in progress (5.4s)
+      ✘  3 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same endpoint (5.4s)
+      ✘  4 [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button (5.4s)
+      ✘  5 [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops showing work in progress (5.5s)
+      ✘  6 [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same endpoint (5.5s)
+
+      1) [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button
+
+        Error: expect(locator).toHaveText(expected) failed
+
+        Locator:  getByTestId('session-status')
+        Expected: "安全模式已拒绝"
+        Received: "请求错误"
+        Timeout:  5000ms
+
+        Call log:
+          - Expect "toHaveText" getByTestId('session-status') with timeout 5000ms
+          - waiting for getByTestId('session-status')
+            14 × locator resolved to <span role="status" aria-live="polite" data-testid="session-status" class="session-status-badge">请求错误</span>
+               - unexpected value "请求错误"
+    (… 234 lines elided here: five more failures of the same shape, each with its
+    screenshot, error-context and trace attachment paths)
+      6 failed
+        [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button
+        [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops showing work in progress
+        [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same endpoint
+        [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button
+        [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops showing work in progress
+        [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same endpoint
+
+Nothing had been clicked when those six went red, which is what made it a defect rather than a
+gap in coverage. The page sends `list_workspaces` when the socket opens and sends it a second
+time from an effect once the session exists, so the first two messages of every browser
+session on this host are refused. The reducer's generic error branch turned that into 请求错误 on
+the badge and settled the turn through `recordTurnOutcome`, so a conversation nobody had
+prompted was recorded as a failed one. The branch now ends with a case that claims the refusal
+only when no panel is waiting:
+
+    if (refusedBySafeMode) return { ...state, status: '安全模式已拒绝' }
+
+and the four waiting panels -- upload, suggestion, Git, terminal -- each claim their own frame
+ahead of it. `gitLoading` and `terminalLoading` join `upload` and `commitSuggesting` as things
+`safe_web_mode_blocked` can satisfy, because the host refuses message by message: two requests
+in flight means two refusals, and the frame order decides who hears which.
+
+Two of the three tests then read the disk, because a refusal the panel reports is still only a
+client-side claim. The refused terminal command is `touch refused-by-safe-mode.txt` and the
+assertion is that the file does not exist; the refused upload is a `refused.txt` whose bytes
+the workspace must not contain; both tests end on the endpoint's prompt log being empty and on
+`git log -1 --format=%s` still reading `base`. The third test is the control that stops those
+read-backs from being a story about a dead host: a prompt is allowed on the same socket, and
+the same self-built endpoint answers it -- the endpoint the suggestion was refused from is the
+one that replies.
+
+The spec also pins the tab-open behaviour, which is where the second strand had been hiding:
+`goToTab('git')` calls `refreshGitStatus()` in `apps/chaos-ui/src/main.tsx`, so the first
+thing the commit form has to survive is a status read nobody asked for:
+
+    await expect(gitAlert(page, 'Git 请求失败')).toContainText(refusal)
+    await expect(gitPanel(page).getByRole('status')).toHaveCount(0)
+
+Writing those two lines surfaced a Playwright strict-mode violation: the panel can hold two
+`role=alert` elements at once, the refused status read and a refused suggestion. The alert
+locator in `apps/chaos-ui/e2e/support/commit-form.ts` therefore takes an optional text filter,
+and that module now holds the repository fixture and every locator both commit specs share --
+a copied fixture drifts and stays green.
+
+== 11. Proving the attribution claims, at the reducer and in the browser
+
+Five mutants over `apps/chaos-ui/src/session.ts`, driven against `npx vitest run
+src/session.test.ts` in the same order as §7: green baseline first, mutant applied to the
+source, run, restore, `cmp` against the saved copy.
+
+    baseline:       Tests  59 passed (59)
+    M1 git status stays 处理中 when the mode refused it: killed by
+        answers each refused request with its own refusal, one panel at a time
+        ends the Git request the mode refused instead of leaving it 处理中
+    M2 terminal command stays 执行中 when the mode refused it: killed by
+        answers each refused request with its own refusal, one panel at a time
+        ends the terminal command the mode refused
+    M3 an unmatched refusal falls through to the generic error again: killed by
+        leaves a finished attachment as it is when the refusal was about something else
+        names the mode when nothing was waiting, without settling the turn it did not cause
+    M4 the fallback runs before any panel got its answer: killed by
+        answers each refused request with its own refusal, one panel at a time
+        ends the Git request the mode refused instead of leaving it 处理中
+        ends the terminal command the mode refused
+        fails the attachment the mode refused to take
+        names a refused suggestion without failing the turn or dropping a pending approval
+    M5 the refusal is reported as 请求错误 again: killed by
+        leaves a finished attachment as it is when the refusal was about something else
+        names the mode when nothing was waiting, without settling the turn it did not cause
+    restored:       Tests  59 passed (59)
+    summary: all KILLED
+
+M4 is the mutant that guards an order rather than the presence of a branch: with the fallback
+ahead of the attributions, the first branch wins the frame and five named tests go red.
+`terminal_failed` keeps its own test as the negative half -- a code naming the terminal must
+not be allowed to clear the Git panel's wait.
+
+Two more, browser-side, with `dist` rebuilt from the mutated source each time and the spec run
+against the rebuilt host. The driver pinned one project here to keep each verdict cheap; the
+reproduction in §10 and the suite below both run the spec on both viewports.
+
+    == A git attribution removed: exit 1
+       ✘  1 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freez
+       ✘  2 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops s
+       ✓  3 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same en
+       Error: expect(locator).toContainText(expected) failed
+       Expected substring: "Safe Web Mode 禁止此操作"
+       Timeout: 5000ms
+       Error: element(s) not found
+       > 111 |   await expect(gitAlert(page, 'Git 请求失败')).toContainText(refusal)
+       2 failed
+       1 passed (13.8s)
+    == B terminal attribution removed: exit 1
+       ✓  1 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freez
+       ✘  2 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops s
+       ✓  3 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same en
+       Error: expect(locator).toContainText(expected) failed
+       Expected substring: "终端执行失败：Safe Web Mode 禁止此操作"
+       Timeout: 5000ms
+       Error: element(s) not found
+       > 160 |     await expect(terminal.getByRole('alert')).toContainText(`终端执行失败：${refusal}`)
+       1 failed
+       2 passed (8.6s)
+    restored byte-identical: True
+    rebuild after restore: ok
+    spec after restore: 3 passed (3.1s)
+
+Both mutants fail on an alert that never appeared. That is the defect's real shape: the panel
+keeps waiting for a reply that will not arrive, so the text is not merely wrong, it is absent,
+and 「Git 请求处理中…」 stays on screen with 执行 Git 操作 disabled.
+
+The full browser suite, both configs and both viewports, exit code 0:
+
+    $ npm run test:e2e
+
+    Running 81 tests using 1 worker
+    (… 91 lines elided here: the other specs of the first config, and the 6 skipped
+    drawer cases that need a wider harness)
+      6 skipped
+      75 passed (1.5m)
+    Running 14 tests using 1 worker
+    (… 3 lines elided here: a blank line and two NO_COLOR warnings)
+      ✓   1 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button (742ms)
+      ✓   2 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops showing work in progress (785ms)
+      ✓   3 [desktop-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same endpoint (640ms)
+    (… 6 lines elided here: the four commit-form cases on desktop and two warning
+    lines)
+      ✓   8 [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:123:1 › a refused suggestion ends the wait instead of freezing the button (800ms)
+      ✓   9 [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:145:1 › every refused panel reports the refusal and stops showing work in progress (891ms)
+      ✓  10 [mobile-chromium] › e2e/commit-message-safe-mode.pw.ts:179:1 › what Safe Web Mode allows still reaches the same endpoint (567ms)
+    (… 5 lines elided here: the four commit-form cases on the mobile viewport and a
+    blank line)
+      14 passed (13.0s)
+
+The commit form therefore stands at 2 spec files, 7 cases, 14 browser cases across both
+viewports. `npx vitest run` is 123 tests in 9 files (59 in
+`apps/chaos-ui/src/session.test.ts`, 11 in `apps/chaos-ui/src/attachments.test.ts`) and `npm
+run typecheck` is clean.
+
+One red run in this batch was caused by the harness rather than the product, and is recorded
+because it reads like a product failure from the outside: `npm run test:e2e` exited 1 with an
+empty log. A second runner had been started while the first was still alive. Each picks a free
+port, and neither knows about `.chaos/e2e-git-workspace/` or the endpoint's prompt log, which
+both configs share, so each read a staged area and a prompt log belonging to the other run.
+The suite is sequential inside one invocation (`e2e-runner.mjs` runs one config after
+another); two invocations are not sequential with respect to each other, and
+`apps/chaos-ui/README.md` now says so along with the `npm run build` that three of the specs
+quietly require.
+
+== 12. What this does not cover
+
+The Provider on both sides of every test here is self-built and answers with fixed text, so
+nothing in this batch measures suggestion *quality*; the guarantee is about the plumbing --
+what is read, what is sent, what is stripped, and what is never executed. A truncated diff is
+announced to the model and to the user, but the wording is still derived from the first 24 KiB
+only. The suggestion is one request per click with no streaming into the box, so a slow
+endpoint shows 建议生成中 until the answer lands; the hold-file branch proves the waiting
+state and the late-arrival branch, not any particular timeout (there is none beyond the
+endpoint's own). Provider configuration is still host-environment only -- the GUI
+configuration form and keychain storage remain open rows. And the engine still answers
+`CreateSession` with `SessionCreated` alone when it creates the fallback workspace, which is
+now handled by the client re-asking rather than by the host pushing; a future client that does
+neither will show the same empty sidebar. The reaping test in §8 is Linux-only by
+construction -- it reads `/proc` and runs a `sh` script -- so on macOS and Windows the detach,
+enroll and `kill_all()` calls still run but nothing there reports a verdict on them; those two
+CI jobs compile the crate and run the other thirteen tests in the group.
+
+Nothing here tests a refusal that arrives while two requests are in flight and expects the
+second panel to hear about the second one, because the wire cannot support that promise:
+`ServerMessage::Error` has a code and a message, no request id, and Safe Web Mode answers from
+the socket before the engine sees a message at all. Attribution is therefore by in-flight flag
+plus code, and when two refused requests are outstanding at the same instant, the order of the
+reducer's branches decides which panel claims the first frame. The reducer test 'answers each
+refused request with its own refusal, one panel at a time' pins what is actually promised --
+every waiting panel eventually gets a frame, and none of them waits forever. Real per-request
+correlation would be a protocol change (a field on `Error`, plus request bookkeeping in
+`apps/chaos-ui/src/main.tsx`) and is not attempted in this batch.

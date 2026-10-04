@@ -17,6 +17,13 @@ export const collapseButton = (page: Page) => page.getByRole('button', { name: '
 export const backdrop = (page: Page) => page.getByTestId('sidebar-backdrop')
 export const workspaceButton = (page: Page, name: string) => page.locator('button[data-testid^="workspace-"]').filter({ hasText: name })
 
+/**
+ * One of the header tabs, scoped to the header. A panel control named 终端 or Git
+ * exists inside the panel that tab opens, so an unscoped locator could silently
+ * drive the wrong element.
+ */
+export const headerTab = (page: Page, name: RegExp | string) => page.locator('header.conversation-header').getByRole('button', { name })
+
 export async function isCompact(page: Page) {
   return page.evaluate((query) => window.matchMedia(query).matches, COMPACT_QUERY)
 }

@@ -21,6 +21,13 @@
 /.chaos/playwright-results/
 /test-results/
 
+# State the Git/commit-form browser suite generates: a throwaway repository it
+# commits inside, and the prompt log of the local inference endpoint it starts.
+# Both are machine-local; a commit test that wrote into the tracked tree would
+# dirty the repository it is testing.
+/.chaos/e2e-git-workspace/
+/.chaos/e2e-provider/
+
 # Windows-path leaked temp artifacts (accidental redirect targets)
 # The colon-looking char is U+F03A (PUA), produced by some Windows shell
 # quirk that replaced ':' when a Windows path became a filename.

@@ -17,6 +17,7 @@ import {
   describeUpload,
   finalizeAttachmentMessage,
   isUploadFailure,
+  uploadIsInFlight,
   validateAttachmentMessage,
   type UploadStatus,
 } from './attachments'
@@ -161,6 +162,19 @@ describe('attachment upload framing', () => {
     expect(isUploadFailure('attachment_rejected', 'cancelled')).toBe(false)
     expect(isUploadFailure('attachment_rejected', undefined)).toBe(false)
     expect(isUploadFailure('git_failed', 'uploading')).toBe(false)
+  })
+
+  it('keeps the upload controls locked only while the host still has work to do', () => {
+    // 上传附件 is disabled and 取消上传 is offered on this predicate, so a status the
+    // host has finished with has to release both -- otherwise a refused upload
+    // leaves the form stuck on a transfer nobody is running.
+    for (const status of ['validating', 'beginning', 'uploading', 'awaiting_approval'] satisfies UploadStatus[]) {
+      expect(uploadIsInFlight({ status })).toBe(true)
+    }
+    for (const status of ['done', 'failed', 'cancelled'] satisfies UploadStatus[]) {
+      expect(uploadIsInFlight({ status })).toBe(false)
+    }
+    expect(uploadIsInFlight(undefined)).toBe(false)
   })
 
   it('describes every state the host can leave an upload in', () => {

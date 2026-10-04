@@ -46,6 +46,44 @@ cargo run -p xai-grok-web
 
 生产静态部署可设置 `CHAOS_WEB_ASSETS_DIR=/path/to/vite-dist`，由 Web binary 提供该目录资产并对未知页面路径回退 `index.html`；`/api`、`/health`、`/ws` 始终使用后端受保护路由。静态目录支持 gzip/Brotli 预压缩协商、按资源字节生成 ETag 与条件请求；资产目录仍需显式配置，release pipeline/内嵌 assets 与 CDN 缓存失效策略尚未接线。
 
+## 浏览器端到端测试
+
+```sh
+cargo build --locked -p xai-grok-web --bin chaos-web
+npm ci
+npx playwright install --with-deps chromium
+npm run build
+npm run test:e2e
+```
+
+`npm run build` 是必需的：`static-host.pw.ts`、`reconnect-snapshot.pw.ts` 与
+`commit-message-safe-mode.pw.ts` 三份规格自己拉起宿主，用
+`CHAOS_WEB_ASSETS_DIR` 指向 `dist`，所以它们量的是构建产物而不是 Vite dev server。
+`npm run test:e2e` 依次跑两份 Playwright 配置，端口由 `e2e-runner.mjs` 现场分配，
+所以一条命令就是全量。同时只跑一条：两份配置共用同一份 git 工作区与端点的 prompt
+日志，端口各自动态分配，文件系统不会，两个 runner 并发时各自读到的暂存区与日志都不
+属于自己那一轮。两份配置分开是因为宿主的环境变量是进程级的：
+
+- `playwright.config.ts`：不带 Provider 启动宿主，走内置的演示应答，绝大多数
+  规格（对话、附件、审批、差异回滚、手机端外壳、可达性扫描）都在这里。
+- `playwright.git.config.ts`：提交信息那两份规格专用。它额外拉起
+  `e2e/support/mock-provider.mjs`（自建的 OpenAI 兼容端点，SSE 增量、要求
+  Bearer Key、把收到的 prompt 逐条落盘供规格断言），并用
+  `CHAOS_WORKSPACE_ROOT` + `CHAOS_PROVIDER_*` 启动宿主。若把这两个变量加进第一
+  份配置，其余规格断言的演示应答就没了。`commit-message.pw.ts` 在这里的宿主上跑
+  通建议与提交；`commit-message-safe-mode.pw.ts` 另用一个临时端口自己拉起
+  `CHAOS_SAFE_WEB_MODE=1` 的宿主（模式是进程级环境变量，两份规格没法共用同一个
+  进程），逐个点被拒的控件，断言每个面板都说明被拒并且不再显示「处理中」。
+
+两份规格共用 `e2e/support/commit-form.ts` 准备的仓库与控件定位，也共用
+`.chaos/e2e-git-workspace/`：每次运行都在里面重建一个真实 git 仓库
+（一次 commit + 一处已暂存改动），提交动作真的会写 `git log`，端点收到的 prompt
+写在 `.chaos/e2e-provider/prompts.jsonl`；两者都不进版本库。可用
+`CHAOS_E2E_GIT_WORKSPACE`、`CHAOS_E2E_PROVIDER_STATE_DIR`、
+`CHAOS_E2E_BACKEND_PORT`、`CHAOS_E2E_UI_PORT`、`CHAOS_E2E_PROVIDER_PORT` 覆盖位置与
+端口；不设置时端口自动分配。只想跑这一组时可显式指定配置：
+`npx playwright test --config playwright.git.config.ts`。
+
 ## 性能采集
 
 本地可执行 `CHAOS_PERF_REPORT_DIR=/path/to/reports npm run perf:collect` 生成 JSON 性能报告；默认在可用本地端口启动 Vite 和 Playwright Chromium。输出目录为必填项。要让 UI 连接实际 Web Engine，需另行运行 `cargo run -p xai-grok-web` 并设置 `CHAOS_PERF_BASE_URL` 指向经过 Vite 代理的 UI 页面；报告会记录 Web host URL 是否由调用方提供，但不会自动启动 Web host。先运行 `npm run build`。`CHAOS_PERF_SAMPLES` 可设置页面就绪采样数（默认 20，范围 1–100）。

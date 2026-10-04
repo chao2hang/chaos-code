@@ -2,6 +2,146 @@
 
 ## Unreleased
 
+### 修复：安全模式拒掉的请求由等着它的那个面板认领，界面不再停在「处理中」，也没被记成一次失败的对话
+
+Safe Web Mode 在 socket 层就把碰工作区的消息拦下，回的那一句只有 `safe_web_mode_blocked` 与「Safe Web
+Mode 禁止此操作」：不带 session_id，也不说被拦的是哪条消息。上一轮把提交信息建议的等待态接上了这个码，
+其余面板没接。新写的 `e2e/commit-message-safe-mode.pw.ts` 第一轮就红在页面自己：连接时它发一次
+`list_workspaces`，会话建好之后那个 effect 再发一次，这两条在这个模式里都该被拒，于是用户还什么都没做，
+徽标已经停在「请求错误」，而这一轮根本没人 prompt 过的对话还被 `recordTurnOutcome` 结算成了失败。另外
+两处是先把断言写下、再把归因删掉在浏览器里逼出来的：切到 Git 页本身就会发一次状态读取（ `goToTab` 里那
+句 `refreshGitStatus()`），被拒之后「Git 请求处理中…」就一直挂着、「执行 Git 操作」永久 disabled；终
+端那条 `propose_terminal` 同样在等一个再也不会来的回答。
+
+现在错误分支先问「谁还在等」：上传、建议、Git、终端各自认领自己那一条， `safe_web_mode_blocked` 走的是
+同一条归因，因为宿主是按消息逐条拒的，两条在飞就是两帧，谁在飞谁认下一帧；把兜底那句挪到归因之前，
+`ends the Git request the mode refused…` 与 `fails the attachment…` 都会红，这个次序是有测试看着的。
+没有面板在等时它落到新增的最后一句：徽标说「安全模式已拒绝」，不动 `busy`、不结算 turn、不写
+`turnOutcomes`。附件这一侧核对之后发现本来就没坏： `safe_web_mode_blocked` 早就在
+`ATTACHMENT_ERROR_CODES` 里，于是把顺手加上去的那个多余条件删了，只把 `main.tsx` 里两处手写的
+`['done', 'failed', 'cancelled']` 收成 `attachments.ts` 的 `uploadIsInFlight()`：「上传附件」的
+disabled 与「取消上传」的显隐现在读同一个判据。
+
+reducer 多 7 测（Git、终端、没人在等、已完成的附件不被牵连、两帧一人一帧、 `terminal_failed` 不许串
+到 Git 面板）， `attachments.test.ts` 多 1 测锁住 `uploadIsInFlight()` 的三种终态；变异 5 个全部死在
+被点名的测试上，把整套修复整个换回修之前的形状，那 3 条用例在两个视口上一起红在徽标那句「请求错误」
+上，还原之后两端全绿。浏览器侧新增 3 条用例：另起一个 `CHAOS_SAFE_WEB_MODE=1` 的宿主（模式是进程级环
+境变量，跟另一份规格共用不了同一个进程），逐个点被拒的控件，然后回读磁盘——被拒的
+`touch refused-by-safe-mode.txt` 没有落盘、被拒的附件没有进工作区、端点的 prompt 日志是空的、
+`git log` 还是 `base`；最后一条用例确认这不是宿主死了：同一条自建端点在允许的路径上照常把这轮对话答
+完。两份提交规格共用的仓库准备与控件定位收进 `e2e/support/commit-form.ts`，复制粘贴的那份会各自漂移
+还照样绿。e2e 的前置命令补上了 `npm run build`：自起宿主的三份规格读的都是 `dist`，CI 那条构建步骤的
+注释原先只提到一份。两处把拒答条数写死在注释里的话也改成了不写数——清单加进
+`suggest_commit_message` 之后那个数字就已经错了。
+
+（2026-10-05；`apps/chaos-ui/src/session.ts`、`apps/chaos-ui/src/session.test.ts`、
+`apps/chaos-ui/src/attachments.ts`、`apps/chaos-ui/src/attachments.test.ts`、
+`apps/chaos-ui/src/main.tsx`、`apps/chaos-ui/e2e/commit-message-safe-mode.pw.ts`、
+`apps/chaos-ui/e2e/support/commit-form.ts`、`apps/chaos-ui/e2e/support/shell.ts`、
+`apps/chaos-ui/e2e/support/paths.ts`、`apps/chaos-ui/playwright.git.config.ts`、
+`apps/chaos-ui/README.md`、`docs/ci-test-debt.md`、`.github/workflows/ci.yml`、
+`crates/codegen/chaos-engine/src/lib.rs`、`crates/codegen/xai-grok-web/src/lib.rs`、
+`docs/verification/commit-message-suggestion-2026-10-04.log`）
+
+### 改进：Git 页的提交信息可以由 Provider 起草，但真去提交的仍然只有你两次确认的那一句
+
+`GitAdapter` 原本只有 `stage`/`unstage`/`commit`/`checkout_branch`/`discard` 这五个写侧方法，仓库里没
+有任何东西读得到「这次提交会记录什么」，所以 `TODO.md` 那行写的是 AI 提交信息建议与 UI 编辑表单尚未实
+现。现在 `staged_diff()` 起 `git diff --cached --no-color`，stdout 与 stderr 各起一条线程排空（管道写
+满时 git 会堵住，它后面那个 `wait()` 就再也不返回），读上限 `COMMIT_DIFF_LIMIT` = 24 KiB，超了就补一行
+`[diff truncated]` 并把 `truncated` 一路带到浏览器面板——面板文案是「建议可能只覆盖了其中一部分」，不
+是沉默地用半截差异。差异在 prompt 里被 `---START STAGED DIFF---` 与 `---END STAGED DIFF---` 包住，当前
+分支作为上下文一起给。新方法是带默认实现的 trait 方法，那些只断言写侧动作的夹具照旧编译，答案是「这个
+adapter 读不了暂存差异」而不是编一个出来。
+
+这条读取不是叶子进程：仓库自己的 config 里一条 diff 驱动配置（`diff.chaos.command` 这种键名），配上
+`.gitattributes` 里一行 `*.txt diff=chaos`，就能让 git 去执行一个由仓库挑的程序，而那个程序退出时可能留下
+后台进程。所以 `staged_diff()` 起进程的方式跟同文件里的终端 adapter 一致：`detach_std_command` 让 git 进自
+己的进程组，`ProcessScope::enroll_std` 把它登记进去，`wait()` 回来之后 `kill_all()` 收掉整组，那句
+`#[allow(clippy::disallowed_methods)]` 按禁令的要求带着理由。`ProcessScope` 没有 `Drop` 实现，最后那一行是
+必须有人自己写的调用，不是借用检查器兜底的性质。第一次把这件事说出来的也不是测试，而是 `clippy.toml` 对
+`Command::spawn` 的禁令：直接 spawn 的那一版先红在编译腿，一条测试都没跑。测试是随后补的，而它自己先是空转
+的——第一版让驱动脚本里的后台 `sleep 120` 继承了 git 的 stdout，也就是这条读取正在排空的那根管道的写端，
+于是这次读取的时长被泄漏出去的进程决定，而不是被回收它的代码决定，把 `kill_all()` 删掉它照样绿，只是要走满
+120 秒。给那个后台进程的重定向补上之后，基线 0.02 秒绿，同一个变异 5.06 秒红。
+
+模型爱把答案包起来：围栏、bullet、「这是建议：」。那些东西原样进 `git commit -m` 就是垃圾，所以
+`normalize_commit_message` 剥掉代码围栏行、前导空行、一条不超过 40 字节且以 `:` 或 `：` 结尾的标签行、
+bullet 与冒号前缀、首尾引号，其余全留（Provider 认为值得写的正文被删掉，比留一行你能自己删的说明更
+糟），最后按字符边界在 600 字节处截。两端都是真的包与解：浏览器侧自建端点回三段围栏 SSE，Rust 侧
+`set_response` 也是围栏文本，而两边断言的都是不含围栏的那一句——把归一化那一步跳过，红的是 WebSocket
+那条测试，因为 engine 组的假 adapter 回的是纯文本。
+
+两种「这功能这里没有」分开点名，且都拦在调用端点之前：暂存区为空答 `nothing_staged`，没配 Provider 答
+`commit_suggestion_unavailable` 并写明提交信息仍可手动填写。顺序是被断言的：
+`empty_stage_is_named_before_the_provider_is_asked` 用的根本是一个没配 Provider 的 engine，却仍然期望
+`nothing_staged`；浏览器那条还去读端点自己的 prompt 日志，空着才算数。401 转成 `agent_failed` 并带上端
+点原文，只回空白的算 `commit_suggestion_empty`，两者都不会变成一条空白提交信息。
+
+建议只是措辞，不是动作：handler 只发 `Ack` 加 `CommitMessageSuggestion`、只加 `sequence`，不请求审批、
+不跑命令。测试验的是仓库而不是意图——HEAD 仍指向请求之前那个提交、`git diff --cached --name-only` 仍
+列着那个文件、事件里不许出现 `ToolApprovalRequested`；浏览器那条更往前一步，拿到建议之后再执行提交，两
+次确认之后 `git log -1 --format=%s` 记的是用户留在框里的 `chore: 我自己写的提交信息`。等待期间打过的字
+也不被覆盖：`commitDraftAcceptsSuggestion` 判定「框里还是不是按下按钮那一刻的内容」，不是就把建议旁列
+成「Provider 建议」，由「填入建议」负责填入。这条分支不靠 sleep 到达——端点看见 hold 文件就压住不回，
+规格打完自己的草稿再删文件，于是「迟到」是被构造出来的，不是等来的。
+
+端点与仓库都是自己搭的：`CHAOS_PROVIDER_*` 会替换掉其余规格赖以断言的演示应答，所以这组规格跑在第二份
+Playwright 配置里，由 `e2e-runner.mjs` 接在第一份之后，`npm run test:e2e` 仍是唯一命令，CI 不必新增
+job。仓库每个用例在 `.chaos/e2e-git-workspace/` 里重建（一次提交、一处已暂存、一处刻意未暂存），提交动
+作真的写 `git log`，端点收到的 prompt 落盘供规格回读。规格还有一条只管版式：390 与 1440 两种宽度下横向
+不滚动，编辑框、两只建议按钮与「执行 Git 操作」各自的盒都在视口内。
+
+建议按钮收到的失败答复其实有八种，UI 原本只认六种。安全模式下的宿主答 `safe_web_mode_blocked`
+——`host_info_flow` 那条测试正是逐条协议消息在真 socket 上断言这个 code 的——宿主重启之后答
+`session_not_found`。而这条按钮等的那句建议，在两种情况下根本不会来：失败答复就是它收到的唯一一条
+消息，于是它停在「建议生成中」，等一个永远不会到的东西。八种码现在收进具名常量
+`commitSuggestionFailureCodes`，旁边写着每种为何属于这里；engine 侧另有三种失败此前没有测试押上——不
+认识的 session id、没配 Git adapter 的宿主、以及仓库在宿主运行期间被删掉导致读不出暂存差异——各补一
+条，新组因此是 14 测。
+
+数字：engine 新组 14 测、真实 WebSocket 3 测、reducer 52 测（新增 6）、浏览器 4 规格 × 2 视口 = 8 例；变
+异 21 个，20 个死在被点名的测试上，其中两个是这批的副产物——删掉 `process_scope.kill_all()` 红在
+`a_diff_driver_background_process_does_not_outlive_the_staged_diff_read`（5.06 秒），删掉侧边栏那次补问的
+`send` 在桌面与手机两个视口同时红。没有判决的那一个仍然是把 `suggest_commit_message` 从去重 match 臂里删
+掉——Rust 的 match 是穷尽的，它只让编译不过，所以不记成「被杀」，改为另加一个能编译的同义变异（只把这一条
+消息豁免于去重闸门），`a_replayed_suggestion_request_asks_the_provider_once` 在它上面红，那才是那条测试真
+正的咬合。还有一笔单列在这里：被 clippy 的 `Command::spawn` 禁令拒掉的那个形态不是变异，判它的是闸门而不是
+测试。
+
+边界：两侧端点都是自建的、回固定文本，这批不度量建议写得好不好；差异被截断时模型与用户都被如实告知，但
+措辞仍然只来自前 24 KiB；一次点击一个请求，不往框里流式打字，慢端点就一直显示「建议生成中」，除端点自
+身之外没有超时；Provider 配置仍然只有宿主环境变量，GUI 配置表单与钥匙串是那两行没动的开放项。
+
+（2026-10-04；`crates/codegen/chaos-engine/src/lib.rs`、
+`crates/codegen/chaos-engine/src/protocol_schema.rs`、
+`crates/codegen/xai-grok-web/tests/commit_message_flow.rs`、
+`crates/codegen/xai-grok-web/tests/host_info_flow.rs`、`apps/chaos-ui/src/session.ts`、
+`apps/chaos-ui/src/main.tsx`、`apps/chaos-ui/e2e/commit-message.pw.ts`、
+`apps/chaos-ui/e2e/support/mock-provider.mjs`、`apps/chaos-ui/playwright.git.config.ts`、
+`docs/verification/commit-message-suggestion-2026-10-04.log`）
+
+### 修复：宿主按 `CHAOS_WORKSPACE_ROOT` 起来时，侧边栏从来不列你正待着的那个工作区
+
+这事和提交信息无关，是给新面板截图时撞见的：「工作区与会话」底下是空的，屏幕上没有任何东西说明这些面板
+指向哪个仓库。把它写成断言而不是留在像素上之后，6 次里红 6 次，桌面与手机视口都红，报的是
+`element(s) not found`。机制是 `connect()` 里的先后顺序：套接字一开先 `list_workspaces`、同一拍再
+`create_session`，而新宿主上恰恰是后者才创建那个兜底工作区——清单在它本该列出的东西存在之前就被答完
+了；`CreateSession` 又只回 `SessionCreated`，于是侧边栏再也听不到这次变化。面包屑一直显示的是对的（它
+从会话上取工作区名），这就是它活了这么久没人发现的原因。
+
+修在客户端，按状态补问一次：活动工作区不在清单里才去问，且每个 id 只问一次，免得一个「一直不答」的宿主
+把它变成请求循环。引擎侧追加 `Workspaces`（`CreateWorkspace` 本来就这么答）试过，又被否掉，代价是量过
+的：5 个 WebSocket 测试在 `create_session` 之后按位置读帧，`workspace_diff_flow.rs` 一个文件就有 9 处
+`next_message`，多一帧就要写 9 行 `let _ = next_message(...)`，每加一行都是把一条断言削薄一点。
+
+验法是先证明这条断言不装饰：把新 effect 里那行 `send` 删掉，两个视口同时红；还原后 8/8 绿。全量重跑 75
+通过 / 6 跳过（第一份配置）加 8 通过（第二份）。面板从此在屏幕上也说得出自己写的是哪个仓库，而不只是在
+面包屑里。
+
+（2026-10-04；`apps/chaos-ui/src/main.tsx`、`apps/chaos-ui/e2e/commit-message.pw.ts`、
+`apps/chaos-ui/e2e/support/shell.ts`、`docs/verification/commit-message-suggestion-2026-10-04.log`）
+
 ### 门禁：跳过编译腿的那一轮宿主门禁，从此不能替这轮改动说「过了」
 
 `45be2b00`（上一批）与 `3811e87e`（再上一批）连着两轮 CI 红在同一条 clippy 上：

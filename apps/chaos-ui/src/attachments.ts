@@ -71,6 +71,11 @@ export const FINALIZE_ERROR_CODES = ['path_invalid', 'path_escape', 'workspace_u
 
 export type UploadStatus = 'validating' | 'beginning' | 'uploading' | 'awaiting_approval' | 'done' | 'failed' | 'cancelled'
 
+/** Whether an upload is still waiting for the host to act on it. */
+export function uploadIsInFlight(upload: { status: UploadStatus } | undefined): boolean {
+  return upload !== undefined && upload.status !== 'done' && upload.status !== 'failed' && upload.status !== 'cancelled'
+}
+
 /** Does this error end the upload currently in `status`? */
 export function isUploadFailure(code: string, status: UploadStatus | undefined): boolean {
   if (!status || status === 'done' || status === 'cancelled') return false

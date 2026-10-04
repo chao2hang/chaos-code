@@ -596,8 +596,10 @@ jobs:
         working-directory: apps/chaos-ui
         run: npm ci --ignore-scripts
       - name: Build frontend assets
-        # e2e/static-host.pw.ts copies apps/chaos-ui/dist into a temp dir and
-        # serves it through chaos-web, so the built bundle is test input. This
+        # Three specs feed apps/chaos-ui/dist to a chaos-web they spawn
+        # themselves (static-host.pw.ts copies it into a temp dir,
+        # reconnect-snapshot.pw.ts and commit-message-safe-mode.pw.ts point
+        # CHAOS_WEB_ASSETS_DIR at it), so the built bundle is test input. This
         # job is separate from the `gui` job, so nothing else produces it here.
         working-directory: apps/chaos-ui
         run: npm run build

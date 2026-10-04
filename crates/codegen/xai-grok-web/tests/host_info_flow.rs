@@ -198,6 +198,10 @@ fn sample_client_message(tag: &str) -> Option<ClientMessage> {
             session_id: session,
             proposal_id: "probe".into(),
         },
+        "suggest_commit_message" => ClientMessage::SuggestCommitMessage {
+            client_msg_id: id,
+            session_id: session,
+        },
         _ => return None,
     })
 }

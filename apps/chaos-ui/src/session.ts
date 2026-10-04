@@ -58,6 +58,13 @@ export type SessionState = {
   gitMutationResult?: { operation: string; result: string }
   gitLoading: boolean
   gitError?: string
+  /** A commit message the host's Provider offered for what is staged. Filling the
+   * commit form with it is a separate, deliberate step: nothing here commits.
+   * `truncated` is the host's warning that the diff behind the wording was cut
+   * short, so the message may describe only part of the change. */
+  commitSuggestion?: { message: string; truncated: boolean }
+  commitSuggesting: boolean
+  commitSuggestionError?: string
   terminalLoading: boolean
   terminalError?: string
   settings?: { baseUrl: string | null; model: string | null; hasApiKey: boolean }
@@ -81,7 +88,15 @@ export type SessionState = {
   upload?: Upload
 }
 
-export const initialSessionState: SessionState = { messages: [], workspaceSessions: {}, workspaces: [], busy: false, status: '连接中', filesLoading: false, fileLoading: false, searchLoading: false, gitLoading: false, terminalLoading: false, toolActivities: [], turnOutcomes: {} }
+export const initialSessionState: SessionState = { messages: [], workspaceSessions: {}, workspaces: [], busy: false, status: '连接中', filesLoading: false, fileLoading: false, searchLoading: false, gitLoading: false, commitSuggesting: false, terminalLoading: false, toolActivities: [], turnOutcomes: {} }
+
+/** Whether a commit-message suggestion may replace what is in the commit form.
+ * An empty box always takes it; a box holding exactly what was there when the
+ * request went out still does. Anything else means the user typed while waiting,
+ * and their own words win -- the suggestion is offered beside the box instead. */
+export function commitDraftAcceptsSuggestion(draft: string, draftAtRequest: string | null): boolean {
+  return draft.trim() === '' || draft === draftAtRequest
+}
 
 /** The turn new events belong to: the one the newest prompt in `messages` opened, or
  * -1 while nothing has been prompted in this view. */
@@ -166,6 +181,24 @@ export function fileChangeAffectsVisibleDirectory(state: SessionState, message: 
 // keeps pointing at an id nothing answers: submit() returns early without a session
 // id, so pressing send would do nothing at all.
 const lostSessionErrorCodes = ['session_not_found', 'workspace_session_mismatch']
+
+// The single answer Safe Web Mode gives for every request it refuses. It comes from
+// the socket rather than the engine, so it carries no session id and does not name
+// the message it refused; the error branch below attributes it to whatever request
+// is in flight.
+const safeWebModeRefusalCode = 'safe_web_mode_blocked'
+
+// The codes the host uses to refuse a commit-message suggestion. Each of them is the
+// whole answer to 建议提交信息: nothing else follows, so the button has to stop on the
+// spot. session_not_found covers a host that dropped the session and
+// safe_web_mode_blocked a safe-mode host that refuses the read outright; leaving
+// either pending would freeze the button at 建议生成中 with no way to retry.
+//
+// A request is answered exactly once, so a panel that is waiting on something else
+// still has its own answer coming; where two refused requests are in flight at the
+// same time, the order of the branches below only decides which panel hears about
+// the first one.
+const commitSuggestionFailureCodes = ['session_not_found', 'workspace_unavailable', 'git_failed', 'nothing_staged', 'commit_suggestion_unavailable', 'agent_failed', 'commit_suggestion_empty', safeWebModeRefusalCode]
 
 export function sessionLossRecoveryMessage(state: SessionState, message: ServerMessage): ClientMessage | null {
   if (message.type !== 'error' || !lostSessionErrorCodes.includes(message.code)) return null
@@ -284,6 +317,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   if (message.type === 'file_contents') return { ...state, activeFile: { path: message.path, contents: message.contents }, fileLoading: false, fileError: undefined }
   if (message.type === 'search_results') return { ...state, searchResults: { query: message.query, matches: message.matches }, searchLoading: false, searchError: undefined }
   if (message.type === 'git_status') return { ...state, gitStatus: { branch: message.branch, entries: message.entries }, gitLoading: false, gitError: undefined }
+  if (message.type === 'commit_message_suggestion') return { ...state, commitSuggestion: { message: message.message, truncated: message.truncated }, commitSuggesting: false, commitSuggestionError: undefined, status: message.truncated ? '提交信息建议已生成（暂存差异被截断）' : '提交信息建议已生成' }
   if (message.type === 'settings') return { ...state, settings: { baseUrl: message.base_url, model: message.model, hasApiKey: message.has_api_key } }
   // Every row of the settings panel other than the model/provider fields is read
   // from here, so a host that never answers leaves the panel saying so instead of
@@ -310,17 +344,33 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   }
   if (message.type === 'completed' || message.type === 'cancelled') return { ...state, busy: false, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, message.type === 'cancelled' ? 'cancelled' : 'completed') }
   if (message.type === 'error') {
-    if (state.upload && isUploadFailure(message.code ?? '', state.upload.status)) return { ...state, busy: false, upload: { ...state.upload, status: 'failed', error: message.message }, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: '上传失败' }
-    const toolFailure = ['tool_unavailable', 'tool_failed', 'terminal_unavailable', 'terminal_failed', 'git_failed'].includes(message.code ?? '')
-    if (state.gitLoading && message.code === 'git_failed') return { ...state, pendingGitOperation: undefined, gitLoading: false, gitError: message.message, status: 'Git 操作失败' }
-    if (state.terminalLoading && ['terminal_unavailable', 'terminal_failed'].includes(message.code ?? '')) return { ...state, terminalLoading: false, terminalError: message.message, status: '终端执行失败' }
+    const code = message.code ?? ''
+    // Safe Web Mode refuses in the socket, before the engine sees the message, so
+    // its answer names no request and says only that the message was not passed
+    // through. It is still an answer, and every request the mode refuses is refused
+    // with these same words, so the panel waiting on one has to be told: a control
+    // left showing 处理中 is waiting for a reply that will never arrive.
+    const refusedBySafeMode = code === safeWebModeRefusalCode
+    if (state.upload && isUploadFailure(code, state.upload.status)) return { ...state, busy: false, upload: { ...state.upload, status: 'failed', error: message.message }, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: '上传失败' }
+    // A refused commit-message suggestion is about the commit form, not about the
+    // turn: it must not settle the turn as failed, nor clear a pending approval
+    // that belongs to a Git mutation the user has not resolved yet.
+    if (state.commitSuggesting && commitSuggestionFailureCodes.includes(code)) return { ...state, commitSuggesting: false, commitSuggestionError: message.message, status: '提交信息建议失败' }
+    const toolFailure = ['tool_unavailable', 'tool_failed', 'terminal_unavailable', 'terminal_failed', 'git_failed'].includes(code)
+    if (state.gitLoading && (code === 'git_failed' || refusedBySafeMode)) return { ...state, pendingGitOperation: undefined, gitLoading: false, gitError: message.message, status: 'Git 操作失败' }
+    if (state.terminalLoading && (['terminal_unavailable', 'terminal_failed'].includes(code) || refusedBySafeMode)) return { ...state, terminalLoading: false, terminalError: message.message, status: '终端执行失败' }
     // A refused 接受/回滚 keeps the preview: the refusal means the file is no longer
     // what the preview claims, which is exactly when the user still has to see it.
-    if (message.code === 'diff_failed') return { ...state, busy: false, diffError: message.message, status: '差异操作失败' }
+    if (code === 'diff_failed') return { ...state, busy: false, diffError: message.message, status: '差异操作失败' }
     if (state.filesLoading && !state.fileLoading && !state.searchLoading) return { ...state, filesLoading: false, filesError: message.message, status: '目录读取失败' }
     if (state.fileLoading && !state.filesLoading && !state.searchLoading) return { ...state, fileLoading: false, fileError: message.message, status: '文件读取失败' }
     if (state.searchLoading && !state.filesLoading && !state.fileLoading) return { ...state, searchLoading: false, searchError: message.message, status: '文件搜索失败' }
     if (state.filesLoading || state.fileLoading || state.searchLoading) return { ...state, filesLoading: false, fileLoading: false, searchLoading: false, status: '文件请求失败' }
+    // No panel was waiting, so this refused something the app asks for on its own --
+    // the workspace list it sends on connect is the usual one. Saying 请求错误 over
+    // the top of a session that works fine, and settling no turn at all as failed,
+    // would both be wrong: the mode told us why nothing happened.
+    if (refusedBySafeMode) return { ...state, status: '安全模式已拒绝' }
     return { ...state, busy: false, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: toolFailure ? '工具执行失败' : '请求错误' }
   }
   return state

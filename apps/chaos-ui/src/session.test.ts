@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyServerMessage, appendLocalPrompt, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, liveTurnKey, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
+import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, liveTurnKey, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
 import { NIL_WORKSPACE_ID, selectWorkspaceSession } from './workspace-ui'
 import type { HostInfo } from './generated/protocol'
 
@@ -593,3 +593,138 @@ describe('tool activity settlement', () => {
     expect(unrelatedProgress.toolActivities).toEqual(started.toolActivities)
   })
 })
+
+describe('commit message suggestion', () => {
+  const requesting = { ...initialSessionState, sessionId: 's1', commitSuggesting: true }
+
+  it('projects a suggestion onto the commit form without touching the transcript', () => {
+    const withApproval = { ...requesting, approval: { requestId: 'a1', tool: 'git.commit', summary: 'x', confirmationStep: 1 } }
+    const next = applyServerMessage(withApproval, { type: 'commit_message_suggestion', session_id: 's1', message: 'docs: 补写提交信息说明', truncated: false })
+    expect(next.commitSuggestion).toEqual({ message: 'docs: 补写提交信息说明', truncated: false })
+    expect(next.commitSuggesting).toBe(false)
+    expect(next.commitSuggestionError).toBeUndefined()
+    expect(next.status).toBe('提交信息建议已生成')
+    // A suggestion is wording, not a turn: nothing was proposed, and an approval
+    // the user has not answered yet stays exactly where it was.
+    expect(next.approval).toEqual(withApproval.approval)
+    expect(next.busy).toBe(false)
+  })
+
+  it('says when the diff behind the wording was cut short', () => {
+    const next = applyServerMessage(requesting, { type: 'commit_message_suggestion', session_id: 's1', message: '短', truncated: true })
+    expect(next.commitSuggestion?.truncated).toBe(true)
+    expect(next.status).toContain('截断')
+  })
+
+  it('ignores a suggestion from a session this view no longer holds', () => {
+    const next = applyServerMessage(requesting, { type: 'commit_message_suggestion', session_id: 'old-session', message: '迟到的建议', truncated: false })
+    expect(next).toBe(requesting)
+  })
+
+  it('names a refused suggestion without failing the turn or dropping a pending approval', () => {
+    for (const code of ['commit_suggestion_unavailable', 'commit_suggestion_empty', 'nothing_staged', 'agent_failed', 'git_failed', 'workspace_unavailable', 'session_not_found', 'safe_web_mode_blocked']) {
+      const before = { ...requesting, approval: { requestId: 'a1', tool: 'git.commit', summary: 'x', confirmationStep: 1 } }
+      const next = applyServerMessage(before, { type: 'error', code, message: '建议失败原因' })
+      expect(next.commitSuggesting, code).toBe(false)
+      expect(next.commitSuggestionError, code).toBe('建议失败原因')
+      expect(next.status, code).toBe('提交信息建议失败')
+      expect(next.approval, code).toEqual(before.approval)
+      expect(next.turnOutcomes, code).toEqual({})
+    }
+  })
+
+  it('keeps waiting when the refusal was about something else', () => {
+    // The list above is a claim about which codes answer this request. An error the
+    // commit form did not ask about must leave the request pending and settle the
+    // turn instead, otherwise a refusal for another panel would silently end the
+    // suggestion and show someone else's reason under 提交信息建议失败.
+    const before = { ...requesting, busy: true }
+    const next = applyServerMessage(before, { type: 'error', code: 'tool_failed', message: '别的请求失败' })
+    expect(next.commitSuggesting).toBe(true)
+    expect(next.commitSuggestionError).toBeUndefined()
+    expect(next.status).toBe('工具执行失败')
+  })
+
+  it('fills the commit box only while it still holds what it held at the request', () => {
+    expect(commitDraftAcceptsSuggestion('', '原来就有字')).toBe(true)
+    expect(commitDraftAcceptsSuggestion('   ', '原来就有字')).toBe(true)
+    expect(commitDraftAcceptsSuggestion('原来就有字', '原来就有字')).toBe(true)
+    expect(commitDraftAcceptsSuggestion('用户等待时自己改了', '原来就有字')).toBe(false)
+    expect(commitDraftAcceptsSuggestion('建议到了但没发过请求', null)).toBe(false)
+  })
+})
+
+describe('Safe Web Mode refusal', () => {
+  // One payload for every request the mode refuses, sent by the socket and naming
+  // nothing but itself. Which panel it belongs to is therefore something the
+  // projection has to work out, and a panel it fails to work out stays on screen
+  // saying work is in progress forever.
+  const refusal = { type: 'error', code: 'safe_web_mode_blocked', message: 'Safe Web Mode 禁止此操作' } as const
+
+  it('ends the Git request the mode refused instead of leaving it 处理中', () => {
+    const before = { ...initialSessionState, sessionId: 's1', gitLoading: true, pendingGitOperation: { requestId: 'g1', sessionId: 's1', operation: 'commit' } }
+    const next = applyServerMessage(before, refusal)
+    expect(next.gitLoading).toBe(false)
+    expect(next.gitError).toBe('Safe Web Mode 禁止此操作')
+    expect(next.status).toBe('Git 操作失败')
+    expect(next.pendingGitOperation).toBeUndefined()
+  })
+
+  it('ends the terminal command the mode refused', () => {
+    const before = { ...initialSessionState, sessionId: 's1', terminalLoading: true }
+    const next = applyServerMessage(before, refusal)
+    expect(next.terminalLoading).toBe(false)
+    expect(next.terminalError).toBe('Safe Web Mode 禁止此操作')
+    expect(next.status).toBe('终端执行失败')
+  })
+
+  it('fails the attachment the mode refused to take', () => {
+    const before = { ...initialSessionState, sessionId: 's1', busy: true, upload: { filename: 'x.txt', byteLen: 4, sentBytes: 0, status: 'validating' as const } }
+    const next = applyServerMessage(before, refusal)
+    expect(next.upload?.status).toBe('failed')
+    expect(next.upload?.error).toBe('Safe Web Mode 禁止此操作')
+    expect(next.status).toBe('上传失败')
+  })
+
+  it('names the mode when nothing was waiting, without settling the turn it did not cause', () => {
+    // The workspace list the app asks for on connect is refused like everything
+    // else. Reporting that as 请求错误 over a working session, or letting it settle
+    // a turn nobody prompted, both describe something that did not happen.
+    const before = { ...initialSessionState, sessionId: 's1', busy: true }
+    const next = applyServerMessage(before, refusal)
+    expect(next.status).toBe('安全模式已拒绝')
+    expect(next.turnOutcomes).toEqual({})
+    expect(next.busy).toBe(true)
+  })
+
+  it('leaves a finished attachment as it is when the refusal was about something else', () => {
+    const done = { filename: 'x.txt', byteLen: 4, sentBytes: 4, status: 'done' as const, path: 'x.txt' }
+    const next = applyServerMessage({ ...initialSessionState, sessionId: 's1', upload: done }, refusal)
+    expect(next.upload).toEqual(done)
+    expect(next.status).toBe('安全模式已拒绝')
+  })
+
+  it('answers each refused request with its own refusal, one panel at a time', () => {
+    // The host refuses message by message, so two refused requests mean two
+    // frames. Clearing both panels on the first frame would tell the second one
+    // about a refusal it has not been given yet.
+    const both = { ...initialSessionState, sessionId: 's1', gitLoading: true, terminalLoading: true }
+    const first = applyServerMessage(both, refusal)
+    expect(first.gitLoading).toBe(false)
+    expect(first.terminalLoading).toBe(true)
+    const second = applyServerMessage(first, refusal)
+    expect(second.terminalLoading).toBe(false)
+  })
+
+  it('still keeps a per-panel failure on the panel that asked for it', () => {
+    // The branches above are gated on codes as well as on what is in flight: an
+    // answer that belongs to the terminal must not be shown as a Git failure.
+    const both = { ...initialSessionState, sessionId: 's1', gitLoading: true, terminalLoading: true }
+    const next = applyServerMessage(both, { type: 'error', code: 'terminal_failed', message: '终端自己失败了' })
+    expect(next.gitLoading).toBe(true)
+    expect(next.gitError).toBeUndefined()
+    expect(next.terminalLoading).toBe(false)
+    expect(next.terminalError).toBe('终端自己失败了')
+  })
+})
+

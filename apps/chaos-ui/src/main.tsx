@@ -2,13 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { applyServerMessage, appendLocalPrompt, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
+import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
 import type { ClientMessage } from './generated/protocol'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
 import { COMPACT_VIEWPORT_QUERY, defaultLayoutState, loadLayoutState, resolveFocusWrap, resolveSidebarVisibility, saveLayoutState, type LayoutState } from './layout'
-import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, validateAttachmentMessage, type AttachmentSource } from './attachments'
+import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, uploadIsInFlight, validateAttachmentMessage, type AttachmentSource } from './attachments'
 import { buildSettingsCategories, nextTheme, refusalSummary, THEME_ORDER, themeLabel } from './settings'
 import { ariaShortcut, formatShortcut, matchShortcut, SHORTCUTS, tabForShortcut, type ShortcutTab } from './shortcuts'
 import './style.css'
@@ -101,6 +101,11 @@ function App() {
   const [gitOp, setGitOp] = useState<'stage' | 'unstage' | 'commit' | 'checkout_branch' | 'discard'>('stage')
   const [gitArg, setGitArg] = useState('.')
   const [terminalCmd, setTerminalCmd] = useState('git status')
+  // What the commit box held when the suggestion request went out, and which
+  // suggestion has already been written into it. Both are needed because the
+  // answer arrives later, and the user may have typed in the meantime.
+  const commitDraftAtRequest = useRef<string | null>(null)
+  const appliedCommitSuggestion = useRef<string | null>(null)
   const [settingsBaseUrl, setSettingsBaseUrl] = useState('')
   const [settingsModel, setSettingsModel] = useState('')
   const [tuiSessionId, setTuiSessionId] = useState('')
@@ -336,6 +341,21 @@ function App() {
 
   useEffect(() => { connect(); return () => { if (reconnectTimer.current) window.clearTimeout(reconnectTimer.current); socket.current?.close() } }, [connect])
 
+  // The workspace list is asked for as the socket opens, before this socket's
+  // session has made the workspace the host falls back to, so that first answer
+  // cannot contain it. Until the sidebar names it, there is no way to see which
+  // repository the panels act on, so a session whose workspace is missing asks
+  // once for the list that should already have had it.
+  const workspaceListAskedFor = useRef<string | null>(null)
+  useEffect(() => {
+    const workspaceId = session.activeWorkspaceId
+    if (!session.sessionId || !workspaceId) return
+    if (session.workspaces.some((workspace) => workspace.id === workspaceId)) return
+    if (workspaceListAskedFor.current === workspaceId) return
+    workspaceListAskedFor.current = workspaceId
+    send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
+  }, [session.sessionId, session.activeWorkspaceId, session.workspaces, send])
+
   function createWorkspace() {
     const name = window.prompt('工作区名称')?.trim()
     if (!name) return
@@ -548,6 +568,28 @@ function App() {
     updateSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
     send({ type: 'get_git_status', client_msg_id: crypto.randomUUID() })
   }
+  function requestCommitSuggestion() {
+    if (!session.sessionId) return
+    commitDraftAtRequest.current = gitArg
+    updateSession((current) => ({ ...current, commitSuggesting: true, commitSuggestionError: undefined }))
+    send({ type: 'suggest_commit_message', client_msg_id: crypto.randomUUID(), session_id: session.sessionId })
+  }
+  function applyCommitSuggestion() {
+    const suggestion = session.commitSuggestion
+    if (!suggestion) return
+    appliedCommitSuggestion.current = suggestion.message
+    setGitArg(suggestion.message)
+  }
+  // The suggestion is offered, never imposed: it fills the box only while the box
+  // still holds what it held when the request went out, so text typed while waiting
+  // is not thrown away. Otherwise it is shown beside the box with 填入建议.
+  useEffect(() => {
+    const suggestion = session.commitSuggestion
+    if (!suggestion || appliedCommitSuggestion.current === suggestion.message) return
+    if (!commitDraftAcceptsSuggestion(gitArg, commitDraftAtRequest.current)) return
+    appliedCommitSuggestion.current = suggestion.message
+    setGitArg(suggestion.message)
+  }, [session.commitSuggestion, gitArg])
   function executeGitMutation() {
     if (!session.sessionId || !gitArg.trim()) return
     updateSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
@@ -1249,11 +1291,11 @@ function App() {
                   type="button"
                   data-testid="upload-submit"
                   onClick={startUpload}
-                  disabled={!uploadPick || (session.upload !== undefined && !['done', 'failed', 'cancelled'].includes(session.upload.status))}
+                  disabled={!uploadPick || uploadIsInFlight(session.upload)}
                 >
                   上传附件
                 </button>
-                {session.upload && !['done', 'failed', 'cancelled'].includes(session.upload.status) && (
+                {uploadIsInFlight(session.upload) && (
                   <button type="button" data-testid="upload-cancel" onClick={cancelUpload}>取消上传</button>
                 )}
                 {uploadPickError && <p role="alert">{uploadPickError}</p>}
@@ -1315,7 +1357,14 @@ function App() {
                     className="panel-select"
                     aria-label="Git 操作类型"
                     value={gitOp}
-                    onChange={(e) => setGitOp(e.target.value as typeof gitOp)}
+                    onChange={(e) => {
+                      const next = e.target.value as typeof gitOp
+                      // A commit message and a path are not the same argument, so
+                      // switching operations does not carry one into the other.
+                      if (next === 'commit' && gitOp !== 'commit') setGitArg('')
+                      if (next !== 'commit' && gitOp === 'commit') setGitArg('.')
+                      setGitOp(next)
+                    }}
                   >
                     <option value="stage">stage (暂存)</option>
                     <option value="unstage">unstage (取消暂存)</option>
@@ -1324,16 +1373,64 @@ function App() {
                     <option value="discard">discard (放弃变更)</option>
                   </select>
                 </label>
-                <label>
-                  参数：
-                  <input
-                    className="panel-input"
-                    aria-label="Git 参数"
-                    placeholder="路径或 commit message"
-                    value={gitArg}
-                    onChange={(e) => setGitArg(e.target.value)}
-                  />
-                </label>
+                {gitOp === 'commit' ? (
+                  <label>
+                    提交信息：
+                    <textarea
+                      className="panel-input"
+                      data-testid="commit-message-input"
+                      aria-label="Git 提交信息"
+                      placeholder="自己写，或点「建议提交信息」让 Provider 起草"
+                      rows={4}
+                      value={gitArg}
+                      onChange={(e) => setGitArg(e.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    参数：
+                    <input
+                      className="panel-input"
+                      aria-label="Git 参数"
+                      placeholder="路径或分支名"
+                      value={gitArg}
+                      onChange={(e) => setGitArg(e.target.value)}
+                    />
+                  </label>
+                )}
+                {gitOp === 'commit' && (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="suggest-commit-message"
+                      onClick={requestCommitSuggestion}
+                      disabled={!session.sessionId || session.commitSuggesting}
+                    >
+                      {session.commitSuggesting ? '建议生成中…' : '建议提交信息'}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="apply-commit-suggestion"
+                      onClick={applyCommitSuggestion}
+                      disabled={!session.commitSuggestion || session.commitSuggestion.message === gitArg}
+                    >
+                      填入建议
+                    </button>
+                  </>
+                )}
+                {gitOp === 'commit' && session.commitSuggesting && <p role="status">正在按当前暂存差异生成提交信息…</p>}
+                {gitOp === 'commit' && session.commitSuggestionError && <p role="alert">提交信息建议失败：{session.commitSuggestionError}</p>}
+                {gitOp === 'commit' && session.commitSuggestion && session.commitSuggestion.message !== gitArg && (
+                  <p data-testid="commit-suggestion-offer">
+                    <strong>Provider 建议：</strong>
+                    <code>{session.commitSuggestion.message}</code>
+                    {session.commitSuggestion.truncated && '（暂存差异超过上限被截断，建议可能只覆盖了其中一部分）'}
+                  </p>
+                )}
+                {gitOp === 'commit' && session.commitSuggestion && session.commitSuggestion.message === gitArg && session.commitSuggestion.truncated && (
+                  <p role="status" data-testid="commit-suggestion-truncated">暂存差异超过上限被截断，建议可能只覆盖了其中一部分。</p>
+                )}
+                <p>提交信息只是填进上面的编辑框；执行提交仍需按流程批准，破坏性操作需两次确认。</p>
                 <button type="button" onClick={executeGitMutation} disabled={session.gitLoading}>执行 Git 操作</button>
                 {session.gitMutationResult && (
                   <p>

@@ -693,8 +693,8 @@ async fn websocket(
 /// The policy lives beside the protocol enum in `chaos_engine`, next to the list
 /// the settings panel renders, because a host that enforced a policy without also
 /// reporting it produced a panel that promised nothing while the socket refused
-/// nineteen messages. That is `safe_mode_refusals` in the engine, and
-/// `the_refusal_list_matches_what_the_socket_actually_refuses` in
+/// messages the panel had never listed. That is `safe_mode_refusals` in the
+/// engine, and `the_refusal_list_matches_what_the_socket_actually_refuses` in
 /// `tests/host_info_flow.rs` is what keeps the two from drifting.
 fn safe_mode_allows(message: &ClientMessage) -> bool {
     chaos_engine::safe_mode_allows(message)

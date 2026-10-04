@@ -74,6 +74,108 @@ pub trait GitAdapter: Send + Sync {
     fn commit(&self, message: &str) -> Result<String, String>;
     fn checkout_branch(&self, branch: &str) -> Result<(), String>;
     fn discard(&self, path: &str) -> Result<(), String>;
+    /// The diff the next commit would record, bounded to
+    /// [`COMMIT_DIFF_LIMIT`] bytes. Adapters that cannot read a diff say so;
+    /// they do not pretend an empty staged area means the same thing.
+    fn staged_diff(&self) -> Result<StagedDiff, String> {
+        Err("Git adapter 不支持读取暂存差异".into())
+    }
+}
+
+/// What [`GitAdapter::staged_diff`] hands back: the diff text the commit-message
+/// request may carry, and whether it stopped short of the real staged content.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StagedDiff {
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// Bytes of staged diff one commit-message request may send to the Provider.
+/// The browser can stage a generated file of any size, and the diff goes into a
+/// prompt, so the read itself has to stop at a limit rather than at whatever the
+/// staging area happens to hold.
+pub const COMMIT_DIFF_LIMIT: usize = 24 * 1024;
+
+/// Longest suggestion accepted from a Provider, cut on a character boundary.
+const COMMIT_MESSAGE_LIMIT: usize = 600;
+
+/// The instruction a commit-message suggestion is asked for. The staged diff is
+/// quoted last and inside delimiters so that diff content cannot read as
+/// instructions to the model that follows it.
+fn commit_message_prompt(branch: Option<&str>, diff: &StagedDiff) -> String {
+    let mut prompt = String::from(
+        "根据下面暂存的 Git 差异写一条提交信息。第一行是不超过 72 个字符的摘要，\
+         使用祈使句，不要以句号结尾；只有在差异确实需要解释时才补充正文段落。\
+         只输出提交信息本身，不要输出解释、前缀或代码块标记。\n\n",
+    );
+    if let Some(branch) = branch {
+        prompt.push_str("当前分支：");
+        prompt.push_str(branch);
+        prompt.push('\n');
+    }
+    if diff.truncated {
+        prompt.push_str("（差异过长，以下内容在限制处截断）\n");
+    }
+    prompt.push_str("---START STAGED DIFF---\n");
+    prompt.push_str(&diff.text);
+    if !diff.text.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push_str("---END STAGED DIFF---");
+    prompt
+}
+
+/// What the browser is offered as the commit message.
+///
+/// Models wrap the answer in code fences, bullet it, or open with a label like
+/// 「这是建议：」. All of that would be pasted verbatim into `git commit -m`, so it
+/// is removed here. Everything the model wrote after that is kept, body included:
+/// dropping a paragraph the Provider judged worth writing is a worse failure than
+/// leaving one explanatory line the user can delete in the form.
+fn normalize_commit_message(raw: &str) -> String {
+    let mut lines: Vec<String> = raw
+        .trim()
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect();
+    while lines.first().is_some_and(|line| line.starts_with("```")) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|line| line.starts_with("```")) {
+        lines.pop();
+    }
+    while lines.first().is_some_and(|line| line.is_empty()) {
+        lines.remove(0);
+    }
+    let leading_label = lines
+        .first()
+        .is_some_and(|line| line.len() <= 40 && (line.ends_with(':') || line.ends_with('：')));
+    if leading_label {
+        lines.remove(0);
+        while lines.first().is_some_and(|line| line.is_empty()) {
+            lines.remove(0);
+        }
+    }
+    for line in lines.iter_mut() {
+        *line = line
+            .trim_start_matches(['-', '*', '•'])
+            .trim_start_matches([':', '：'])
+            .trim()
+            .to_string();
+    }
+    let message = lines
+        .join("\n")
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_string();
+    if message.len() <= COMMIT_MESSAGE_LIMIT {
+        return message;
+    }
+    let mut cut = COMMIT_MESSAGE_LIMIT;
+    while !message.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    message[..cut].trim_end().to_string()
 }
 
 pub struct ProcessGitAdapter {
@@ -160,6 +262,71 @@ impl GitAdapter for ProcessGitAdapter {
             return Err("git path rejected".into());
         }
         self.run(&["restore", "--worktree", "--", path]).map(|_| ())
+    }
+
+    fn staged_diff(&self) -> Result<StagedDiff, String> {
+        let mut builder = std::process::Command::new("git");
+        builder
+            .arg("-C")
+            .arg(&self.cwd)
+            .args(["diff", "--cached", "--no-color"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        // A `diff <driver>` entry in the repository's own config makes this read
+        // spawn grandchildren, so the child runs in its own process group inside
+        // a scope that is killed on the way out, as the terminal adapter does.
+        xai_tty_utils::detach_std_command(&mut builder);
+        let process_scope = xai_tty_utils::ProcessScope::new();
+        #[allow(clippy::disallowed_methods)] // reaped by wait() below and kill_all() after it
+        let mut child = builder
+            .spawn()
+            .map_err(|error| format!("无法启动 git: {error}"))?;
+        let _process_group = match process_scope.enroll_std(&child) {
+            Ok(group) => group,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("无法跟踪 git 进程: {error}"));
+            }
+        };
+        // Both pipes are drained on their own threads: git that could not write
+        // would block and the wait() behind it would never return. Only the
+        // first COMMIT_DIFF_LIMIT bytes of the diff are retained.
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "git 标准输出不可用".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "git 标准错误不可用".to_string())?;
+        let stdout_reader = std::thread::spawn(move || drain_output(stdout, COMMIT_DIFF_LIMIT));
+        let stderr_reader = std::thread::spawn(move || drain_output(stderr, 4096));
+        let status = child
+            .wait()
+            .map_err(|error| format!("等待 git 失败: {error}"))?;
+        process_scope.kill_all();
+        let (bytes, truncated) = stdout_reader
+            .join()
+            .map_err(|_| "读取 git 标准输出失败".to_string())?
+            .map_err(|error| format!("读取 git 标准输出失败: {error}"))?;
+        let (stderr, _) = stderr_reader
+            .join()
+            .map_err(|_| "读取 git 标准错误失败".to_string())?
+            .unwrap_or_default();
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("git exited with {status}")
+            } else {
+                stderr
+            });
+        }
+        let mut text = String::from_utf8_lossy(&bytes).trim_end().to_string();
+        if truncated {
+            text.push_str("\n[diff truncated]");
+        }
+        Ok(StagedDiff { text, truncated })
     }
 }
 
@@ -534,6 +701,13 @@ pub enum ClientMessage {
     GetGitStatus {
         client_msg_id: String,
     },
+    /// Ask what commit message fits what is staged right now. Read-only: it
+    /// reads the staged diff and asks the configured Provider. It proposes no
+    /// commit, asks for no approval and runs no git command that writes.
+    SuggestCommitMessage {
+        client_msg_id: String,
+        session_id: Uuid,
+    },
     ValidateAttachment {
         client_msg_id: String,
         filename: String,
@@ -790,6 +964,14 @@ pub enum ServerMessage {
         message_count: usize,
         source_unchanged: bool,
     },
+    /// A commit message the browser may put in its commit form. `truncated`
+    /// says the staged diff the Provider saw was cut short, so a short answer
+    /// may be short because the model never saw the rest of it.
+    CommitMessageSuggestion {
+        session_id: Uuid,
+        message: String,
+        truncated: bool,
+    },
     Error {
         code: String,
         message: String,
@@ -881,6 +1063,7 @@ pub fn safe_mode_tag(message: &ClientMessage) -> &'static str {
         ClientMessage::GetHostInfo { .. } => "get_host_info",
         ClientMessage::UpdateSettings { .. } => "update_settings",
         ClientMessage::GetGitStatus { .. } => "get_git_status",
+        ClientMessage::SuggestCommitMessage { .. } => "suggest_commit_message",
         ClientMessage::ValidateAttachment { .. } => "validate_attachment",
         ClientMessage::BeginAttachment { .. } => "begin_attachment",
         ClientMessage::AttachmentChunk { .. } => "attachment_chunk",
@@ -913,6 +1096,10 @@ pub const SAFE_MODE_REFUSALS: &[(&str, &str)] = &[
     ("propose_git_mutation", "执行 Git 变更"),
     ("update_settings", "修改设置"),
     ("get_git_status", "读取 Git 状态"),
+    (
+        "suggest_commit_message",
+        "读取暂存差异并向 Provider 请求提交信息建议",
+    ),
     ("validate_attachment", "校验附件"),
     ("begin_attachment", "开始上传附件"),
     ("attachment_chunk", "上传附件分片"),
@@ -937,9 +1124,13 @@ pub const SAFE_MODE_REFUSALS: &[(&str, &str)] = &[
 /// This lives beside the enum it classifies, and beside [`SAFE_MODE_REFUSALS`],
 /// the list the browser renders. A host that enforced a policy without reporting
 /// it produced a settings panel that promised nothing while the socket refused
-/// nineteen messages; `the_refusal_list_matches_what_the_socket_actually_refuses`
-/// in `xai-grok-web/tests/host_info_flow.rs` drives a real socket against the
-/// list to keep the two from drifting apart.
+/// messages the panel had never listed;
+/// `the_refusal_list_matches_what_the_socket_actually_refuses` in
+/// `xai-grok-web/tests/host_info_flow.rs` drives a real socket against the list
+/// to keep the two from drifting apart. How many entries that is stays out of
+/// prose here: the list gains one every time a message that touches the
+/// workspace is added, and a number in a comment goes stale on the very commit
+/// that adds it.
 #[must_use]
 pub fn safe_mode_allows(message: &ClientMessage) -> bool {
     !SAFE_MODE_REFUSALS
@@ -2087,6 +2278,7 @@ impl Engine {
             | ClientMessage::GetHostInfo { client_msg_id }
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
+            | ClientMessage::SuggestCommitMessage { client_msg_id, .. }
             | ClientMessage::ValidateAttachment { client_msg_id, .. }
             | ClientMessage::BeginAttachment { client_msg_id, .. }
             | ClientMessage::AttachmentChunk { client_msg_id, .. }
@@ -2572,6 +2764,77 @@ impl Engine {
                     .unwrap_or_else(|error| vec![error]),
                 None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
             },
+            ClientMessage::SuggestCommitMessage {
+                client_msg_id,
+                session_id,
+            } => {
+                let Some(workspace_id) = state
+                    .sessions
+                    .get(&session_id)
+                    .and_then(|session| session.workspace_id)
+                else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                if state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+                }
+                let (Some(workspace), Some(git)) = (&self.workspace, &self.git_adapter) else {
+                    return vec![Self::error(
+                        "workspace_unavailable",
+                        "没有配置 workspace 或 Git adapter",
+                    )];
+                };
+                let diff = match git.staged_diff() {
+                    Ok(diff) => diff,
+                    Err(message) => return vec![Self::error("git_failed", &message)],
+                };
+                // An empty staged area is not a suggestion the model can make,
+                // and sending the empty diff would cost a call to say so.
+                if diff.text.trim().is_empty() {
+                    return vec![Self::error(
+                        "nothing_staged",
+                        "暂存区为空，先 stage 文件再请求提交信息建议",
+                    )];
+                }
+                // The suggestion is the Provider's words, so without one there
+                // is nothing to offer. The commit form still takes a typed
+                // message; this says which half is missing here.
+                let Some(adapter) = &self.adapter else {
+                    return vec![Self::error(
+                        "commit_suggestion_unavailable",
+                        "没有配置 Provider，无法生成提交信息建议；提交信息仍可手动填写",
+                    )];
+                };
+                let branch = workspace.git_status().ok().and_then(|(branch, _)| branch);
+                let chunks =
+                    match adapter.run_prompt(&commit_message_prompt(branch.as_deref(), &diff)) {
+                        Ok(chunks) => chunks,
+                        Err(message) => return vec![Self::error("agent_failed", &message)],
+                    };
+                let message = normalize_commit_message(&chunks.concat());
+                if message.is_empty() {
+                    return vec![Self::error(
+                        "commit_suggestion_empty",
+                        "Provider 没有返回可用的提交信息",
+                    )];
+                }
+                let Some(session) = state.sessions.get_mut(&session_id) else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                session.sequence += 1;
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::CommitMessageSuggestion {
+                        session_id,
+                        message,
+                        truncated: diff.truncated,
+                    },
+                ]
+            }
             ClientMessage::ValidateProvider {
                 base_url, model, ..
             } => {
@@ -4457,6 +4720,503 @@ mod tests {
         );
     }
 
+    /// One commit plus one staged edit: a suggestion has something to be about,
+    /// and the returned head is the value the read-only tests compare against.
+    fn repo_with_staged_edit(staged_contents: &str) -> (tempfile::TempDir, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(["-C", directory.path().to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.name", "Chaos Test"]);
+        git(&["config", "user.email", "chaos-test@example.invalid"]);
+        std::fs::write(directory.path().join("note.txt"), "one\n").unwrap();
+        git(&["add", "--", "note.txt"]);
+        git(&["commit", "-q", "-m", "base"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        std::fs::write(directory.path().join("note.txt"), staged_contents).unwrap();
+        git(&["add", "--", "note.txt"]);
+        (directory, head)
+    }
+
+    fn git_head(root: &Path) -> String {
+        let output = std::process::Command::new("git")
+            .args(["-C", root.to_str().unwrap(), "rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    struct RecordingPromptAdapter {
+        reply: &'static str,
+        seen: Mutex<Vec<String>>,
+    }
+
+    impl PromptAdapter for RecordingPromptAdapter {
+        fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+            self.seen.lock().unwrap().push(prompt.to_string());
+            Ok(vec![self.reply.to_string()])
+        }
+    }
+
+    /// The host shape the Web binary assembles for a workspace root: the same
+    /// workspace adapter, the same `ProcessGitAdapter`, and a prompt adapter.
+    fn engine_for_repo(root: &Path, reply: &'static str) -> (Engine, Arc<RecordingPromptAdapter>) {
+        let recorder = Arc::new(RecordingPromptAdapter {
+            reply,
+            seen: Mutex::new(Vec::new()),
+        });
+        let adapter: Arc<dyn PromptAdapter> = recorder.clone();
+        let engine = Engine::with_workspace_and_adapter(root, Some(adapter))
+            .unwrap()
+            .with_git_adapter(ProcessGitAdapter::new(root).unwrap());
+        (engine, recorder)
+    }
+
+    fn new_session(engine: &Engine, client_msg_id: &str) -> Uuid {
+        let events = engine.handle(ClientMessage::CreateSession {
+            client_msg_id: client_msg_id.into(),
+            workspace_id: None,
+        });
+        match &events[0] {
+            ServerMessage::SessionCreated { session_id, .. } => *session_id,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn staged_diff_reports_only_what_is_staged() {
+        let (directory, _) = repo_with_staged_edit("two\n");
+        // The same file edited again without staging: the next commit would not
+        // record it, so the diff the Provider sees must not either.
+        std::fs::write(directory.path().join("note.txt"), "two\nthree\n").unwrap();
+        let diff = ProcessGitAdapter::new(directory.path())
+            .unwrap()
+            .staged_diff()
+            .unwrap();
+        assert!(diff.text.contains("+two"), "{}", diff.text);
+        assert!(
+            !diff.text.contains("+three"),
+            "unstaged content leaked into the staged diff: {}",
+            diff.text
+        );
+        assert!(!diff.truncated);
+    }
+
+    #[test]
+    fn staged_diff_stops_at_the_limit_and_says_so() {
+        let big = "y".repeat(COMMIT_DIFF_LIMIT * 2);
+        let (directory, _) = repo_with_staged_edit(&format!("first line\n{big}\n"));
+        let diff = ProcessGitAdapter::new(directory.path())
+            .unwrap()
+            .staged_diff()
+            .unwrap();
+        assert!(diff.truncated, "a 48 KiB diff cannot fit the limit");
+        assert!(diff.text.ends_with("[diff truncated]"), "{}", &diff.text);
+        assert!(
+            diff.text.len() <= COMMIT_DIFF_LIMIT + "\n[diff truncated]".len(),
+            "the retained diff was {} bytes over the limit",
+            diff.text.len().saturating_sub(COMMIT_DIFF_LIMIT)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn git_in(root: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(["-C", root.to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// `/proc` answers this without a libc call: a process is gone once its
+    /// entry disappears, and a zombie or a just-reaped one is not running.
+    #[cfg(target_os = "linux")]
+    fn process_is_live(pid: u32) -> bool {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        // The line is `pid (comm) state …`, and comm may itself hold spaces and
+        // parentheses, so the state is the word after the last `)`.
+        let Some(state) = stat
+            .rsplit(')')
+            .next()
+            .and_then(|rest| rest.split_whitespace().next())
+        else {
+            return false;
+        };
+        !matches!(state, "Z" | "X")
+    }
+
+    /// A repository's own config can turn this read into a process tree: an
+    /// external diff driver runs as git's child, and a driver of the repository's
+    /// choosing may leave a background process behind. `staged_diff()` starts git
+    /// in a process group of its own inside a `ProcessScope` and kills that group
+    /// on the way out, so the driver's background process dies with the read.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_diff_driver_background_process_does_not_outlive_the_staged_diff_read() {
+        let (directory, _) = repo_with_staged_edit("two\n");
+        let root = directory.path();
+        // Relative paths only: git runs an external diff driver from the top
+        // level of the worktree, so neither the config nor the script has to
+        // survive a temp directory whose name needs shell quoting. The redirect
+        // matters: a background process that keeps the inherited stdout open
+        // would hold the diff pipe, and then this read would be bounded by that
+        // process's lifetime instead of by the reaping this test is about.
+        std::fs::write(
+            root.join("driver.sh"),
+            "#!/bin/sh\nsleep 120 >/dev/null 2>&1 &\necho $! > driver-child.pid\nexit 0\n",
+        )
+        .unwrap();
+        git_in(root, &["config", "diff.chaos.command", "sh driver.sh"]);
+        std::fs::write(root.join(".gitattributes"), "*.txt diff=chaos\n").unwrap();
+        git_in(root, &["add", "--", "driver.sh", ".gitattributes"]);
+
+        ProcessGitAdapter::new(root)
+            .unwrap()
+            .staged_diff()
+            .expect("the driver exits successfully, so the read succeeds");
+
+        let recorded = std::fs::read_to_string(root.join("driver-child.pid"))
+            .expect("the driver recorded its background process");
+        let pid: u32 = recorded.trim().parse().expect("a pid was recorded");
+        // The recorded process is a `sleep 120`, so it cannot have finished on
+        // its own inside this test; anything that reaps it reaped it on purpose.
+        // Death is not something this waits for either: kill_all() ran before
+        // staged_diff() returned, so the loop only waits out the kernel dropping
+        // the /proc entry.
+        for _ in 0..200 {
+            if !process_is_live(pid) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!(
+            "pid {pid} outlived the staged-diff read; nothing reaped the driver's process group"
+        );
+    }
+
+    #[test]
+    fn commit_message_suggestion_asks_the_provider_about_the_staged_diff() {
+        let (directory, head) = repo_with_staged_edit("two\n");
+        let (engine, recorder) = engine_for_repo(
+            directory.path(),
+            "改写说明段落\n\n因为旧措辞描述的是上一个版本。",
+        );
+        let session_id = new_session(&engine, "suggest-session");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-1".into(),
+            session_id,
+        });
+        assert!(matches!(&events[0], ServerMessage::Ack { .. }));
+        match &events[1] {
+            ServerMessage::CommitMessageSuggestion {
+                session_id: event_session,
+                message,
+                truncated,
+            } => {
+                assert_eq!(*event_session, session_id);
+                assert_eq!(message, "改写说明段落\n\n因为旧措辞描述的是上一个版本。");
+                assert!(!truncated);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let prompt = recorder.seen.lock().unwrap()[0].clone();
+        assert!(
+            prompt.contains("+two"),
+            "the staged hunk never reached the prompt: {prompt}"
+        );
+        assert!(
+            prompt.contains("---START STAGED DIFF---") && prompt.contains("---END STAGED DIFF---"),
+            "the diff has to be delimited from the instruction: {prompt}"
+        );
+        assert!(
+            prompt.contains("master") || prompt.contains("main"),
+            "the branch was not offered as context: {prompt}"
+        );
+
+        // Read-only: no approval was requested, nothing was executed, and the
+        // repository still points at the commit made before the request.
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, ServerMessage::ToolApprovalRequested { .. })),
+            "{events:?}"
+        );
+        assert_eq!(git_head(directory.path()), head);
+    }
+
+    #[test]
+    fn commit_message_suggestion_names_the_missing_half() {
+        // No Provider: the wording has to come from somewhere, and the commit
+        // form still takes what the user types.
+        let (directory, _) = repo_with_staged_edit("two\n");
+        let engine = Engine::with_workspace(directory.path())
+            .unwrap()
+            .with_git_adapter(ProcessGitAdapter::new(directory.path()).unwrap());
+        let session_id = new_session(&engine, "suggest-no-provider");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-no-provider-1".into(),
+            session_id,
+        });
+        assert!(
+            matches!(&events[0], ServerMessage::Error { code, .. } if code == "commit_suggestion_unavailable")
+        );
+    }
+
+    #[test]
+    fn empty_stage_is_named_before_the_provider_is_asked() {
+        let (directory, _) = repo_with_staged_edit("two\n");
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .args(["-C", directory.path().to_str().unwrap()])
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        // Unstage everything: the staged area is now genuinely empty.
+        git(&["restore", "--staged", "--", "note.txt"]);
+        let (engine, recorder) = engine_for_repo(directory.path(), "不该被调用");
+        let session_id = new_session(&engine, "suggest-blank");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-blank-1".into(),
+            session_id,
+        });
+        assert!(
+            matches!(&events[0], ServerMessage::Error { code, .. } if code == "nothing_staged"),
+            "{events:?}"
+        );
+        assert!(
+            recorder.seen.lock().unwrap().is_empty(),
+            "an empty stage must not cost a Provider call"
+        );
+    }
+
+    #[test]
+    fn a_provider_failure_is_reported_instead_of_a_blank_suggestion() {
+        struct FailingPromptAdapter;
+        impl PromptAdapter for FailingPromptAdapter {
+            fn run_prompt(&self, _prompt: &str) -> Result<Vec<String>, String> {
+                Err("provider 返回 500".into())
+            }
+        }
+        let (directory, head) = repo_with_staged_edit("two\n");
+        let engine = Engine::with_workspace_and_adapter(
+            directory.path(),
+            Some(Arc::new(FailingPromptAdapter) as Arc<dyn PromptAdapter>),
+        )
+        .unwrap()
+        .with_git_adapter(ProcessGitAdapter::new(directory.path()).unwrap());
+        let session_id = new_session(&engine, "suggest-failing");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-failing-1".into(),
+            session_id,
+        });
+        assert!(
+            matches!(&events[0], ServerMessage::Error { code, message } if code == "agent_failed" && message == "provider 返回 500"),
+            "{events:?}"
+        );
+        assert_eq!(git_head(directory.path()), head);
+    }
+
+    #[test]
+    fn a_session_the_host_no_longer_holds_is_refused_before_anything_is_read() {
+        // Sessions live in the host process, so a page talking to a restarted host
+        // holds an id nothing answers. That has to be the named reason, and it must
+        // not cost a Provider call or touch the repository.
+        let (directory, head) = repo_with_staged_edit("two\n");
+        let (engine, recorder) = engine_for_repo(directory.path(), "不该被调用");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-gone".into(),
+            session_id: Uuid::new_v4(),
+        });
+        assert!(
+            matches!(&events[0], ServerMessage::Error { code, .. } if code == "session_not_found"),
+            "{events:?}"
+        );
+        assert!(
+            recorder.seen.lock().unwrap().is_empty(),
+            "a refused session id must not reach the Provider"
+        );
+        assert_eq!(git_head(directory.path()), head);
+    }
+
+    #[test]
+    fn a_host_without_a_git_adapter_refuses_rather_than_inventing_wording() {
+        // The Web binary wires a Git adapter; a host built without one cannot read
+        // the staged area at all, and must say which half is missing instead of
+        // asking the Provider about an empty diff.
+        let (directory, head) = repo_with_staged_edit("two\n");
+        let recorder = Arc::new(RecordingPromptAdapter {
+            reply: "不该被调用",
+            seen: Mutex::new(Vec::new()),
+        });
+        let adapter: Arc<dyn PromptAdapter> = recorder.clone();
+        let engine = Engine::with_workspace_and_adapter(directory.path(), Some(adapter)).unwrap();
+        let session_id = new_session(&engine, "suggest-no-git");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-no-git-1".into(),
+            session_id,
+        });
+        assert!(
+            matches!(&events[0], ServerMessage::Error { code, .. } if code == "workspace_unavailable"),
+            "{events:?}"
+        );
+        assert!(
+            recorder.seen.lock().unwrap().is_empty(),
+            "without a diff there is nothing to send"
+        );
+        assert_eq!(git_head(directory.path()), head);
+    }
+
+    #[test]
+    fn a_staged_diff_that_cannot_be_read_names_git_as_the_failure() {
+        // A workspace directory removed underneath a running host: the session and
+        // the workspace are still known, so the failure surfaces at the read itself.
+        // It has to be reported as a failed read, not as an empty stage, which would
+        // tell the user to stage files when the real problem is the repository.
+        let (directory, _) = repo_with_staged_edit("two\n");
+        let (engine, recorder) = engine_for_repo(directory.path(), "不该被调用");
+        let session_id = new_session(&engine, "suggest-no-repo");
+        std::fs::remove_dir_all(directory.path().join(".git")).unwrap();
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-no-repo-1".into(),
+            session_id,
+        });
+        let ServerMessage::Error { code, message } = &events[0] else {
+            panic!("expected a refusal, got {events:?}");
+        };
+        assert_eq!(code, "git_failed");
+        assert!(
+            !message.trim().is_empty(),
+            "the reason git gave has to reach the commit form: {message:?}"
+        );
+        assert!(
+            recorder.seen.lock().unwrap().is_empty(),
+            "a failed read must not be sent to the Provider as if it were a diff"
+        );
+    }
+
+    #[test]
+    fn normalize_commit_message_removes_what_a_model_wraps_around_an_answer() {
+        assert_eq!(
+            normalize_commit_message("```\nfeat: 支持暂存差异\n\n因为需要上下文\n```"),
+            "feat: 支持暂存差异\n\n因为需要上下文"
+        );
+        assert_eq!(
+            normalize_commit_message("- 修复按钮无响应\n"),
+            "修复按钮无响应"
+        );
+        assert_eq!(
+            normalize_commit_message("这是建议：\n\n修复按钮无响应"),
+            "修复按钮无响应"
+        );
+        assert_eq!(
+            normalize_commit_message("  \"带引号的措辞\"  "),
+            "带引号的措辞"
+        );
+        let long = normalize_commit_message(&"补".repeat(500));
+        assert!(long.len() <= COMMIT_MESSAGE_LIMIT);
+        assert!(long.is_char_boundary(long.len()));
+        assert!(
+            long.chars().all(|c| c == '补'),
+            "a cut must not split a char"
+        );
+        assert_eq!(normalize_commit_message("   "), "");
+    }
+
+    #[test]
+    fn commit_message_prompt_marks_a_truncated_diff() {
+        let full = commit_message_prompt(
+            Some("main"),
+            &StagedDiff {
+                text: "+one".into(),
+                truncated: false,
+            },
+        );
+        assert!(!full.contains("截断"));
+        assert!(full.contains("当前分支：main"));
+        let cut = commit_message_prompt(
+            None,
+            &StagedDiff {
+                text: "+one".into(),
+                truncated: true,
+            },
+        );
+        assert!(cut.contains("截断"), "{cut}");
+        assert!(!cut.contains("当前分支"));
+        assert!(cut.ends_with("---END STAGED DIFF---"));
+    }
+
+    #[test]
+    fn a_replayed_suggestion_request_asks_the_provider_once() {
+        let (directory, _) = repo_with_staged_edit("two\n");
+        let (engine, recorder) = engine_for_repo(directory.path(), "补充说明");
+        let session_id = new_session(&engine, "suggest-dedup-session");
+        let first = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-dedup".into(),
+            session_id,
+        });
+        let replay = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-dedup".into(),
+            session_id,
+        });
+        assert!(
+            matches!(&first[1], ServerMessage::CommitMessageSuggestion { .. }),
+            "{first:?}"
+        );
+        // A socket replay may not pay the Provider a second time, and may not
+        // hand the browser a second answer for the same request.
+        assert!(
+            matches!(replay.as_slice(), [ServerMessage::Ack { .. }]),
+            "{replay:?}"
+        );
+        assert_eq!(recorder.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_suggestion_built_from_a_truncated_diff_says_so() {
+        let big = "y".repeat(COMMIT_DIFF_LIMIT * 2);
+        let (directory, _) = repo_with_staged_edit(&format!("first line\n{big}\n"));
+        let (engine, recorder) = engine_for_repo(directory.path(), "补充说明");
+        let session_id = new_session(&engine, "suggest-truncated-session");
+        let events = engine.handle(ClientMessage::SuggestCommitMessage {
+            client_msg_id: "suggest-truncated".into(),
+            session_id,
+        });
+        match &events[1] {
+            ServerMessage::CommitMessageSuggestion { truncated, .. } => {
+                assert!(*truncated, "the browser was told the whole diff was read")
+            }
+            other => panic!("{other:?}"),
+        }
+        let prompt = recorder.seen.lock().unwrap()[0].clone();
+        assert!(
+            prompt.contains("截断"),
+            "the model was not told it was reading a cut-off diff: {prompt}"
+        );
+    }
+
     #[test]
     fn terminal_process_adapter_runs_in_fixed_cwd_and_truncates_output() {
         let directory = tempfile::tempdir().unwrap();
@@ -4808,6 +5568,10 @@ mod tests {
                 session_id: session,
                 proposal_id: "proposal".into(),
             },
+            ClientMessage::SuggestCommitMessage {
+                client_msg_id: id(34),
+                session_id: session,
+            },
         ]
     }
 
@@ -4830,7 +5594,7 @@ mod tests {
                 "two messages share the tag {wire}"
             );
         }
-        assert_eq!(tags.len(), 33, "one sample per protocol message");
+        assert_eq!(tags.len(), 34, "one sample per protocol message");
     }
 
     #[test]
