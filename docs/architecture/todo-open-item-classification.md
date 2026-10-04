@@ -31,11 +31,12 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 4/17
-(unchecked/partial), summing to 139. Three unchecked rows were opened on 2026-10-04 while the
-Docker acceptance labs were being re-run: the installer's artifact fetch has no transfer ceiling,
-the reasons its mirror candidates gave are printed only on the failure path, and one container
-fingerprint checksum no longer reproduces. Four unchecked rows were added on
+M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
+(unchecked/partial), summing to 137. Three unchecked rows were opened on 2026-10-04 while the
+Docker acceptance labs were being re-run, and two of them closed the same day: the installer's
+artifact fetch now has a rate floor with fixtures of its own, and the reasons its mirror
+candidates gave are now printed on the success path too. What remains open from that set is the
+container fingerprint checksum that still does not reproduce. Four unchecked rows were added on
 2026-10-03 and two of them closed in the passes that followed; on 2026-10-04 the
 §8.2 Q4 maintenance-cycle row closed with a source-by-source review of every
 maintenance line (`docs/maintenance-line-review-2026-10-04.md`, evidence
@@ -120,7 +121,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 4 | 17 |
+| Maintenance items / §8 | 2 | 17 |
 
 ## Locally delivered in this audit pass
 

@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### 修复：153 MiB 的产物抓取一个传输上限都没有，还在吐字节的镜像能把一次安装无限期挂住
+
+`install.sh` 抓产物调的是 `download_github "$ORIGIN_URL" "$TMP" 12 0 1048576`，第四个参数
+`max_time=0`，而全脚本只有一处追加 `--max-time`、且只在该值为正时追加。这不是遗漏：紧挨调用那两行
+注释写明了理由——一个「掐坏线路刚好、掐慢线路致命」的总时长不该砍在 140 MB+ 的资产上。可产物实测
+`content-length: 161233728`，于是任何高于零的涓流都能让安装永不结束，而 `min_bytes=1048576` 那道
+下限只在传输**结束之后**才判得出来。补的是速率下限而不是总时长：`--speed-limit` 配 `--speed-time`，
+两个开关 `CHAOS_DOWNLOAD_MIN_BPS`（默认 1024）与 `CHAOS_DOWNLOAD_STALL_SECS`（默认 45），填 `0`
+关掉；填进非数字退回默认值，而不是走到 `[[ -gt ]]` 那里在 `set -u` 下变成 "unbound variable"、
+当场中止在镜像循环中间。
+
+三条实测决定了写法。其一，停滞中止时 curl 退 **28 而 `%{http_code}` 照打 `200`**：只看 `-w` 的输出
+会把停滞的镜像判成「字节到手但太小」，报出 `too small (3072 bytes)`，指控一个根本没发生的中断。
+判定因此以退出码为准，非零退出携带的 200 一律降级为 `000`，被中止的 body 进不了接受分支。其二，
+`--speed-time` 从传输一开始就计时，第一个响应字节之前也算：3 秒才回头应答的端点在 1 秒窗口下
+1.20 s 被掐，关掉下限则 3.02 s 装完。所以 0 字节那种原因写 `no bytes in Ns` 而不是
+`stalled under N B/s`，后者描述的是从未开始的传输。其三，同一次中止写到 `/dev/null` 会变成 23 且
+`-w` 一个字都不写，23 又不在 `--retry` 的可重试集合里（实测 8.03 s 对 2.01 s：前者是三次尝试加两次
+retry-delay，后者一次就放弃），于是「写到哪」会同时决定退出码与镜像循环还有没有下一个候选。
+
+同一批关掉第二条待办：成功路径现在把被跳过的候选连同原因一并打出来（去重、最多 4 行），失败路径的
+语义一个字未改。第一版自己踩了一脚并当场被既有夹具拦下——把任何非零 curl 退出都降级为 `000`，于是
+404（`-f` 退 22）被报成 `curl exit 22`，当场红的正是既有的那条尺寸夹具
+`test_missing_object_reports_the_status_code`。新增的两条 `--help` 对照测试又翻出一处早就存在的
+漂移：`CHAOS_SKIP_CHECKSUM` 只写在 `curl | bash -s -- --help` 的 heredoc 里，文件头里从来没有，
+两条帮助路径长期各说各话。
+
+实验室原本问不出这个问题——`scripts/ci/release-integrity-serve.py` 是个把整个文件一次写完的 server，
+永远答不出「一个活着但没用的镜像」。给它加了 `--throttle CASE=BPS`，`install-integrity-in-docker.sh`
+因此多出一节 5 项检查：停滞被拒、退出码不是 124、产物确实被请求过（否则这条绿只是 404 换了件衣服）、
+什么都没装进去，以及 262144 B/s 那一路必须在窗口之后仍然装得成且校验与签名都过——最后一条防的是
+「用下限把慢线路一起杀死」被当成成功。整轮 40 项全绿，停滞那一路 20 s 被拒并报出速率与已收字节。
+
+**非空洞性**：四个变异各被一条断言接住。删掉追加 `--speed-limit` 那一行 → 120.25 s，两条
+`TimeoutExpired`，正是原缺陷的形状；退出码不再门住 200 → 夹具接受那 384 字节的停滞 body 并退 0；
+成功路径沉默 → 两条 FAIL；默认下限设 0 → 被杀。还原一律 `cp` 之后 `cmp` 认字节。实验室一侧：少写
+一个 `--throttle stall=` 就报 `stall: exited 0; the artifact arrived and the installer never
+objected to the rate`，并跟着报「拒了，可 `bin/chaos` 仍在且可跑」。11 例夹具 30.272 s，既有的
+5 例尺寸夹具 2.638 s 仍绿。
+
+（2026-10-04；`scripts/install.sh`、`scripts/ci/test-installer-download-stall.py`、
+`scripts/ci/release-integrity-serve.py`、`scripts/install-integrity-in-docker.sh`、
+`scripts/verify-in-docker.sh`、`.github/workflows/ci.yml`、
+`docs/verification/installer-download-stall-2026-10-04.log`）
+
+
 ### 修复：分页器历史搜索那条「CI 偶发」，等的是一个跑得快的守护线程永远不会发出的信号
 
 2026-10-04 两次 CI 各红一条测试，两次是同一条，而红的两个提交都没碰过它附近：`37183474313`

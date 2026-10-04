@@ -646,6 +646,14 @@ jobs:
       - name: installer download size floor
         run: python3 scripts/ci/test-installer-download-size.py
 
+      # A stalled mirror is the other half of the same hole: the binary is fetched with no
+      # --max-time, because any cap short enough to help a bad line would also kill a good
+      # one, so a mirror that trickles bytes was waited on forever. The fixtures pace a
+      # local endpoint rather than fetch anything, and one of them proves a transfer slower
+      # than the window still lands -- that is why this is a rate floor and not a timeout.
+      - name: installer download stall floor
+        run: python3 scripts/ci/test-installer-download-stall.py
+
       - name: stamp-version dry run
         run: |
           set -euo pipefail

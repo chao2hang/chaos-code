@@ -18,7 +18,7 @@
 # scenarios are the interesting part: a tampered artifact, SHA256SUMS rewritten to
 # match the tampered bytes while the signature still covers the original, a missing
 # sidecar, a valid key that is not ours, an HTML error page served in place of the
-# checksums, a truncated download.
+# checksums, a truncated download, and the same correct artifact served at 128 B/s.
 #
 # Usage:
 #   scripts/install-integrity-in-docker.sh              # build the image if needed, run
@@ -38,6 +38,15 @@ script_src="$(cd "$(dirname "$0")" && pwd)/install.sh"
 ci_src="$(cd "$(dirname "$0")" && pwd)/ci"
 version="9.9.9"
 port=8099
+# Pacing for the two scenarios whose subject is the rate rather than the bytes. The stall
+# rate is 8x under install.sh's default floor and the slow rate is 256x over it, so the two
+# land on opposite sides of a decision the installer has to make.
+stall_bps=128
+slow_bps=262144
+# Every case runs under this leash. Without one, a regression in the stall guard turns the
+# stall scenario into a 1 MiB download at 128 B/s, which is hours, and the lab would look
+# merely slow rather than wrong.
+case_timeout=300
 
 checks=0
 failures=""
@@ -212,14 +221,22 @@ else
   failure "the fixture key and the built-in key are not distinct; a 'signature OK' here would be ambiguous"
 fi
 
-in_container_sh "nohup python3 /lab/shared/release-integrity-serve.py /lab/releases /lab/requests.log ${port} >/lab/serve.err 2>&1 &
+# The two rate scenarios serve byte-for-byte what `good` serves, and only the endpoint's
+# pacing differs. Copying the directory rather than rebuilding it keeps "the bytes were
+# never the problem here" a fact rather than a claim.
+in_container_sh "rm -rf /lab/releases/stall /lab/releases/slow \
+  && cp -r /lab/releases/good /lab/releases/stall \
+  && cp -r /lab/releases/good /lab/releases/slow"
+
+in_container_sh "nohup python3 /lab/shared/release-integrity-serve.py /lab/releases /lab/requests.log ${port} \
+  --throttle stall=${stall_bps} --throttle slow=${slow_bps} >/lab/serve.err 2>&1 &
 for i in \$(seq 1 100); do
-  curl -fsS -o /dev/null 'http://127.0.0.1:${port}/probe/https://github.com/o/r/releases/download/v${version}/${asset_name}' && exit 0
+  curl -fsS -o /dev/null 'http://127.0.0.1:${port}/good/https://github.com/o/r/releases/download/v${version}/SHA256SUMS' && exit 0
   sleep 0.2
 done
 exit 1" >/dev/null 2>&1 || true
 bump
-if in_container_sh "grep -q '^probe ${asset_name}\$' /lab/requests.log"; then
+if in_container_sh "grep -q '^good SHA256SUMS\$' /lab/requests.log"; then
   ok "the fake release endpoint is listening on 127.0.0.1:${port}"
 else
   failure "the fake release endpoint never answered: $(in_container_sh 'tr "\n" " " < /lab/serve.err 2>/dev/null | cut -c1-120')"
@@ -246,7 +263,7 @@ run_case() {
     -e "CHAOS_GITHUB_MIRROR=http://127.0.0.1:${port}/${case}" \
     -e "CHAOS_SIGNING_PUBLIC_KEY=${pubkey}" \
     "$@" \
-    "$container_name" bash /lab/install.sh --no-path \
+    "$container_name" timeout "$case_timeout" bash /lab/install.sh --no-path \
     >"${log_dir}/${tag}.log" 2>&1
 }
 
@@ -414,6 +431,70 @@ if [ "$sh_floor" = "1048576" ] && [ "$ps1_floor" = "1MB" ] && [ "$bat_floor" = "
   ok "all three installers refuse an artifact under 1 MiB before hashing it (install.sh ${sh_floor}, install.ps1 ${ps1_floor}, install.bat ${bat_floor})"
 else
   failure "the artifact floors have drifted: install.sh '${sh_floor}', install.ps1 '${ps1_floor}', install.bat '${bat_floor}'"
+fi
+
+header "what a mirror that is up and useless does"
+# Everything above is about wrong bytes. These two are about rate: a mirror can serve the
+# right artifact, with the right digest and the right signature, and still be the wrong
+# thing to wait for. The binary fetch carries no --max-time -- a cap short enough to help
+# a bad line would also kill a good one -- so the decision belongs to a floor on the rate,
+# and only an endpoint that paces can reach it.
+#
+# Measured with curl 7.81.0 on 2026-10-04, which is what picked the shape (not this lab's
+# rates -- those are chosen to fit a 3 s window): a 1 KiB/s trickle under a floor of 2048 B/s
+# averaged over 2 s came back aborted at 9.2 s with 3072 bytes in hand (exit 28, three attempts
+# under `--retry 2`), was still transferring 25 s in with no floor at all, and 1 MiB at
+# 128 KiB/s under that same floor finished untouched in 7.0 s.
+# docs/verification/installer-download-stall-2026-10-04.log §1 has the capture.
+bump
+stall_secs=3
+stall_start="$SECONDS"
+rc=0
+run_case stall stall -e "CHAOS_DOWNLOAD_STALL_SECS=${stall_secs}" || rc=$?
+stall_elapsed=$(( SECONDS - stall_start ))
+if [ "$rc" = "124" ]; then
+  failure "stall: still downloading when the ${case_timeout}s leash cut it off; the floor is not being armed"
+elif [ "$rc" = "0" ]; then
+  failure "stall: exited 0; the artifact arrived and the installer never objected to the rate"
+elif grep -q "stalled under 1024 B/s for ${stall_secs}s" "${log_dir}/stall.log"; then
+  ok "stall: refused a mirror serving ${stall_bps} B/s after ${stall_elapsed}s (exit ${rc}) -- $(grep -m1 'stalled under' "${log_dir}/stall.log" | sed 's/^ *//' | cut -c1-76)"
+else
+  failure "stall: failed (exit ${rc}) but not for the rate; no 'stalled under' line: $(tail -3 "${log_dir}/stall.log" | tr '\n' ' | ')"
+fi
+bump
+if in_container_sh "grep -q '^stall ${asset_name}\$' /lab/requests.log"; then
+  ok "stall: the artifact was really requested, so this is a transfer that was watched and not a 404 in disguise"
+else
+  failure "stall: the fixture never served the artifact: $(in_container_sh 'tr "\n" " " < /lab/requests.log' | cut -c1-120)"
+fi
+bump
+if [ -z "$(installed_version stall)" ]; then
+  ok "stall: nothing installed behind the refusal"
+else
+  failure "stall: refused, yet bin/chaos is present and runnable"
+fi
+
+# The other side, and the reason a plain --max-time was not the fix: this mirror is slow
+# enough that the whole download outlasts the window it is watched over, and it must land.
+bump
+slow_start="$SECONDS"
+rc=0
+run_case slow slow -e "CHAOS_DOWNLOAD_STALL_SECS=${stall_secs}" || rc=$?
+slow_elapsed=$(( SECONDS - slow_start ))
+if [ "$rc" -ne 0 ]; then
+  failure "slow: a mirror at ${slow_bps} B/s was refused (exit ${rc}): $(tail -3 "${log_dir}/slow.log" | tr '\n' ' | ')"
+elif [ "$slow_elapsed" -lt "$stall_secs" ]; then
+  failure "slow: finished in ${slow_elapsed}s, under the ${stall_secs}s window, so the floor was never given a chance to fire"
+elif ! grep -q "checksum OK" "${log_dir}/slow.log" || ! grep -q "signature OK" "${log_dir}/slow.log"; then
+  failure "slow: installed, but the integrity checks did not both report OK"
+else
+  ok "slow: the same artifact at ${slow_bps} B/s installs in ${slow_elapsed}s, past the ${stall_secs}s window, checksum and signature both verified"
+fi
+bump
+if [ "$(installed_version slow)" = "chaos ${version}" ]; then
+  ok "slow: what landed runs and reports ${version}"
+else
+  failure "slow: bin/chaos did not report ${version} (got: $(installed_version slow))"
 fi
 
 header "what the two escape hatches actually cost"

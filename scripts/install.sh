@@ -14,6 +14,9 @@
 #   curl -fsSL .../install.sh | bash -s -- --version 0.2.113
 #   CHAOS_VERSION=0.2.113 bash install.sh
 #
+# Verification:
+#   CHAOS_SKIP_CHECKSUM=1   Skip the SHA256 check (not recommended)
+#
 # Options:
 #   --version X.Y.Z   Release version without leading v (default: latest)
 #   --dir DIR         Install directory (default: ~/.chaos/bin or $CHAOS_HOME/bin)
@@ -30,6 +33,10 @@
 #   CHAOS_MIRROR_FIRST=1                     # same as CHAOS_CN=1
 # Mirrors rewrite https://github.com/... → ${mirror}/https://github.com/...
 # Checksums still verify the binary; a bad mirror cannot install silently.
+#
+# Stall guard (a mirror that trickles bytes forever is not waited on forever):
+#   CHAOS_DOWNLOAD_MIN_BPS=1024              # avg B/s floor; 0 removes the cap
+#   CHAOS_DOWNLOAD_STALL_SECS=45             # window the floor is averaged over
 set -euo pipefail
 
 REPO="${CHAOS_REPO:-chao2hang/chaos-code}"
@@ -60,7 +67,10 @@ usage() {
   # Under `curl ... | bash -s -- --help` there is no script file to read
   # ($0 is "bash"), so only self-read when $0 is a real file.
   if [[ -f "$0" ]]; then
-    sed -n '2,30p' "$0" | sed 's/^# \?//'
+    # Print the leading comment block (everything but the shebang) rather than a hard
+    # coded line range: a range has to be bumped in step with every added line, and a
+    # stale one silently truncates --help with no error anywhere.
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
   else
     cat <<'EOF'
 Install Chaos CLI from GitHub Releases and put it on PATH.
@@ -80,6 +90,10 @@ Environment:
   CHAOS_GITHUB_MIRROR     Mirror prefix, e.g. https://ghfast.top (tried first)
   CHAOS_CN=1              Prefer public GitHub mirrors (for slow/blocked GitHub)
   CHAOS_MIRROR_FIRST=1    Same as CHAOS_CN=1
+
+Downloads:
+  CHAOS_DOWNLOAD_MIN_BPS     Abort a transfer averaging under this B/s (0 = no cap)
+  CHAOS_DOWNLOAD_STALL_SECS  Seconds the above floor is averaged over (default 45)
 EOF
   fi
   exit 0
@@ -287,21 +301,50 @@ download_github() {
   # without it a 200 with a short body reached the checksum step and failed there for a
   # reason that pointed at the wrong thing.
   local min_bytes="${5:-1}"
-  local cand http_code size curl_args=()
+  # A stalled transfer is the other way to lose an hour: no max-time on the binary means
+  # a mirror that trickles bytes forever is waited on forever. --speed-limit aborts when
+  # the average over --speed-time seconds falls under the floor, which still lets a slow
+  # but moving connection finish. Measured 2026-10-04 with curl 7.81.0 against an endpoint
+  # feeding one 1 KiB chunk per second: under a floor of 2048 B/s over 2 s it came back
+  # aborted at 9.2 s with 3072 bytes in hand (exit 28), with no floor it was still going
+  # when the probe gave up at 25 s, and a 128 KiB/s feed of 1 MiB finished untouched in
+  # 7.0 s. Set CHAOS_DOWNLOAD_MIN_BPS=0 to remove the floor.
+  local min_bps="${CHAOS_DOWNLOAD_MIN_BPS:-1024}"
+  local stall_secs="${CHAOS_DOWNLOAD_STALL_SECS:-45}"
+  # Garbage must not reach `[[ -gt ]]`: under `set -u` a non-numeric name there is an
+  # "unbound variable" abort inside the mirror loop, the one place a user is watching.
+  case "$min_bps" in ''|*[!0-9]*) min_bps=1024 ;; esac
+  case "$stall_secs" in ''|*[!0-9]*) stall_secs=45 ;; esac
+  local cand http_code size curl_rc elapsed kept limits curl_args=()
   local last_err="" reasons=""
 
   curl_args=(-fL --retry 2 --retry-delay 1 --connect-timeout "$connect_timeout")
   if [[ "$max_time" -gt 0 ]]; then
     curl_args+=(--max-time "$max_time")
   fi
+  if [[ "$min_bps" -gt 0 ]]; then
+    curl_args+=(--speed-limit "$min_bps" --speed-time "$stall_secs")
+  fi
 
   while IFS= read -r cand; do
     [[ -n "$cand" ]] || continue
     rm -f "$dest"
     echo "  try: ${cand}" >&2
+    curl_rc=0
+    elapsed="$SECONDS"
     http_code="$(
       curl "${curl_args[@]}" -o "$dest" -w '%{http_code}' "$cand" 2>/dev/null
-    )" || http_code="000"
+    )" || curl_rc=$?
+    elapsed=$(( SECONDS - elapsed ))
+    # curl's -w output is not a verdict by itself. Measured 2026-10-04 against the
+    # trickling endpoint: the abort exits 28 and `%{http_code}` still prints 200, so
+    # trusting the code alone turned a stalled mirror into an accepted 200 whose body
+    # was then rejected as "too small" -- the wrong reason, and one that hid the stall.
+    # Only an otherwise-successful code is overridden; a real 404 stays a 404, because
+    # the status is the reason there and replacing it with "000" would lose information.
+    if [[ "$curl_rc" -ne 0 && "$http_code" == "200" ]]; then
+      http_code="000"
+    fi
     if [[ "$http_code" == "200" ]]; then
       # `|| true` keeps the `size=0` fallback below reachable: under `set -euo pipefail`
       # a failing `wc` propagates out of the assignment and ends the script, so the
@@ -324,10 +367,48 @@ download_github() {
         rm -f "$dest"
         continue
       fi
+      # The mirror that answered at all is the interesting one, and it is not in the
+      # success line. Without this the user sees only the URL that won and has no way to
+      # tell a dead mirror from one that served a truncated body -- the difference that
+      # decides whether to set CHAOS_GITHUB_MIRROR by hand next time.
+      if [[ -n "$reasons" ]]; then
+        printf '%s' "$reasons" | awk 'NF && !seen[$0]++ { print "  skipped: " $0 }' | head -4 >&2
+      fi
       echo "$cand"
       return 0
     fi
-    last_err="HTTP ${http_code} from ${cand}"
+    if [[ "$curl_rc" == "28" ]]; then
+      # curl reports 28 for the connect timeout, --max-time and the speed floor alike, so
+      # the message names the timers that were actually armed instead of guessing which
+      # one fired. Bytes in hand does settle one case for certain: the connection was up,
+      # so with no --max-time armed the floor is the only thing that can have stopped it.
+      kept="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]' || true)"
+      [[ -n "$kept" ]] || kept=0
+      if [[ "$min_bps" -gt 0 ]]; then
+        limits="stall floor ${min_bps} B/s over ${stall_secs}s"
+      else
+        limits="no stall floor"
+      fi
+      if [[ "$max_time" -gt 0 ]]; then
+        limits="${limits}, max-time ${max_time}s"
+      fi
+      if [[ "$min_bps" -gt 0 && "$max_time" -eq 0 && "$kept" -gt 0 ]]; then
+        last_err="stalled under ${min_bps} B/s for ${stall_secs}s from ${cand} (${kept} bytes in ${elapsed}s)"
+      elif [[ "$kept" -gt 0 ]]; then
+        last_err="timed out after ${elapsed}s with ${kept} bytes from ${cand} (${limits})"
+      else
+        last_err="no bytes in ${elapsed}s from ${cand} (${limits}, connect timeout ${connect_timeout}s)"
+      fi
+    elif [[ "$http_code" != "000" && "$http_code" != "200" ]]; then
+      # A real status is the reason here, and it survives curl's own exit code: a 404
+      # through `-f` exits 22, and replacing "HTTP 404" with that number would drop the
+      # one fact the user needs.
+      last_err="HTTP ${http_code} from ${cand}"
+    elif [[ "$curl_rc" != "0" ]]; then
+      last_err="curl exit ${curl_rc} from ${cand}"
+    else
+      last_err="HTTP ${http_code} from ${cand}"
+    fi
     reasons="${reasons}${last_err}"$'\n'
     rm -f "$dest"
   done < <(github_url_candidates "$origin_url")

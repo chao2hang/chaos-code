@@ -1,0 +1,445 @@
+# The installer's stall floor: what was measured, what it says, what breaks it (2026-10-04)
+
+Two open rows about `scripts/install.sh` are closed here. The first: the 153 MiB artifact is
+fetched with no transfer limit at all, so a mirror that answers 200 and then trickles bytes
+was waited on forever. The second: the success path names the URL that won and says nothing
+about what the other candidates did, which is the information that decides whether to set
+`CHAOS_GITHUB_MIRROR` by hand next time.
+
+Everything below was measured on this machine with the tools the installer actually uses,
+before the wording or the defaults were chosen. Section 8 reproduces it.
+
+== 0. The hole, in the shipped call site
+
+    $ grep -n 'download_github' scripts/install.sh
+    294:download_github() {
+    610:USED_URL="$(download_github "$ORIGIN_URL" "$TMP" 12 0 1048576)" || exit 1
+    624:  if ! download_github "$SUMS_ORIGIN" "$sums_tmp" 10 30 >/dev/null; then
+    668:  if ! download_github "$SIG_ORIGIN" "$sig_tmp" 10 30 >/dev/null 2>&1; then
+
+Line numbers are as of this commit; the same grep on the file before the change reported
+280, 530, 544 and 588. The arguments after `$TMP` are connect timeout, max-time, minimum
+bytes. The artifact is the one call with max-time `0`, and the comment above it says why: a
+cap short enough to help a bad line would also kill a legitimate slow one. The pair
+`--speed-limit`/`--speed-time` is the shape that separates those two cases, because it bounds
+the *rate* rather than the total time.
+
+    $ grep -n -- '--max-time\|--speed-limit' scripts/install.sh
+    305:  # a mirror that trickles bytes forever is waited on forever. --speed-limit aborts when
+    322:    curl_args+=(--max-time "$max_time")
+    325:    curl_args+=(--speed-limit "$min_bps" --speed-time "$stall_secs")
+    380:      # curl reports 28 for the connect timeout, --max-time and the speed floor alike, so
+    383:      # so with no --max-time armed the floor is the only thing that can have stopped it.
+    432:    if curl -fsSL --connect-timeout 10 --max-time 30 -o "$tmp" "$cand" 2>/dev/null; then
+    447:      curl -fsSLI --connect-timeout 10 --max-time 30 "$cand" 2>/dev/null \
+
+The last two rows are the two tag lookups inside `latest_version()`, 30 s each. The sums and
+signature fetches go through `download_github` with `max_time=30`, so the guarded append did
+bound them. Only the artifact fetch passed `0`, and `--speed-limit` appeared nowhere in the
+script before this change.
+
+== 1. What was measured first
+
+An endpoint that feeds fixed-size chunks with a fixed sleep between them, so the average rate
+is what is under test rather than the scheduler. Every row fetches into a real file, for a
+reason measured at the end of this section: writing to `/dev/null` changes curl's exit status
+on abort from 28 to 23, which is the difference between "retried" and "given up".
+
+    $ python3 <the probe in section 8>
+    curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 zlib/1.2.11 brotli/1.0.9 zstd/1.4.8 libidn2/2.3.2 libpsl/0.21.0 (+libidn2 2.3.2) libssh/0.9.6/openssl/zlib nghttp2/1.43.0 librtmp/2.3 OpenLDAP/2.5.20
+    floor used: --speed-limit 2048 --speed-time 2, on top of -fL --retry 2 --retry-delay 1 --connect-timeout 12
+    stall  +floor    rc=28       http_code='200'   elapsed= 9.23s bytes=3072
+    stall  nofloor   rc=timeout  http_code=''      elapsed=25.00s bytes=24576
+    slowok +floor    rc=0        http_code='200'   elapsed= 7.02s bytes=1048576
+    fast   +floor    rc=0        http_code='200'   elapsed= 0.01s bytes=1048576
+
+Three facts came out of those four rows, and each one is load-bearing:
+
+- Without the floor the trickle was still transferring when the probe gave up at 25 s. The
+  release artifact's own `content-length` is 161233728 bytes (measured in
+  `docker-lab-coverage-2026-10-04.log` §7), so at 1 KiB/s that is 43.7 hours of waiting, and
+  the `min_bytes` floor is only evaluated once the transfer has ended. This is the defect.
+- With the floor the abort exits **28 while `%{http_code}` still prints `200`**. Reading only
+  the `-w` output turns a stalled mirror into an accepted download whose body then fails the
+  size floor and is reported as `too small (3072 bytes)` -- a reason pointing at a truncated
+  artifact when the mirror was stalled. So curl's exit status, not its status output, gates
+  the decision.
+- The same floor leaves a 128 KiB/s feed of 1 MiB completely alone: 7.02 s, all bytes, exit 0.
+  This is why the guard is a rate floor and not a timeout.
+
+Two probes then asked questions the wording depends on. The first: is the window armed only
+while bytes are moving? It is not:
+
+    $ python3 <the probe in section 8, block A>
+    /slowhead  floor=1024  rc=28  out='000 1.201985' elapsed=5.61s
+    /slowhead  floor=0     rc=0   out='200 3.004956' elapsed=3.02s
+    /fast      floor=1024  rc=0   out='200 0.001823' elapsed=0.01s
+    /fast      floor=0     rc=0   out='200 0.001817' elapsed=0.01s
+
+`/slowhead` accepts the connection, sleeps 3 s before sending the response head, then serves
+512 KiB at full speed; the window on those rows is `--speed-time 1`. It was aborted 1.20 s in
+and `%{http_code}` said `000`, because no head had arrived to read a status from. With the
+floor off, the same fetch finished in 3.02 s. So `--speed-time` counts from the start of the
+transfer, before the first byte, which means the floor also bounds "the mirror accepted and
+then said nothing" -- a case previously bounded only by `--max-time`, which the artifact fetch
+does not set. That is why the reason line for a 0-byte body says `no bytes in Ns` rather than
+`stalled under N B/s`: the second would describe a transfer that never started.
+
+The second probe is the reason every row above fetches into a real file. Same trickle, same
+floor, three destinations:
+
+    $ python3 <the probe in section 8, block B>
+    /dev/null    rc=23  http_code=     elapsed= 2.01s bytes_at_dest=0
+    real file    rc=28  http_code=200  elapsed= 8.03s bytes_at_dest=384
+    missing dir  rc=23  http_code=200  elapsed= 0.01s bytes_at_dest=0
+
+`-o /dev/null` turns that same abort into exit 23 (`CURLE_WRITE_ERROR`) and curl writes
+nothing at all for `-w`, so there is no status to report. The two rows also disagree about
+`--retry`: the real-file row took 8.03 s because exit 28 is retried (`--retry 2 --retry-delay
+1` is 2+1+2+1+2 s of windows and pauses), while the `/dev/null` row took 2.01 s, one attempt,
+because 23 is not in the retryable set. So the destination curl writes to decides both the
+exit code and whether the mirror loop gets a second candidate at all -- which is why the
+fixture and this probe both use a real file, and why the reason text is keyed off the exit
+status of a fetch that was actually writing bytes. The third row is what a genuine write
+failure looks like, for comparison: 0.01 s, no bytes, the same 23.
+
+== 2. What the shipped function does now
+
+Four changes inside `download_github`, all of them on the paths described above:
+
+- Two environment variables, `CHAOS_DOWNLOAD_MIN_BPS` (default `1024`) and
+  `CHAOS_DOWNLOAD_STALL_SECS` (default `45`), appended as `--speed-limit`/`--speed-time` when
+  the floor is above zero. `0` removes the floor. Non-numeric input falls back to the default
+  rather than reaching `[[ -gt ]]`, where under `set -u` a bare word is an "unbound variable"
+  abort in the middle of the mirror loop.
+- curl's exit status gates the verdict: a `200` carried out of a non-zero exit becomes `000`,
+  so the accepted-body branch is unreachable for an aborted transfer. A real `404` is
+  untouched.
+- The reason for exit 28 names the timers that were armed instead of guessing which fired, and
+  distinguishes the one case bytes can settle: with bytes in hand and no `--max-time`, the
+  floor is the only thing that can have stopped it, so that line says `stalled under 1024 B/s
+  for 45s (3072 bytes in 9s)`.
+- The success path prints the deduplicated reasons for the candidates it skipped, as `
+  skipped:` lines on stderr, before printing the winning URL. The failure path already printed
+  them as `  why:` lines; only the success path was silent.
+
+Both copies of the help text document the two variables. The `--help` output for the piped
+form (`curl ... | bash -s -- --help`) is a heredoc, because there is no file to read; the file
+form used to print `sed -n '2,30p' "$0"`, a line range that has to be bumped in step with
+every added header line and silently truncates when it is not. It now reads the leading
+comment block with `awk` and stops at the first non-comment line.
+
+== 3. The regression the existing guard caught while this was being written
+
+The first version forced `http_code=000` whenever curl exited non-zero. `scripts/ci/
+test-installer-download-size.py`, which is not about stalls at all, went red immediately:
+
+    $ python3 scripts/ci/test-installer-download-size.py
+    FAIL: test_missing_object_reports_the_status_code (__main__.DownloadGithubSizeTests)
+    AssertionError: None is not true : no status reason:   try: http://127.0.0.1:42177/absent.bin
+    error: download failed for http://127.0.0.1:42177/absent.bin
+      why: curl exit 22 from http://127.0.0.1:42177/absent.bin
+      last: curl exit 22 from http://127.0.0.1:42177/absent.bin
+      tip: set CHAOS_GITHUB_MIRROR=https://ghfast.top  or  CHAOS_CN=1
+
+`curl -f` exits 22 on a 404, and the status code is the one fact worth reporting there.
+Replacing it with the curl exit number made the report worse in the ordinary case in order to
+fix the stalled case. The shipped condition is `curl_rc != 0 && http_code == "200"`, and the
+reason chain checks for a real status before it considers the exit code. All five size
+fixtures pass again:
+
+    $ python3 scripts/ci/test-installer-download-size.py
+    Ran 5 tests in 2.638s
+
+    OK
+
+The same probe also surfaced a documentation drift that no gate had been looking at: the
+header comment block documented `CHAOS_VERSION` and the three mirror variables but not
+`CHAOS_SKIP_CHECKSUM`, which the piped `--help` has always documented. A reader who opened the
+file with `less scripts/install.sh` never saw the checksum escape hatch exist. It is in the
+header now, and `test_env_names_documented_in_the_header_match_the_heredoc` compares the
+variable names between the two renderings in both directions.
+
+== 4. The fixtures
+
+`scripts/ci/test-installer-download-stall.py` runs the shipped `download_github`, extracted
+verbatim from `install.sh` with the same extractor `test-installer-download-size.py` uses (it
+is imported, not copied), against a paced HTTP server on 127.0.0.1. Only
+`github_url_candidates` is stubbed, because the real list resolves github.com. `min_bytes` is
+1 in every harness, so no refusal below can be the size floor's doing.
+
+    $ python3 scripts/ci/test-installer-download-stall.py
+    test_both_help_paths_document_the_floor ... ok
+    test_dead_candidate_is_named_on_the_success_path ... ok
+    test_env_names_documented_in_the_header_match_the_heredoc ... ok
+    test_floor_is_read_from_the_environment_with_these_names ... ok
+    test_floor_of_zero_leaves_the_transfer_running ... ok
+    test_reason_report_is_capped_at_four_lines ... ok
+    test_repeated_reason_is_reported_once ... ok
+    test_silent_endpoint_reports_no_bytes_not_slow_bytes ... ok
+    test_stalled_candidate_is_named_when_the_next_one_works ... ok
+    test_transfer_above_the_floor_finishes ... ok
+    test_trickle_is_aborted_and_named_as_a_stall ... ok
+    Ran 11 tests in 30.270s
+
+    OK
+
+What each of the four behavioural ones pins:
+
+- `test_trickle_is_aborted_and_named_as_a_stall`: 128 B/s against the 1024 floor must abort,
+  and the report must say `stalled under 1024 B/s for 1s from` followed by the byte count it
+  had in hand and the seconds it took, and must
+  must *not* contain `too small`. It also asserts the transfer ended in under 30 s and left no
+  body behind.
+- `test_transfer_above_the_floor_finishes`: 64 KiB at 16 KiB/s, watched over a 3 s window it
+  outlasts, must land with all bytes. Without this case, "the floor aborts" could be satisfied
+  by a floor that aborts everything.
+- `test_silent_endpoint_reports_no_bytes_not_slow_bytes`: the 200-then-silence endpoint from
+  section 1, asserting `no bytes in` and the absence of `stalled under`.
+- `test_floor_of_zero_leaves_the_transfer_running`: `CHAOS_DOWNLOAD_MIN_BPS=0` with no
+  max-time leaves nothing watching, which is observed as the harness still downloading when it
+  is cut off at 6 s. It runs in its own process group and kills the group, because killing
+  only the shell leaves curl holding the captured pipe open and the parent waiting on a
+  transfer that never ends.
+
+== 5. Mutation matrix
+
+A driver mutates `install.sh` itself, one anchor at a time, and re-runs the tests that should
+notice. It refuses to touch anything unless the baseline is green, and restores with a plain
+`cp` followed by `cmp` in a `finally` block.
+
+    == baseline (18.61s) rc=0
+    Ran 6 tests in 18.551s
+    OK
+    == M1 floor never armed -> KILLED (120.25s rc=1)
+         test_trickle_is_aborted_and_named_as_a_stall ... ERROR
+         test_silent_endpoint_reports_no_bytes_not_slow_bytes ... ERROR
+         restored byte-identical
+    == M2 curl exit no longer gates the 200 -> KILLED (5.58s rc=1)
+         test_trickle_is_aborted_and_named_as_a_stall ... FAIL
+         reason: AssertionError: 0 == 0 : stall went unwatched:   try: http://127.0.0.1:40847/stall
+         restored byte-identical
+    == M3 success path says nothing about the others -> KILLED (6.17s rc=1)
+         test_stalled_candidate_is_named_when_the_next_one_works ... FAIL
+         test_dead_candidate_is_named_on_the_success_path ... FAIL
+         restored byte-identical
+    == M4 floor defaults to 0 (disabled by default) -> KILLED (1.06s rc=1)
+         test_floor_is_read_from_the_environment_with_these_names ... FAIL
+         restored byte-identical
+    == driver done, 0 problem(s)
+
+M1's two `ERROR`s are `subprocess.TimeoutExpired`: with the flags removed, nothing aborts,
+which is the original defect reproduced rather than asserted. M2 is the interesting one --
+with the exit gate gone and `min_bytes` at 1, the harness *accepts* the stalled 384-byte body
+and exits 0, so the test's first assertion is on the status and not only on the wording.
+
+== 6. The same behaviour inside a container with no route to the network
+
+`scripts/ci/release-integrity-serve.py` gained `--throttle CASE=BYTES_PER_SEC`, repeatable,
+which paces that scenario's responses. Two scenarios were added to
+`scripts/install-integrity-in- docker.sh` by copying the `good` release directory twice, so
+the bytes, the digest and the signature are identical to the scenario that installs cleanly
+and only the endpoint's pacing differs. Smoke test of the pacing, against the shipped server
+on this host:
+
+    good   rc=0 elapsed=0.02s bytes=1048577
+    slow   rc=0 elapsed=4.04s bytes=1048577
+    stall  rc=28 elapsed=3.04s bytes=372
+
+Then the lab, in a `--network none` container:
+
+    $ bash scripts/install-integrity-in-docker.sh
+    == what a mirror that is up and useless does
+       ok  stall: refused a mirror serving 128 B/s after 19s (exit 1) -- why: stalled under 1024
+    B/s for 3s from http://127.0.0.1:8099/stall/https://
+       ok  stall: the artifact was really requested, so this is a transfer that was watched and
+    not a 404 in disguise
+       ok  stall: nothing installed behind the refusal
+       ok  slow: the same artifact at 262144 B/s installs in 4s, past the 3s window, checksum and
+    signature both verified
+       ok  slow: what landed runs and reports 9.9.9
+    ...
+    all 40 release-integrity checks passed
+
+Every case in that lab now runs under `timeout 300` inside the container. Without it a
+regression in the floor turns the stall scenario into a 1 MiB download at 128 B/s, which is
+hours, and the lab would read as slow rather than as wrong; the stall assertion also checks
+that the exit code is not 124, so a passing case is the installer deciding and not the leash.
+
+The lab's own stall case was then checked for the ability to fail, by dropping the
+`--throttle` flag for its scenario so the endpoint serves those bytes at full speed:
+
+    == mutant run rc=1 in 35.0s
+       stderr  - stall: exited 0; the artifact arrived and the installer never objected to the rate
+       stderr  - stall: refused, yet bin/chaos is present and runnable
+    == lab NOTICED the un-throttled mirror
+    restored byte-identical
+
+== 7. Gate legs
+
+    $ python3 scripts/ci/check-script-portability.py
+    script-portability: OK (24 shell script(s))
+    $ python3 scripts/ci/check-pipefail-report.py
+    pipefail-report: OK (31 shell script(s), 23 with `set -e` scanned, 0 hazard assignment(s))
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (70 files in scripts/ci/, 69 reachable, 65 run by scripts/verify-in-
+    docker.sh, 4 recorded CI-only, 1 exempt)
+    $ python3 scripts/ci/check-lab-coverage.py
+    check-lab-coverage: OK (6 lab(s): 3 run by CI, 3 with a current ledger row)
+
+The new fixture is wired on an executable line of both roots: appended to the `installer
+guards` entry of `scripts/verify-in-docker.sh` and as its own step in
+`.github/workflows/ci.yml`, which is what `check-guard-wiring.py` reads.
+
+The container leg for that same entry, with the new fixture inside it:
+
+    $ ./scripts/verify-in-docker.sh --only "installer guards"
+    Ran 11 tests in 30.292s
+
+    OK
+
+    selected gates passed in chaos-verify:local
+      --only was in effect: 1 of 37 gates ran, so this is not a full sweep
+
+The `37` is what the entry point counts outside `--full`: the two cargo-appended gates are
+added only in full mode, so a full sweep runs 39 and `--only` reports the 37 it selects from.
+The suite that ran inside that gate is the same 11 tests as section 4, plus the four other
+installer fixtures the entry bundles (14 + 8 + 5 + 11 tests).
+
+== 8. Reproduce
+
+The fixture is the durable form of every measurement above; the raw curl numbers are not
+needed to check the conclusions, but they are reproducible without this log:
+
+    $ python3 scripts/ci/test-installer-download-size.py
+    $ python3 scripts/ci/test-installer-download-stall.py
+    $ bash scripts/install-integrity-in-docker.sh
+
+To re-measure the four curl rows, paste this into a shell. It is the probe used in section 1,
+in one piece: an endpoint that feeds 1 KiB/s on `/trickle` and 128 KiB/s on `/paced`, fetched
+twice each, with and without the floor.
+
+    $ python3 - <<'PY'
+    import http.server, subprocess, tempfile, threading, time, os
+    B = 1024 * 1024
+    ROUTES = {"/trickle": (B * 8, 1024, 1.0), "/paced": (B, 128 * 1024, 1.0)}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def log_message(self, *a): return None
+        def do_GET(self):
+            total, chunk, pause = ROUTES[self.path]
+            self.send_response(200)
+            self.send_header("Content-Length", str(total))
+            self.end_headers()
+            sent = 0
+            try:
+                while sent < total:
+                    self.wfile.write(b"z" * min(chunk, total - sent)); self.wfile.flush()
+                    sent += chunk
+                    time.sleep(pause)
+            except OSError:
+                return
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    dest = os.path.join(tempfile.mkdtemp(prefix="chaos-curl-stall-"), "body")
+    for label, route, floor, bound in [
+            ("stall  +floor", "/trickle", True, 20), ("stall  nofloor", "/trickle", False, 25),
+            ("slowok +floor", "/paced", True, 60)]:
+        args = (["curl", "-fL", "--retry", "2", "--retry-delay", "1", "--connect-timeout", "12",
+                 "-o", dest, "-w", "%{http_code}"]
+                + (["--speed-limit", "2048", "--speed-time", "2"] if floor else [])
+                + [f"http://127.0.0.1:{srv.server_address[1]}{route}"])
+        if os.path.exists(dest):
+            os.remove(dest)
+        t0 = time.monotonic()
+        try:
+            p = subprocess.run(args, capture_output=True, text=True, timeout=bound)
+            code, rc = p.stdout.strip(), p.returncode
+        except subprocess.TimeoutExpired:
+            code, rc = "", "timeout"
+        print(f"{label:16s} rc={str(rc):<8s} http_code={code!r:<7s} "
+              f"elapsed={time.monotonic() - t0:5.2f}s bytes={os.path.getsize(dest)}")
+    srv.shutdown()
+    PY
+
+The two probes in the tail of section 1 are this one script; block A prints the slow-head
+rows, block B the three destinations. It serves a 128 B/s trickle, so it takes about 20 s.
+
+    $ python3 - <<'PY'
+    import http.server, os, subprocess, tempfile, threading, time
+
+    SLOW_BODY = b"z" * (512 * 1024)
+    STALL_RATE = 128
+    STALL_BODY = bytes(STALL_RATE * 20)
+
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def log_message(self, *a): return None
+        def do_GET(self):
+            paced = self.path == "/stall"
+            if self.path == "/slowhead":
+                time.sleep(3)              # connection up, no response head for 3 s
+            body = STALL_BODY if paced else SLOW_BODY
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                if paced:
+                    for i in range(0, len(body), STALL_RATE):
+                        self.wfile.write(body[i:i + STALL_RATE]); self.wfile.flush()
+                        time.sleep(1)
+                else:
+                    self.wfile.write(body)
+            except OSError:
+                pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    BASE = ["curl", "-fL", "--retry", "2", "--retry-delay", "1", "--connect-timeout", "12",
+            "-w", "%{http_code} %{time_total}"]
+
+    for path in ("/slowhead", "/fast"):          # A: armed before the first byte?
+        for floor in (1024, 0):
+            args = list(BASE) + ["-o", os.devnull]
+            if floor:
+                args += ["--speed-limit", str(floor), "--speed-time", "1"]
+            args.append("http://127.0.0.1:%d%s" % (port, path))
+            t0 = time.monotonic()
+            p = subprocess.run(args, capture_output=True, text=True, timeout=60)
+            print(f"{path:10s} floor={floor:<5d} rc={p.returncode:<3d} out={p.stdout.strip()!r} "
+                  f"elapsed={time.monotonic() - t0:.2f}s")
+
+    dest = os.path.join(tempfile.mkdtemp(prefix="chaos-curl-dest-"), "body")
+    for name, out in ((os.devnull, os.devnull), ("real file", dest),
+                      ("missing dir", "/nonexistent-dir-x/y.bin")):
+        if os.path.exists(dest):
+            os.remove(dest)
+        args = list(BASE) + ["--speed-limit", "2048", "--speed-time", "2", "-o", out,
+                             "http://127.0.0.1:%d/stall" % port]
+        t0 = time.monotonic()
+        p = subprocess.run(args, capture_output=True, text=True, timeout=60)
+        have = os.path.getsize(dest) if os.path.exists(dest) else 0
+        code = p.stdout.split()[0] if p.stdout else ""
+        print(f"{name:12s} rc={p.returncode:<3d} http_code={code:4s} "
+              f"elapsed={time.monotonic() - t0:5.2f}s bytes_at_dest={have}")
+    srv.shutdown()
+    PY
+
+The timing columns vary from run to run; the exit codes, the status strings and the byte
+counts do not. `http_code=` is empty on the `/dev/null` row because curl wrote nothing at all
+for `-w` on that row.
+
+The first version of this script was wrong in a way worth naming, because the same mistake
+silently voids whatever the probe claims to have measured: it chose the paced branch with
+`self.path != "/slowhead"`, which made `/fast` a trickle route as well, and the two "fast"
+rows then measured the slow endpoint. The tell was `/fast floor=1024 rc=23` -- a row existing
+to show an untouched transfer coming back aborted. Select the paced branch by the route's own
+name, and read the control row before believing the experimental one.
+
+The mutation drivers in sections 5 and 6 are not committed: they mutate tracked files, which
+is the one thing a repository should not keep a recipe for. Their structure is stated in this
+log because that is the part worth keeping -- anchor must appear exactly once, baseline must
+be green before anything is edited, restore with `cp` then `cmp`, in a `finally`.
