@@ -75,6 +75,15 @@ is set to the value both CI jobs set it to, because `xai-grok-shell` has actor t
 that overflow the harness default and the lab's claim is that it runs CI's command
 list.
 
+The build context is a second thing to keep honest. The image itself reads one
+file, `rust-toolchain.toml`, and the tree arrives later as a bind mount, so
+`.dockerignore` is an allow list (`*`, plus `!rust-toolchain.toml`) rather than a
+list of exclusions. Without it `docker build` uploads the whole working tree,
+which on a day's development is hundreds of gigabytes of `target/` before it
+reads those 740 bytes. A `COPY` added to the Dockerfile therefore needs a matching
+`!` line; forgetting one fails the build with `not found` instead of silently
+producing a thinner image.
+
 The run checksums every tracked and untracked file before the first gate and again
 after the last one. A mismatch prints `UNATTRIBUTABLE` and exits non-zero: the
 container reads the live working tree, so a run that overlapped an edit describes
@@ -144,6 +153,19 @@ because a document sometimes has to print a broken command to show what was wron
 it, and a quotation of a mistake looks exactly like a recommendation unless the row says
 otherwise. A row whose finding has gone away fails as stale, so fixing the line means
 deleting the row rather than leaving it behind.
+
+`scripts/ci/check-doc-path-refs.py` is the companion gate: it reads the paths themselves
+rather than the commands around them, and a document may not name a file the repository
+does not have. For a change with an evidence log that fixes the order of operations,
+because `CHANGELOG.md` and `TODO.md` cite the log by path -- so write the log first.
+Citing it early reports the failure against the citing line instead:
+
+```
+check-doc-path-refs: CHANGELOG.md:29: `docs/verification/pipefail-report-gate-2026-10-04.log` resolves to nothing in the repository (unrecorded)
+```
+
+A doc worded correctly then looks like the broken part, and the file that has not been
+written yet is never named as the cause.
 
 ### A metric call with the wrong number of labels aborts the process
 
@@ -323,6 +345,36 @@ allow list on purpose: if a rule fires, the script gets rewritten.
 `scripts/ci/test-script-portability.py` injects one violation per rule and
 asserts the check still exits 1, because a scanner that stopped matching looks
 exactly like a repository that was fixed.
+
+### Shell scripts that stop before they report
+
+The other way a script in `scripts/` goes wrong without saying so. Under
+`set -e`, a plain `name="$(pipeline)"` assignment takes its exit status from the
+command substitution, so the script ends at the assignment line. That is right for
+a command that failed, and wrong for one whose non-zero status is an ordinary
+answer: `grep` exits 1 when nothing matched, `diff` exits 1 when the files differ,
+`wc` exits non-zero when the file it was asked to measure is not there. Three
+shipped scripts did this on 2026-10-04, and in every one of them the exit code was
+already correct while the report was gone, because the code that prints the report
+sat one statement later.
+
+`scripts/ci/check-pipefail-report.py` rejects that assignment shape for those
+commands; the fix is a command without the extra status (`sed '/^$/d'` rather than
+`grep -v '^$'`, `awk 'NF { n += 1 } END { print n + 0 }'` rather than `grep -c .`)
+or an explicit `|| true` that keeps the handling below reachable. Like the
+portability check it has no allow list. It skips `local`/`export` assignments,
+which mask the status instead of propagating it, and it reads quoted strings as
+text, so a `| grep` inside a printed message is not a pipeline. A script has to
+turn `-e` on to be in scope at all: `set -uo pipefail` produces the same non-zero
+status and leaves nobody to act on it, which is why the host gate runner
+(`scripts/verify-gates.sh`, and it needs that, because it aggregates gate failures)
+is not scanned.
+
+`scripts/ci/test-check-pipefail-report.py` keeps both directions honest: the three
+lines that shipped are in it verbatim, so they stay test cases, and near misses
+(`ROOT="$(cd "$(dirname "$0")" && pwd)"`, a heredoc body writing a `grep`, a
+message containing `|| true`) have to stay quiet. A gate that cries wolf on those
+gets switched off, which is how the three survived as long as they did.
 
 ## Remote workspace sessions
 

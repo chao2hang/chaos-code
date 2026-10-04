@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+### 改进：容器入口此前只能从干净克隆里跑，真正的原因是仓库没有 `.dockerignore`
+
+`scripts/verify-in-docker.sh` 的镜像只 `COPY` 一个文件（`rust-toolchain.toml`，740 字节），
+源码树是运行时 bind 挂载进去的，cargo 那四十来 GB 产出住在命名卷里。但仓库没有
+`.dockerignore`，于是 `docker build` 每次仍要先把整个上下文打包上传：开发一天之后的这棵树是
+`target` 270 GB、`.git` 210 MB、`apps/chaos-ui/node_modules` 143 MB，连 `target` 一起除掉也还有
+890 MB。这才是那条入口一直只能从一次性克隆里跑的原因，而不是一句「那样更干净」的风格偏好。
+
+`.dockerignore` 写成白名单而不是黑名单：`*`，再加一条 `!rust-toolchain.toml`。实测上下文从整棵树
+变成 41 字节的校验和（`#3 transferring context: 41B`），一个 `FROM scratch` 的探针从下单到出镜像
+303 ms。白名单的风险是「Dockerfile 里新加一条 `COPY` 就静默少一个文件」，所以这一条也测了：把探针
+改成 `COPY CHANGELOG.md /` 之后构建直接失败在
+`ERROR: failed to build: ... "/CHANGELOG.md": not found`，而不是产出一个更薄的镜像。
+`CONTRIBUTING.md` 的容器一节把这件事写在了改 Dockerfile 的人会读到的位置。
+
+同日两条容器验证。新门禁从工作树直接在容器里跑（`--only "pipefail report"`，1 of 33，15 秒），
+runner 自己那句 `10 path(s) differ from HEAD, so this run describes the working tree, not a commit`
+原样留在证据里，它说的就是这次跑的不是某个 commit。推送上去的 `021b5453` 另外跑了完整 `--full`：
+34 条门全绿 `all gates passed in chaos-verify:frozen`，exit 0，`cargo test` 的 386 个
+`test result:` 合计 31594 passed / 0 failed / 485 ignored，而上一条 `8a52ff0a` 红的正是
+`cargo clippy` 与 `cargo test` 那两条。全过程见
+`docs/verification/verify-in-docker-full-021b5453-2026-10-04.log`。
+
+（2026-10-04；`.dockerignore`、`CONTRIBUTING.md`、
+`docs/verification/pipefail-report-gate-2026-10-04.log`、
+`docs/verification/verify-in-docker-full-021b5453-2026-10-04.log`）
+
+### 门禁：新增一条 shell 静态检查，专抓「退出码是对的、报告被打断了」的那个赋值形状
+
+`set -e` 的脚本里 `name="$(管道)"` 这种裸赋值会继承命令替换的退出码。命令真失败时这是对的；但当
+非零本来就是「答案」而不是「错误」时它是错的：`grep` 没匹配到任何行 exit 1，`diff` 发现文件不同
+exit 1，`wc` 要量的文件不在也非零。这三种情况下脚本其实早就决定了该怎么解读这个非零，而写着那套
+解读的几行在赋值下面——脚本到赋值就停了。2026-10-04 有三处这样的代码上了车
+（`scripts/verify-in-docker.sh`、`scripts/ci/check-versions.sh`、`scripts/install.sh`），三处退出码
+都对，丢的都是给人看的那段话。
+
+`scripts/ci/check-pipefail-report.py` 就是拒收这个形状：31 个 shell 脚本里 23 个开了 `-e`，修完之后
+的树 0 处命中；把三个文件修复前的版本从 git 里取出来对着跑，它报出 3 处并逐条给出改法。在范围内的
+只有开了 `-e` 的脚本，`set -uo pipefail` 产生同样的非零码却没有人去消费它。这条边界不是设计出来的，
+是被一次误报逼出来的：规则的早期版本把 `scripts/verify-gates.sh` 的
+`lines="$(printf '%s\n' "$list" | grep -c .)"` 也报了，而那个 runner 第 43 行是 `set -uo pipefail`，
+它要聚合各门禁的失败而不是死在第一个上，所以从来没开 `-e`。两种拼法各测一遍：`-uo pipefail` 下赋值
+的下一句照常执行并拿到 `lines=0`，`-euo pipefail` 下那句执行不到、shell exit 1。那处改动已回退，
+误报本身固化成 fixture 里的 `OUT_OF_SCOPE_LINE` 与一条把两种拼法对着跑的对照用例。
+
+规则自己的两个坑是同一天踩的，形状和它要抓的东西一模一样。`STRICT_RE` 里的 `^` 一开始没带
+`re.MULTILINE`，于是它只能匹配「文件第一个字节就是 `set`」的脚本，门禁于是打印
+`OK (31 shell script(s), 0 of them strict)`：一个都没比就报告通过。第二个坑是找替换结尾的 `)"` 时
+先剥掉引号里的内容，而 `name="$(f)"` 的收尾正好落在引号里，被一起剥掉，正文于是读到文件末尾，报出
+12 处假的（`start="$(date +%s)"`、`tree_dir="$(mktemp -d)"` 都在里面）。两处现在都由
+`test-check-pipefail-report.py` 把住：17 例在未改动的门禁上全绿，11 个变异全被杀，其中「`^` 不带
+MULTILINE」那一个一次杀掉 13 例；每次变异后 `cp` 还原、`cmp` 复核字节一致。
+
+写证据的过程中还撞到文档自己的一条顺序依赖，也一并写进了 `CONTRIBUTING.md`：
+`check-doc-path-refs.py` 不许文档指向仓库里还不存在的路径，而 `CHANGELOG.md` 与 `TODO.md`
+正是按路径引证据的，于是「先写日志、再写引用」是被门禁定死的次序。先写引用时报的是引用那一行
+（`CHANGELOG.md:29: ... resolves to nothing in the repository (unrecorded)`），措辞没错的文档
+反倒像是出问题的那一处，真正还没落盘的文件从不被点名。
+
+（2026-10-04；`scripts/ci/check-pipefail-report.py`、`scripts/ci/test-check-pipefail-report.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、`CONTRIBUTING.md`、
+`docs/verification/pipefail-report-gate-2026-10-04.log`）
+
 ### 修复：`install.sh` 的体积探测一失败就把整个镜像回退循环杀死，而它下一行就写着失败时该怎么办
 
 `download_github` 逐个试候选 URL：正文小于 `min_bytes`、或者 200 后面跟的是 HTML 代理页，就换下一个，

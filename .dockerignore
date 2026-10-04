@@ -1,0 +1,18 @@
+# Build context for docker/verify.Dockerfile, the only image built from this directory
+# (scripts/verify-in-docker.sh, and the same command quoted by
+# scripts/remote-acceptance-in-docker.sh).
+#
+# Ignoring everything except the one file the Dockerfile reads is not a micro-optimisation, it is
+# what decides whether the entry can be run at all. The image is not a copy of the repository: the
+# source tree is bind-mounted at /src when the container starts, and the cargo output goes to named
+# volumes, so the build itself consumes a single file. Everything else in the context is uploaded
+# and thrown away. On the machine this was written on that upload was 270 GB of target/, 210 MB of
+# .git and 143 MB of node_modules, which is why the entry had only ever been run from a throwaway
+# clone of a committed tree -- a contributor with a warm working tree could not run it at all.
+#
+# The allow list fails loudly rather than quietly: a future `COPY scripts/foo` that is not added
+# here errors out during the build, instead of silently shipping a stale or absent file.
+*
+
+# Read by the toolchain-pinning step, which installs the pinned toolchain before the tree exists.
+!rust-toolchain.toml

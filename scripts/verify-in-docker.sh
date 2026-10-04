@@ -179,6 +179,12 @@ gates=(
   "workflow toolchain: python3 scripts/ci/test-check-workflow-toolchain.py && python3 scripts/ci/check-workflow-toolchain.py"
   "workflow yaml: python3 scripts/ci/test-check-workflow-yaml.py && python3 scripts/ci/check-workflow-yaml.py"
   "script portability: python3 scripts/ci/check-script-portability.py && python3 scripts/ci/test-script-portability.py"
+  # The complement of portability: a shell script that runs everywhere but stops early. A plain
+  # `name="$(pipeline)"` assignment under `set -e` inherits the status, so a `grep` that matched
+  # nothing or a `diff` that found a difference ends the script before its own report. Three sites
+  # shipped that way on 2026-10-04, all three with the correct exit code and no words. Out of scope
+  # are the `set -uo pipefail` scripts, this file's own host runner among them.
+  "pipefail report: python3 scripts/ci/test-check-pipefail-report.py && python3 scripts/ci/check-pipefail-report.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
   # The census cannot see a Prometheus call whose label count is wrong, because the panic
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says

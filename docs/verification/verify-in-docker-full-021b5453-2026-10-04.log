@@ -1,0 +1,157 @@
+# The full container run at 021b5453: 34 gates green, including the two that were red last time (2026-10-04)
+
+`scripts/verify-in-docker.sh --full` was run end to end against the committed tree at
+`021b5453`, the commit that gave both gate runners a `--only`, mirrored `RUST_MIN_STACK`
+into the host runner, and fixed the two shell scripts that died before printing a report. It
+came back `all gates passed in chaos-verify:frozen` with exit code 0.
+
+That matters because the same command at the previous two commits ended `FAILED gates: cargo
+clippy cargo test` -- see `docs/verification/verify-in-docker-full-8a52ff0a-2026-10-04.log`,
+where both reds were defects in a test that commit had just shipped. Here both of those
+gates pass, so the workspace builds warning-free under `-D warnings` and the whole `cargo
+test --workspace --locked --no-fail-fast` leg is green in a container that started from
+`debian:bookworm-slim`.
+
+The 3.0 MB / 35 736-line transcript is not committed. Everything quoted below is copied out
+of it, and the last section gives the commands to reproduce the run and to re-measure the
+counts.
+
+== 0. Where the run sits, and why not in the working tree
+
+Same arrangement as `docs/verification/verify-in-docker-full-a04e91a7-2026-10-04.log`
+section 0: the script bind-mounts the repository root it was invoked from and fingerprints
+the working tree before and after, so a sweep that describes a commit has to run from a tree
+that is nothing but that commit. On 2026-10-04 that became less necessary -- `.dockerignore`
+makes the entry point cheap enough to run from a live tree, and a `--only` run from one is
+recorded in `docs/verification/pipefail-report-gate-2026-10-04.log` section 8 -- but a full
+sweep still does not belong next to an editor.
+
+    $ cd /var/tmp/verify-frozen-a04e91a7
+    $ git fetch -q origin main && git checkout -q --detach 021b5453
+    $ git log --oneline -1
+    021b5453 fix(ci,installer,shell): 三处「退出码对了、报告没了」的缺陷，加两个 runner 的 --only 与环境镜像
+    $ git status --porcelain | head -3
+    $ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full > "$L" 2>&1
+
+The empty `git status` line before the run is what makes the checksum below a claim about
+`021b5453` rather than about whatever was in the way.
+
+== 1. The verdict, as printed
+
+    == preparing cargo cache volumes
+    == source tree: 4006 files, checksum 2419869843
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == toolchain matches the pin
+    rustc 1.94.0 (4a4ef493e 2026-03-02)
+    cargo 1.94.0 (85eff7c80 2026-01-15)
+
+    == pinned protoc launcher
+    libprotoc 29.3
+
+    ...
+
+    GUI protocol types are up to date
+
+    all gates passed in chaos-verify:frozen
+
+and the exit code, from the `echo` appended to the command rather than from the script:
+
+    DOCKER-FULL-EXIT=0
+
+The run printed no `UNATTRIBUTABLE` line. The script recomputes the same checksum after the
+last gate and says that only on a mismatch, so its absence is the statement that all 34
+gates belong to the tree whose checksum is 2419869843 and that nothing moved while they ran:
+
+    $ grep -c UNATTRIBUTABLE "$L"
+    0
+
+Elapsed time was 2 140 seconds (35 minutes 40 seconds), from the transcript's creation to
+its last write (`stat` birth 12:36:06, mtime 12:57:46), which is the wall clock of a
+cold-ish clippy leg on top of a warm cargo volume.
+
+== 2. Which gates ran
+
+`--full` appends `cargo test` and `GUI protocol types` to the array, so the run selected 34
+labels. Every one of them appears as its own `== <label>` heading, checked by driving the
+label list rather than by counting heading lines (several gate commands print their own `==`
+headings, so a bare count of those is 41 and means nothing):
+
+    $ bash scripts/verify-gates.sh --list | while IFS= read -r lab; do
+          grep -q "^== ${lab}$" "$L" || echo "missing: $lab"
+      done
+    missing: pipefail report
+
+That one absence is the only difference, and it is expected: the `pipefail report` gate
+arrived in the working tree after `021b5453` and is measured on its own in
+`docs/verification/pipefail-report-gate-2026-10-04.log`. The other `==` lines in the
+transcript, `== the release version and everything that must equal it` among them, are
+output written by `scripts/ci/check-versions.sh` and
+`scripts/ci/test-installer-asset-names.py`, not gate headings.
+
+== 3. The two gates that were red at 8a52ff0a
+
+`cargo clippy` compiles the workspace with `-D warnings` and prints nothing but cargo's own
+progress lines. Its section ends:
+
+    == cargo clippy
+       Compiling xai-grok-pager-bin v0.4.2 (/src/crates/codegen/xai-grok-pager-bin)
+        Checking xai-grok-shell v0.4.2 (/src/crates/codegen/xai-grok-shell)
+        Finished `dev` profile [unoptimized] target(s) in 1m 21s
+
+and the transcript contains no diagnostic at all, which is the check:
+
+    $ grep -cE '^(error|warning):' "$L"
+    0
+
+`cargo test --workspace --locked --no-fail-fast` runs to completion with no failing test
+binary:
+
+    $ grep -c '^test result:' "$L"
+    386
+    $ grep -E '^test result: FAILED' "$L" | grep -c ''
+    0
+
+Re-adding the counts across those 386 result lines, unit tests, integration tests and the 95
+doc-test crates together:
+
+    test result lines: 386  passed=31594 failed=0 ignored=485  doc-test crates=95
+
+The 485 ignored tests are the population that `scripts/ci/ignored-tests-baseline.tsv`
+accounts for; the `ignored-test baseline` gate is one of the 34 and passed in this same run,
+so the number is not new debt, it is the recorded debt.
+
+== 4. What this run does not establish
+
+It is Linux-only platform evidence. It says nothing about the macOS or Windows code paths,
+about signing, about installers, or about a real TLS-terminating deployment, and it is not a
+substitute for the CI run of the same commit, which additionally runs the GUI browser E2E
+and the frontend jobs.
+
+It also predates the gate this batch adds. The `pipefail report` gate was still uncommitted
+while this ran, so its 34-gate result and the 1-gate `--only` run are two separate pieces of
+evidence and are quoted separately, not merged into a claim that "35 gates passed".
+
+Finally, a green `cargo test` under `--no-fail-fast` on this machine does not retire the
+known load-sensitive cases: the platform leg's ignored-test list and the `--full`-only
+timing assumptions in `CONTRIBUTING.md` still stand as written.
+
+== 5. Reproduce it
+
+    # from a clone detached at the commit, with the tree at rest
+    cd /var/tmp/verify-frozen-a04e91a7
+    git fetch -q origin main && git checkout -q --detach 021b5453
+    IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full \
+      > /tmp/verify-full-021b5453.log 2>&1; echo "DOCKER-FULL-EXIT=$?"
+
+    # the verdict and the two gates that were red at 8a52ff0a
+    tail -3 /tmp/verify-full-021b5453.log
+    grep -cE '^(error|warning):' /tmp/verify-full-021b5453.log
+    grep -c '^test result:' /tmp/verify-full-021b5453.log
+
+    # every label ran
+    bash scripts/verify-gates.sh --list | while IFS= read -r lab; do
+      grep -q "^== ${lab}$" /tmp/verify-full-021b5453.log || echo "missing: $lab"
+    done

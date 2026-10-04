@@ -831,6 +831,46 @@ Rust 代码里时，不带 `--with-build` 的那一轮不算验证过，它覆�
 （`sed '/^$/d'`），要么显式吸收它（`|| true`）并让下一行的兜底真的可达。夹具必须断言 stderr 而不只是
 断言退出码，否则它抓不到「对了码、丢了字」这一整类缺陷。**
 
+## 2026-10-04：抓「报告被吃掉」的那条新门禁，自己两次把报告写错
+
+新规则 `scripts/ci/check-pipefail-report.py` 在有人能用之前跑了三遍，三遍的判决都有问题，而错的
+方式和它要抓的缺陷同形。
+
+第一遍是规则报出的头一处命中，它是个误报。原型扫真树打印 `tracked *.sh: 31  hazard sites: 1`，指到
+`scripts/verify-gates.sh` 的 `lines="$(printf '%s\n' "$list" | grep -c .)"`，我照着把 `grep -c .`
+换成 awk 计数并写了注释说「这个 `set -euo pipefail` 脚本会死在这里」。回头核实才发现那个 runner
+第 43 行是 `set -uo pipefail`，从来没开 `-e`——它要聚合各门禁的失败，不是死在第一个上。用 bash 把
+两种拼法各跑一遍才把边界定下来：`-uo pipefail` 下赋值的下一句照常执行并拿到 `lines=0`，也就是那条
+自测本来就打印得出 `not ok`；`-euo pipefail` 下执行不到、shell exit 1。改动回退到 HEAD，误报本身
+固化成 fixture 里的 `OUT_OF_SCOPE_LINE` 加一条把两种拼法对着跑的用例，另有一条变异专门把它请回来
+（M11，杀 2 例）。
+
+第二遍打印的是 `pipefail-report: OK (31 shell script(s), 0 of them strict)`。`OK` 是真的，`0` 也是
+真的：判「这个脚本有没有开 `set -e`」的正则里 `^` 没带 `re.MULTILINE`，于是它只可能匹配「文件第一个
+字节就是 `set`」的脚本，而这棵树上的 `set` 行落在第 5 到第 55 行。23 个本该进范围的脚本一个都没进，
+门禁拿着空集合报告通过。「没有命中」和「一次都没比」打印出来是同一句话。
+
+第三遍报出 12 处，全是假的。找命令替换的收尾 `)"` 时先剥掉引号里的内容，而 `name="$(f)"` 的收尾正好
+在引号里面，于是一起被剥掉，正文于是读到文件末尾，把后面无关行里的 `grep` 算成这条流水线的阶段：
+`start="$(date +%s)"`、`tree_dir="$(mktemp -d)"` 都在名单上。收尾得靠按引号与 `$(` 嵌套走一遍上下
+文栈来找，既不能搜字符串也不能数括号。
+
+最后 17 例 fixture 在未改动的门禁上全绿，11 个变异全被杀（其中「`^` 不带 MULTILINE」那一个一次杀
+13 例），接线在 `.github/workflows/ci.yml` 与 `scripts/verify-in-docker.sh` 两处。
+
+顺带查清了一件被当成惯例接受了很久的事。`scripts/verify-in-docker.sh` 一直被记成「只能从干净克隆里跑」，
+理由是它会指纹化当前工作树；但真正拦住人的是仓库没有 `.dockerignore`：镜像只 `COPY` 一个 740 字节的
+`rust-toolchain.toml`，树是 bind 挂载的，可 `docker build` 每次仍要先上传整棵上下文（`target` 270 GB、
+`.git` 210 MB、`node_modules` 143 MB）。补上 `*` + `!rust-toolchain.toml` 之后同一条命令从工作树跑只要
+15 秒，上下文 41 字节。白名单的风险由负向对照兜住：探针改成 `COPY CHANGELOG.md /` 就构建失败
+`"/CHANGELOG.md": not found`，不会静默产出少一个文件的镜像。
+
+**判据：新写静态检查的第一份证据必须是「它对已知必红的输入红了」，不是「它在真树上是绿的」；判决的
+那一行要把「扫了多少」和「有没有问题」一起打印出来，否则 0 命中与 0 扫描无法区分。规则报出的第一处
+命中要先当成规则的嫌疑对象去实测——用被测语言自己把那一行跑一遍——而不是当成已确认的缺陷去修；
+适用范围的边界由被测实现定，不由正则的作者定。还有一条：一个工具入口「只能从干净克隆/特殊目录里跑」
+是可测的症状，不是可以继承的惯例，先量它慢在哪、卡在哪，再决定要不要绕开它。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

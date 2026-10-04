@@ -714,6 +714,16 @@ jobs:
           # bare "command not found" on a contributor's machine.
           python3 scripts/ci/check-script-portability.py
           python3 scripts/ci/test-script-portability.py
+          # The other way a shell script in this repo can be wrong without saying so. In a
+          # `set -e` script a plain `name="$(pipeline)"` assignment inherits the pipeline's
+          # status, so a stage that exits non-zero for an ordinary answer -- `grep` matching
+          # nothing, `diff` finding a difference, `wc` handed a file that is not there -- ends
+          # the script at the assignment. Three shipped scripts did exactly that on 2026-10-04:
+          # each exited with the right code and printed nothing, because the code that prints
+          # sat one statement later. Scripts running `set -uo pipefail` without `-e` are out of
+          # scope, and scripts/verify-gates.sh is one of them on purpose.
+          python3 scripts/ci/test-check-pipefail-report.py
+          python3 scripts/ci/check-pipefail-report.py
           # Two ratchets over the Rust sources, both from one scanner. The first
           # refuses a crate that gains a production `.unwrap()`, `.expect()`,
           # `panic!` or `unsafe` site; the definition of "production" it uses

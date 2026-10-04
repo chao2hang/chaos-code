@@ -1,0 +1,461 @@
+# The gate for reports that die before they print (2026-10-04)
+
+A shell script running `set -e` that writes `name="$(pipeline)"` takes the pipeline's exit
+status as the assignment's own status. When that status is non-zero the script ends at that
+line. For a command that genuinely failed that is the right thing. It is wrong when the
+non-zero status is a normal answer: `grep` exits 1 when nothing matched, `diff` exits 1 when
+the files differ, `wc` exits non-zero when the file it was asked to measure is not there. In
+those three cases the script has already decided what the non-zero answer means, and the
+lines that say so sit below the assignment and never run.
+
+`scripts/ci/check-pipefail-report.py` rejects that shape. This transcript records what it
+finds on this tree, what it found in the three scripts that shipped it, the false positive
+that fixed the rule's scope, the two bugs the gate itself shipped the same day, and the
+container run. Output is quoted verbatim, including its own punctuation.
+
+== 1. The three sites that shipped, driven from git
+
+The three fixed files are taken at `021b5453^`, i.e. before the fix, and the gate is pointed
+at that directory. Nothing about the tree under test is modified:
+
+$ t="$(mktemp -d)" && mkdir -p "$t/scripts/ci"
+$ for f in scripts/ci/check-versions.sh scripts/install.sh scripts/verify-in-docker.sh; do git show "021b5453^:$f" > "$t/$f"; done
+$ python3 scripts/ci/check-pipefail-report.py --root "$t"
+    scripts/ci/check-versions.sh:91: declared_names="$(grep -v '^$' <<<"$declared" | cut -d' ' -f1 | sort)"
+        grep: exits 1 when nothing matched
+        fix: the non-zero status here is a normal answer, and a plain assignment hands it to `set -e`; use a command without that status (`sed '/^$/d'`, `awk 'NF { n += 1 } END { print n + 0 }'`) or absorb it explicitly with `|| true` so the handling below stays reachable
+    scripts/install.sh:306: size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]')"
+        wc: exits non-zero when its input cannot be read
+        fix: the non-zero status here is a normal answer, and a plain assignment hands it to `set -e`; use a command without that status (`sed '/^$/d'`, `awk 'NF { n += 1 } END { print n + 0 }'`) or absorb it explicitly with `|| true` so the handling below stays reachable
+    scripts/verify-in-docker.sh:244: moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u)"
+        diff: exits 1 when the files differ
+        fix: the non-zero status here is a normal answer, and a plain assignment hands it to `set -e`; use a command without that status (`sed '/^$/d'`, `awk 'NF { n += 1 } END { print n + 0 }'`) or absorb it explicitly with `|| true` so the handling below stays reachable
+    pipefail-report: 3 assignment(s) that can end an errexit script before it prints its report
+$ echo "EXIT=$?"
+    EXIT=1
+
+The same three files as they are now are clean, which is the control that makes the run
+above mean something rather than being a scanner that reports whatever it is shown:
+
+$ h="$(mktemp -d)" && mkdir -p "$h/scripts/ci"
+$ for f in scripts/ci/check-versions.sh scripts/install.sh scripts/verify-in-docker.sh; do cp "$f" "$h/$f"; done
+$ python3 scripts/ci/check-pipefail-report.py --root "$h"
+    pipefail-report: OK (3 shell script(s), 3 with `set -e` scanned, 0 hazard assignment(s))
+$ echo "EXIT=$?"
+    EXIT=0
+
+Each of the three had its own symptom, all of them "the exit code was right and the words
+were missing". They are reproduced in
+`docs/verification/shell-pipefail-silent-report-2026-10-04.log` and, for the runner, in
+`docs/verification/gate-runner-only-and-env-2026-10-04.log`.
+
+== 2. What the gate reads on the current tree
+
+$ python3 scripts/ci/check-pipefail-report.py
+    pipefail-report: OK (31 shell script(s), 23 with `set -e` scanned, 0 hazard assignment(s))
+$ echo "EXIT=$?"
+    EXIT=0
+
+The verdict line names the range it covered, because 0 findings and 0 scans otherwise print
+identically (section 4 is what that cost). `--verbose` lists the files in scope, which is
+how the 23 were checked by hand rather than assumed:
+
+$ python3 scripts/ci/check-pipefail-report.py --verbose
+    pipefail-report: crates/codegen/xai-grok-announcements/generate.sh (set -euo)
+    pipefail-report: crates/codegen/xai-grok-pager/scripts/install-enterprise.sh (set -e)
+    pipefail-report: crates/codegen/xai-grok-pager/scripts/install.sh (set -e)
+    pipefail-report: scripts/ci/check-gui-protocol.sh (set -euo)
+    pipefail-report: scripts/ci/check-versions.sh (set -euo)
+    pipefail-report: scripts/ci/ignored-tests.sh (set -euo)
+    pipefail-report: scripts/ci/local-publish-host.sh (set -euo)
+    pipefail-report: scripts/ci/publish-npm.sh (set -euo)
+    pipefail-report: scripts/ci/test-publish-npm.sh (set -euo)
+    pipefail-report: scripts/install-hooks.sh (set -euo)
+    pipefail-report: scripts/install-integrity-in-docker.sh (set -eu)
+    pipefail-report: scripts/install-integrity-powershell.sh (set -eu)
+    pipefail-report: scripts/install-sh-in-docker.sh (set -eu)
+    pipefail-report: scripts/install.sh (set -euo)
+    pipefail-report: scripts/l10n-guard.sh (set -euo)
+    pipefail-report: scripts/npm-install-in-docker.sh (set -eu)
+    pipefail-report: scripts/remote-acceptance-in-docker.sh (set -euo)
+    pipefail-report: scripts/test-blitz-stress.sh (set -euo)
+    pipefail-report: scripts/test-platform.sh (set -euo)
+    pipefail-report: scripts/upstream-recon.sh (set -euo)
+    pipefail-report: scripts/verify-in-docker.sh (set -euo)
+    pipefail-report: scripts/verify-release-signature.sh (set -eu)
+    pipefail-report: scripts/web-deployment-in-docker.sh (set -euo)
+    pipefail-report: OK (31 shell script(s), 23 with `set -e` scanned, 0 hazard assignment(s))
+
+No file needed an exemption, so there is no allow list. That follows
+`check-script-portability.py`: a rule that fires is fixed in the script, not recorded as
+tolerated.
+
+== 3. The false positive that decided the scope
+
+The rule's first hit was a fourth file, `scripts/verify-gates.sh:455`:
+
+$ grep -n 'set -' scripts/verify-gates.sh | head -3
+    43:set -uo pipefail
+$ sed -n '455p' scripts/verify-gates.sh
+      lines="$(printf '%s\n' "${real_list}" | grep -c .)"
+
+That line is the `--only` pattern check in the host gate runner. The runner sets `-uo
+pipefail` and never turns `-e` on, deliberately: it aggregates every gate's failure into one
+summary instead of dying on the first one. So the assignment's status has nobody to hand it
+to, and the `not ok` branch below it does run. Both spellings were measured rather than
+reasoned about:
+
+$ bash -c 'set -uo pipefail; lines="$(printf "%s\n" "" | grep -c .)"; echo "reached the next statement, lines=$lines"'
+    reached the next statement, lines=0
+$ echo "EXIT=$?"
+    EXIT=0
+$ bash -c 'set -euo pipefail; lines="$(printf "%s\n" "" | grep -c .)"; echo "reached the next statement, lines=$lines"'
+$ echo "EXIT=$?"
+    EXIT=1
+
+`pipefail` is what makes the status non-zero; `-e` is what ends the script. A rule keyed on
+`pipefail` would therefore have flagged a line whose report works, and the fix I had already
+made to it was reverted (`git checkout -- scripts/verify-gates.sh`, then `cmp` against
+HEAD). The scope is `-e`, and the mistake is kept as a test rather than deleted: that exact
+line is `OUT_OF_SCOPE_LINE` in `scripts/ci/test-check-pipefail-report.py`, asserted clean
+under `set -uo pipefail` and flagged the moment `-e` is added, plus
+`test_scope_follows_the_shells_own_errexit`, which runs both preludes through `bash -c` and
+asserts whether the following statement is reached. Mutation M11 widens the scope pattern
+back to "any flag cluster" and is killed by those two cases.
+
+== 4. The gate's own first bug: an OK that had compared nothing
+
+`STRICT_RE` decides whether a file is in scope. Its first revision was written without
+`re.MULTILINE`, so its `^` could only match a script whose very first bytes were `set`.
+Every file looked out of scope. Reproduced by deleting that one argument from the shipped
+file, running the gate, and restoring with a plain `cp` followed by `cmp`:
+
+$ orig="$(mktemp)" && cp scripts/ci/check-pipefail-report.py "$orig"
+$ sed -i '/STRICT_RE/ s/, re.MULTILINE//' scripts/ci/check-pipefail-report.py
+$ python3 scripts/ci/check-pipefail-report.py
+    pipefail-report: OK (31 shell script(s), 0 with `set -e` scanned, 0 hazard assignment(s))
+$ echo "EXIT=$?"
+    EXIT=0
+$ python3 scripts/ci/test-check-pipefail-report.py 2>&1 | tail -3
+    Ran 17 tests in 1.213s
+
+    FAILED (failures=13)
+$ cp "$orig" scripts/ci/check-pipefail-report.py && cmp "$orig" scripts/ci/check-pipefail-report.py && echo restored
+    restored
+
+Exit 0, a green verdict, and a scanned range of nothing. The wording when this was first
+noticed was `OK (31 shell script(s), 0 of them strict)`; it is the same empty range either
+way. Two things close it: the verdict line prints the scanned count, and
+`test_repository_is_clean_and_actually_scanned` parses that count out of the real verdict
+and fails below 5. That is also why M1 ("strict pattern anchored to line 1") is the
+strongest mutation in section 6: it kills 13 of the 17 cases.
+
+== 5. The gate's own second bug: finding the end of a substitution by searching
+
+To read the body of `name="$(...)"` the scanner has to find the paren that closes it.
+Searching for the two characters `)"` does not work, because the closing quote of
+`name="$(f)"` is what makes the substitution's last two characters `)"`; stripping quoted
+contents first deletes the very sequence being searched for, and the body then runs to the
+end of the file. That revision reported 12 findings on a tree that had none. Captured at the
+time, before the parser was rewritten (this revision was never committed, so the run itself
+cannot be repeated):
+
+    scripts/l10n-guard.sh:217: sorted="$(printf '%s\n' "$listing" | sort -u)"
+        rg exits non-zero as a normal answer, and the assignment hands that status to `set -e`
+    scripts/remote-acceptance-in-docker.sh:591: used="$(fresh_token)"
+        grep exits non-zero as a normal answer, and the assignment hands that status to `set -e`
+    scripts/remote-acceptance-in-docker.sh:996: start="$(date +%s)"
+        grep exits non-zero as a normal answer, and the assignment hands that status to `set -e`
+    scripts/verify-in-docker.sh:130: tree_dir="$(mktemp -d)"
+        grep exits non-zero as a normal answer, and the assignment hands that status to `set -e`
+    pipefail-report: 12 assignment(s) that can end a strict script
+
+Four of the twelve are quoted above. Two of them, `tree_dir="$(mktemp -d)"` and
+`start="$(date +%s)"`, contain no hazard command at all, which is what an over-run body
+looks like: a stage from some later line gets attributed to an innocent assignment, and the
+reported reason ("rg exits non-zero as a normal answer") names a command that is not in the
+quoted line.
+
+The fix is `walk()`, a context stack of `sub` / `dq` / `sq` frames, because neither
+searching nor counting parens can find that close: `ROOT="$(cd "$(dirname "$0")" && pwd)"
+has a nested `$(` and a `(` inside quotes, and quote-stripping deletes the answer. The
+durable reproductions are the two parsing fixtures, and they are checked by swapping the
+shipped finder for each naive strategy in turn, running the suite, then restoring with `cp`
+and verifying with `cmp`. Both strategies are four lines at the end of
+`substitution_body()`:
+
+    def substitution_body(text, pos):          # naive strategy 1
+        end = text.find(')"', pos)
+        return text[pos:end] if end >= 0 else ""
+
+    def substitution_body(text, pos):          # naive strategy 2
+        stripped = re.sub(r"'[^']*'|\"[^\"]*\"", "", text, flags=re.S)
+        end = stripped.find(')"', pos)         # offsets now belong to a different string
+        return text[pos:end] if end >= 0 else ""
+
+$ python3 scripts/ci/test-check-pipefail-report.py 2>&1 | tail -3
+    Ran 17 tests in 1.321s
+
+    FAILED (failures=1)
+$ python3 scripts/ci/test-check-pipefail-report.py 2>&1 | tail -3
+    Ran 17 tests in 1.296s
+
+    FAILED (failures=12)
+
+The two strategies fail differently, and reading which cases died is more informative than
+the counts. Strategy 1 kills exactly one case,
+`test_hazard_after_a_nested_substitution_is_still_seen`: searching for `)"` in the raw text
+stops at the first `)` followed by a quote, which is the real end in most lines and the
+wrong one as soon as a substitution is nested. Strategy 2 kills 12 failures across 11 cases,
+and it is the one that takes the two quoting fixtures down with it:
+
+    FAIL: test_absorption_inside_a_string_does_not_count
+    FAIL: test_every_site_in_a_file_is_reported
+    FAIL: test_finding_names_the_answer_and_the_remedy
+    FAIL: test_hazard_after_a_nested_substitution_is_still_seen
+    FAIL: test_here_document_body_is_not_scanned
+    FAIL: test_measured_lines_are_all_flagged        (three subTests)
+    FAIL: test_multiline_assignment_reported_at_its_first_line
+    FAIL: test_nested_quoting_does_not_leak_past_the_assignment
+    FAIL: test_paren_inside_a_quoted_string_does_not_end_the_body
+    FAIL: test_script_without_errexit_is_out_of_scope
+
+The live verdict stayed `OK` under both patches, which is recorded on purpose: an
+over-running scanner and a stopping-early scanner print the same green line on a clean tree,
+and only the fixtures tell them apart.
+
+== 6. Fixtures and mutations
+
+$ python3 scripts/ci/test-check-pipefail-report.py
+    Ran 17 tests in 1.359s
+
+    OK
+
+The 17 cases are: the three measured lines each flagged at a known line number; every site
+in a file reported (3 findings, not the first only); the finding text naming both the answer
+and the remedy; a multi-line assignment reported at its first line; a hazard after a nested
+substitution still seen; a paren inside a quoted string not ending the body; nested quoting
+not leaking past the assignment; `|| true` absorbed; `local`/`export` out of scope; a `set
+-uo pipefail` script out of scope until `-e` is added; the errexit boundary measured against
+`bash -c` itself; a non-hazard pipeline accepted; command names inside strings not treated
+as stages; `|| true` inside a string not counted as absorption; here-document bodies not
+scanned (paired with a positive control); the repository clean and provably scanned; and an
+empty tree reported as an error rather than as a pass.
+
+Mutations, each applied to the shipped file, the fixture suite run, the file restored with
+`cp` and verified with `cmp`. Two things stop a mutation from being counted as killed for
+the wrong reason: the unmutated baseline is run first and a non-green baseline aborts the
+battery, and the count that decides the verdict is the `FAIL:` and `ERROR:` lines of
+unittest's output, so a mutation that breaks the file so badly that no test runs scores 0
+and is printed as SURVIVED with the last line of output beside it (a traceback, in that
+case, rather than a verdict). A mutation whose anchor does not appear exactly once is not
+applied and is likewise reported as SURVIVED.
+
+    baseline (unmutated gate): 'OK', failures=0
+
+    KILLED  13  M1 strict pattern anchored to line 1 (the bug shipped today)
+    KILLED   2  M2 quoted text left visible to the stage scan
+    KILLED   2  M3 explicit `|| true` no longer absorbed
+    KILLED   1  M4 a quote inside a substitution never opens a string
+    KILLED   8  M10 first stage of the substitution never scanned
+    KILLED   2  M5 wc dropped from the hazard list
+    KILLED   1  M6 here-document bodies scanned as code
+    KILLED   1  M7 assignment pattern unanchored (local/export matched too)
+    KILLED   1  M8 only the first site per file reported
+    KILLED   6  M9 line number off by one
+    KILLED   2  M11 scope widened to any flag cluster (brings the verify-gates.sh false positive back)
+
+    mutations: 11  survived: 0
+    gate restored byte-identical
+
+M1 is the empty-range bug from section 4 and kills 13 of the 17 cases. M4 in this matrix
+replaces the `else: stack.append("dq")` branch of the string-frame logic; the more obvious
+mutation, dropping `stack.append("sub")`, was tried first and turned out to be an equivalent
+mutant for the inputs then in the suite, which is why M10 and two of the parsing cases above
+exist.
+
+== 7. Wiring
+
+The gate runs in CI and in the container entry point, on executable lines in both:
+
+$ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (61 files in scripts/ci/, 60 reachable, 56 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+$ bash scripts/verify-gates.sh --list | grep -c ''
+    35
+$ bash scripts/verify-gates.sh --list | grep -n 'pipefail'
+    17:pipefail report
+$ bash scripts/verify-gates.sh --self-test 2>&1 | tail -2
+
+    verify-gates self-test: 47/47 cases pass
+
+`check-guard-wiring.py` is what proves the two wirings are real rather than prose: it parses
+the `gates=()` array of `scripts/verify-in-docker.sh` and the `run:` blocks of
+`.github/workflows/ci.yml`, and counts `scripts/ci/check-pipefail-report.py` and
+`scripts/ci/test-check-pipefail-report.py` among the 56 reachable from the container runner.
+The host runner's `--list` shows the label at position 17 of 35, and `--self-test` still
+parses this repository's real gate array as one of its 47 cases.
+
+== 8. The gate inside the container, from the working tree
+
+$ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report"
+    == preparing cargo cache volumes
+    == source tree: 4009 files, checksum 2949377466
+       10 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    == --only is in effect: 1 of 33 gates selected, this is not a sweep
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == pipefail report
+    test_absorbed_status_is_accepted (__main__.PipefailReportTests.test_absorbed_status_is_accepted) ... ok
+    test_absorption_inside_a_string_does_not_count (__main__.PipefailReportTests.test_absorption_inside_a_string_does_not_count) ... ok
+    test_command_names_inside_strings_are_not_stages (__main__.PipefailReportTests.test_command_names_inside_strings_are_not_stages) ... ok
+    test_declaration_keyword_is_out_of_scope (__main__.PipefailReportTests.test_declaration_keyword_is_out_of_scope) ... ok
+    test_every_site_in_a_file_is_reported (__main__.PipefailReportTests.test_every_site_in_a_file_is_reported) ... ok
+    test_finding_names_the_answer_and_the_remedy (__main__.PipefailReportTests.test_finding_names_the_answer_and_the_remedy) ... ok
+    test_hazard_after_a_nested_substitution_is_still_seen (__main__.PipefailReportTests.test_hazard_after_a_nested_substitution_is_still_seen) ... ok
+    test_here_document_body_is_not_scanned (__main__.PipefailReportTests.test_here_document_body_is_not_scanned) ... ok
+    test_measured_lines_are_all_flagged (__main__.PipefailReportTests.test_measured_lines_are_all_flagged) ... ok
+    test_multiline_assignment_reported_at_its_first_line (__main__.PipefailReportTests.test_multiline_assignment_reported_at_its_first_line) ... ok
+    test_nested_quoting_does_not_leak_past_the_assignment (__main__.PipefailReportTests.test_nested_quoting_does_not_leak_past_the_assignment) ... ok
+    test_non_hazard_pipeline_is_accepted (__main__.PipefailReportTests.test_non_hazard_pipeline_is_accepted) ... ok
+    test_paren_inside_a_quoted_string_does_not_end_the_body (__main__.PipefailReportTests.test_paren_inside_a_quoted_string_does_not_end_the_body) ... ok
+    test_repository_is_clean_and_actually_scanned (__main__.PipefailReportTests.test_repository_is_clean_and_actually_scanned) ... ok
+    test_scope_follows_the_shells_own_errexit (__main__.PipefailReportTests.test_scope_follows_the_shells_own_errexit) ... ok
+    test_script_without_errexit_is_out_of_scope (__main__.PipefailReportTests.test_script_without_errexit_is_out_of_scope) ... ok
+    test_tree_without_shell_scripts_is_an_error (__main__.PipefailReportTests.test_tree_without_shell_scripts_is_an_error) ... ok
+
+    ----------------------------------------------------------------------
+    Ran 17 tests in 2.008s
+
+    OK
+    pipefail-report: OK (31 shell script(s), 23 with `set -e` scanned, 0 hazard assignment(s))
+
+    selected gates passed in chaos-verify:frozen
+      --only was in effect: 1 of 33 gates ran, so this is not a full sweep
+
+The `10 path(s) differ from HEAD` line is the runner's own honesty check and is quoted on
+purpose: this run describes the working tree, not a commit, because the gate and its
+fixtures were still uncommitted when it ran. The image was built from
+`docker/verify.Dockerfile` in the same command (every layer cached, build context 788 B), so
+the container read the live tree through the bind mount. `1 of 33` is the unfiltered array;
+`cargo test` and `GUI protocol types` are appended by `--full` and are not among the 33.
+
+== 9. The sweep, and the one gate that has to run last
+
+The docs for a change cite its evidence log by path, and `check-doc-path-refs.py` rejects a
+doc that names a file the repository does not have yet. So the doc pass and the sweep have a
+fixed order: writing the log is what makes that gate green. Moving the log out of the way
+puts the sweep back into the state this change was in an hour earlier, and the gate fails on
+exactly the citations that were written first:
+
+$ mv docs/verification/pipefail-report-gate-2026-10-04.log /tmp/held-pipefail.log
+$ python3 scripts/ci/check-doc-path-refs.py; echo "exit=$?"
+    check-doc-path-refs: CHANGELOG.md:29: `docs/verification/pipefail-report-gate-2026-10-04.log` resolves to nothing in the repository (unrecorded)
+    check-doc-path-refs: CHANGELOG.md:60: `docs/verification/pipefail-report-gate-2026-10-04.log` resolves to nothing in the repository (unrecorded)
+    check-doc-path-refs: 275 Markdown documents scanned against 4006 tracked paths, 50 dangling mention(s), 26 recorded; 2 problem(s)
+    exit=1
+$ mv /tmp/held-pipefail.log docs/verification/pipefail-report-gate-2026-10-04.log
+
+The first full sweep taken mid-change failed on this one gate for this one reason, 30 other
+labels green and the log still unwritten. With everything in place, the host sweep over the
+whole gate list is green:
+
+$ d="$(mktemp -d)"; bash scripts/verify-gates.sh > "$d/sweep.log" 2>&1; echo "exit=$?"
+    exit=0
+$ grep -c '^PASS' "$d/sweep.log"
+    31
+$ grep -E '^(FAIL|SKIP)|pipefail|all gates' "$d/sweep.log"
+    PASS  pipefail report
+    SKIP  cargo check (build gate; --with-build runs it)
+    SKIP  cargo clippy (build gate; --with-build runs it)
+    SKIP  cargo test (build gate; --with-build runs it)
+    SKIP  GUI protocol types (build gate; --with-build runs it)
+    all gates passed on the host (31 run, 4 skipped)
+
+31 of the 35 labels run on the host; the four skipped ones are the build gates, which
+`scripts/verify-gates.sh` leaves to `--with-build` and which the container runs for real in
+`docs/verification/verify-in-docker-full-021b5453-2026-10-04.log`. The `pipefail report` line
+above is the new label running against this working tree at its position 17 of 35.
+
+== 10. Why this entry point had only ever been run from a throwaway clone
+
+The run above took 15 seconds. Before today it could not be run from a working tree at all,
+because the repository had no `.dockerignore` and `docker build` therefore uploaded the
+entire context for a Dockerfile that reads exactly one file:
+
+$ du -sh target .git apps/chaos-ui/node_modules
+    270G    target
+    210M    .git
+    143M    apps/chaos-ui/node_modules
+$ du -sh --exclude=target .
+    890M    .
+$ wc -c < rust-toolchain.toml
+    740
+
+`docker/verify.Dockerfile` has one `COPY`, of `rust-toolchain.toml`, and the source tree is
+bind-mounted at `/src` when the container runs, with cargo output in named volumes. So the
+upload was pure waste. `.dockerignore` now carries `*` plus a single `!rust-toolchain.toml`.
+Measured with a two-line probe Dockerfile that copies exactly what the real one copies:
+
+$ d="$(mktemp -d)"
+$ printf 'FROM scratch\nCOPY rust-toolchain.toml /\n' > "$d/ok.Dockerfile"
+$ docker build --progress=plain -f "$d/ok.Dockerfile" -t chaos-ctx-probe:tmp .
+    #1 transferring dockerfile: 80B done
+    #2 transferring context: 1.23kB done
+    #3 transferring context: 41B done
+    #5 naming to docker.io/library/chaos-ctx-probe:tmp done
+$ t0=$(date +%s%3N); docker build -q -f "$d/ok.Dockerfile" -t chaos-ctx-probe:tmp . >/dev/null; t1=$(date +%s%3N)
+$ echo "context-to-image: $((t1 - t0)) ms"
+    context-to-image: 303 ms
+
+The first `transferring context` line is the `.dockerignore` itself; the second is the build
+context, 41 bytes of checksums rather than the tree, because BuildKit pulls only what a
+`COPY` needs. The real image build transfers 788 B at that step, which is the 740-byte
+toolchain pin arriving; that command is the last one in the reproduce list.
+
+An allow list is only safe if forgetting a file fails loudly, so the negative control is
+part of the evidence. The same probe, copying something the ignore file does not allow:
+
+$ printf 'FROM scratch\nCOPY CHANGELOG.md /\n' > "$d/bad.Dockerfile"
+$ docker build --progress=plain -f "$d/bad.Dockerfile" -t chaos-ctx-probe:bad .
+    ERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref cni70ams834isst161p23r9e3::q8cvtbjgd6n2aoxoqhtb1eppp: "/CHANGELOG.md": not found
+
+The build fails at build time rather than silently producing an image with a missing file,
+which is the property the allow list needs. The probe image and Dockerfiles were removed
+afterwards.
+
+== 11. What the fix is not
+
+`scripts/verify-gates.sh` was not changed and is byte-identical to HEAD; section 3 says why.
+The gate does not model `set +e` regions, so a file that turns `-e` on anywhere is scanned
+even if the hazard sits inside a `set +e` block; no such site exists on this tree, so
+nothing depends on that being wrong either way. The `local x="$(cmd)"` class (ShellCheck
+SC2155) is out of scope by design: the declaration masks the status instead of propagating
+it, so its failure mode is an empty value used later, which is a different bug with a
+different fix, and no such site has been observed to break here.
+`scripts/verify-in-docker.sh` deliberately has no `--list` of its own; it points at
+`scripts/verify-gates.sh --list`, which prints the labels from the same array.
+
+== 12. Reproduce it
+
+    # the live tree, and the range it covered
+    python3 scripts/ci/check-pipefail-report.py --verbose
+
+    # the three shipped sites, pulled from git
+    t="$(mktemp -d)" && mkdir -p "$t/scripts/ci"
+    for f in scripts/ci/check-versions.sh scripts/install.sh scripts/verify-in-docker.sh; do
+      git show "021b5453^:$f" > "$t/$f"
+    done
+    python3 scripts/ci/check-pipefail-report.py --root "$t"
+
+    # the fixtures, and the errexit boundary measured against bash itself
+    python3 scripts/ci/test-check-pipefail-report.py
+    bash -c 'set -uo pipefail; lines="$(printf "%s\n" "" | grep -c .)"; echo "reached, lines=$lines"'
+    bash -c 'set -euo pipefail; lines="$(printf "%s\n" "" | grep -c .)"; echo "reached, lines=$lines"'
+
+    # in the container, one gate
+    IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --only "pipefail report"
+
+    # the build context the container entry point uploads
+    docker build --progress=plain -f docker/verify.Dockerfile -t chaos-verify:ctx . 2>&1 | grep 'transferring context'
