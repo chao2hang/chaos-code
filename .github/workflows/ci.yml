@@ -114,6 +114,23 @@ jobs:
           python3 scripts/ci/test-check-notices-coverage.py
           python3 scripts/ci/check-notices-coverage.py
 
+      # The SBOM answers the other question -- not "what does this binary owe its users" but "what
+      # is in it" -- and it is read by machines, so a wrong entry is worse than a missing one: a
+      # scanner acts on it. Same dependency as the step above (`cargo metadata --frozen` needs a warm
+      # registry, which is why this is not in the container), same shared reading of the graph, so
+      # the two artifacts cannot disagree about what "shipped" means; `check-sbom.py` asserts they do
+      # not, and the fixtures run the generator too rather than a hand-written document.
+      - name: shipped SBOM
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/test-check-sbom.py
+          python3 scripts/gen-sbom.py --output "$RUNNER_TEMP/chaos.cdx.json"
+          python3 scripts/ci/check-sbom.py --sbom "$RUNNER_TEMP/chaos.cdx.json"
+          # Twice, and byte for byte: the serial number is a fingerprint of the document, so this is
+          # where CI learns that two runs of one tree still agree.
+          python3 scripts/gen-sbom.py --output "$RUNNER_TEMP/again.cdx.json"
+          cmp "$RUNNER_TEMP/chaos.cdx.json" "$RUNNER_TEMP/again.cdx.json"
+
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 

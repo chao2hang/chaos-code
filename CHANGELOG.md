@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+### 门禁：SBOM 接进 CI 与 release，而它对真实 workspace 交出的第一个依赖边数是 0
+
+第三方 notices 那一轮回答的是人读的问题：这份我们签字的许可证文件还覆盖实际构建的东西吗。机器读
+的那一半仍然空着——上游某个 crate 出漏洞时，没有一份机器能消费的清单可以拿去比对，`chaos` 二进制
+里到底有什么只有 `Cargo.lock` 一种写法，而它既不含「哪些包真的进了二进制」的判定，也没有产品身份。
+`scripts/gen-sbom.py` 补的就是这一格：按 `notices_lib.py` 同一套非 dev 依赖边算出的 shipped 集合，
+写出 CycloneDX 1.6 的 JSON。
+
+先量的是产物本身。本仓库今天这份 SBOM 是 1227 个 component：1134 个 registry 第三方包、5 个
+`third_party/` 下带本地改动的 vendored 包、88 个 workspace 成员；根 crate 不作为 component，它是
+`metadata.component`（同一个东西既出现在清单里又出现在产品节点里，扫描器会把它数两次，而
+`xai-grok-pager-bin` 与 `chaos-code` 到底哪个是产品，这份文件必须只回答一次）。依赖图 5130 条边，
+产品节点直连 29 个。`scope: optional` 16 个（15 个第三方加我们自己的 `xai-proto-build`）——判定
+是「只经 build 边到达」。purl 命名空间分两半：`pkg:cargo` 1130、`pkg:generic` 97（4 个 git、93 个
+path），后者不能写成 `pkg:cargo`，因为那是对扫描器宣称「crates.io 上这个名字加这个版本就是我们装的
+东西」，而那些 crate 是我们自己改过或打过补丁的。
+
+第一个真正的缺陷不是被测出来的，是量出来的：对着本仓库跑 `--output`，自报的是
+`components: 1227 … dependency edges: 0`。一份说 1227 个包彼此互不依赖的清单不是稀疏图，是没有图。
+根因在 `depends()`：它拿 `child in known` 过滤，而 `known` 装的是 purl、`children` 装的是 cargo 的
+package id，两者永不相交。当时那套夹具是全绿的，因为基线里那条边数断言是从生成器自己的输出上抄下来
+的——它给缺陷背书而不是揭发它。修法有两层：`depends()` 把 id 映射过 `refs` 再输出；而 durable 的那层
+是 `RealWorkspace` 那组夹具直接对本仓库生成再检查（断言 component 数与第三方数都大于 1000），加上
+`check-sbom.py` 独立地把边集从 `cargo metadata` 重新算一遍、两个方向都比对（少一条报 missing，多一条
+报 extra）。
+
+确定性是被 release 流程逼出来的，不是审美。`serialNumber` 是 `urn:uuid:` 加 uuid5（一个固定的命名空间
+常量，对文档的规范化字节取 sha256 后再取 hex），规范化 = 去掉 `serialNumber` 自身、按 key 排序、紧凑
+分隔符；`metadata.timestamp` 默认不存在，只有 `--timestamp` 或 `SOURCE_DATE_EPOCH` 才写。原因是
+release 里生成 SBOM 的步骤与核对它的步骤不同 job，同一棵树两次构建必须逐字节相同，否则每次比 artifact
+都是噪声。两次生成 `cmp` 一致（1 835 616 字节），`--check` 让一个过期文件成为失败而不是差异。
+
+`hashes` 里放的是 `Cargo.lock` 记录的 SHA-256，1130 个 crates.io 组件各一条。这不是装饰：`cargo
+metadata` 不发布任何校验和，但 lock 里有——那正是 cargo 记下「我解析到的是哪一坨字节」的地方，也是这份
+文档里唯一一条读者不必信任我们这两个脚本就能自己复核的声称。git 与 path 来的包一条都不给：cargo 对从
+目录或仓库里读到的东西不记摘要，凭空补一条等于宣称验过没验过的字节。于是两道脚本都得对 lock 本身表态：
+它今天 1225 个 registry 包块全部带 64 位十六进制 `checksum`、106 个非 registry 包块一个都不带。生成器
+拒绝「registry 包缺 checksum」和「非 registry 包却带 checksum」两种 lock；校验器另用一个逐行解析器独立
+读同一份文件（与生成器那个形状不同：一个按 `[[package]]` 切块、一个逐行走；两个解析器对某条摘要的归属
+不一致时，结果是 finding 而不是默契），并对四种情况报错——摘要属于别的包、算法名不对、一个组件挂两条、
+以及 lock 给非 registry 包记了摘要，最后那种意味着这份文件不是 cargo 写的。端到端也验了一次：1130 条摘要
+与本机 `~/.cargo/registry/cache/` 下实际下载的 `.crate` 的 sha256 全部相等。它说的是「注册表给出的字节与
+缓存里的字节哈希到这个值」，不是「注册表是诚实的」；后者要第二个独立来源或签名，两个离线脚本都给不出，
+于是也都不写。
+
+上游 `bom-1.6.schema.json`（262 666 字节）取下来对真实文档验过一次：`jsonschema 3.2.0`，0 个错误。这条
+验证刻意留在仓库外：那份 schema 本身是一件需要许可证条目的再分发物，而容器里没有 `jsonschema`。所以
+`check-sbom.py` 是手写的结构+语义校验器，它的不空转靠变异证明，而不是靠一份外部 schema。它也只
+import `notices_lib.py`，绝不 import 生成器——两个实现共享同一个 bug 时，一致什么也不证明。
+
+有两处判定是变异才现形的。与 notices 文档对齐那条检查原先从构建侧的 origin 分类算「哪些是第三方」，
+于是组件谎报 `chaos:origin` 时它照旧通过；现在它按文档自己声称的 `chaos:origin` 算，夹具
+`test_the_origin_and_the_notices_membership_are_two_assertions` 钉住这条谎（谎称 workspace 会红，
+vendored 谎报成别的不会——两者都是第三方）。purl 命名空间那一发变异同样一开始漏网，因为形状是从
+`bom-ref` 解析的而只改了 `purl`，现在两个字符串都各自验一遍。
+
+接入位置：`ci.yml` 的 `rust` job 在 notices 核对之后一步（跑夹具、生成、核对、再生成、`cmp`），
+`release.yml` 的 `build` job 用 commit 的 committer date 作时间戳生成并上传 `sbom` artifact，
+`package` job 把 `sbom/chaos.cdx.json` 挂到 GitHub Release 的文件列表里。容器侧的门禁数仍是 39：两个
+新文件都需要对整 workspace 跑 `cargo metadata --frozen`，登记在
+`scripts/ci/docker-entry-ci-only.tsv` 并各附原因。70 例夹具全绿；两发变异矩阵分别 24/24（校验器）与
+19/19（生成器）全灭、0 存活，每一发之后源文件逐字节还原并 `cmp` 验证。生成器那一发
+`hash: publish a digest for local and git packages too` 第一轮没有被打死——不是判定弱，是夹具表达不出
+这句假话：夹具写的 lock 只给 registry 包带 `checksum`，于是「给 path 包也补一条摘要」在那份数据上根本没
+无从被发现。把夹具改成能矛盾（允许给非 registry 包写一条 `checksum`）之后它立刻被杀死。一个表达不出假话
+的夹具，等于没有断言。仍然没有的：漏洞扫描（要接 advisory feed，需要出网）、npm 侧的 SBOM（assembler job
+没有 Rust 工具链）、artifact checksums。
+
+（2026-10-05；`scripts/gen-sbom.py`、`scripts/ci/check-sbom.py`、`scripts/ci/test-check-sbom.py`、
+`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`scripts/ci/docker-entry-ci-only.tsv`、
+`CONTRIBUTING.md`、`docs/verification/sbom-2026-10-05.log`）
+
 ### 门禁：18 898 行法律文件第一次被对着构建读，而读出来的第一个数是「覆盖率 976/1139」
 
 `THIRD-PARTY-NOTICES` 是分发 `chaos` 二进制时欠每个用户的第三方许可证全文与版权声明，18 898

@@ -1,0 +1,572 @@
+# An SBOM for the shipped binary, generated and independently checked (2026-10-05)
+
+`scripts/gen-sbom.py` writes a CycloneDX 1.6 JSON bill of materials for the artifact this
+repository ships: the `chaos` binary built from `xai-grok-pager-bin`. It reuses the dependency
+reading that the notices batch had to get right -- `scripts/notices_lib.py`, non-dev edges
+only, over the same 1139 third-party packages -- so the two artifacts cannot drift into
+describing two different builds. `scripts/ci/check-sbom.py` is a separate program that
+re-derives the same facts from `cargo metadata` and refuses a document that misstates any of
+them; it never imports the generator.
+
+Headline figures for this workspace: 1227 components, 5130 dependency edges, 16 marked `scope:
+optional`, two purl namespaces (1130 `pkg:cargo`, 97 `pkg:generic`), a `SHA-256` digest on
+each of the 1130 crates.io components, 1 835 616 bytes, and two runs of one tree
+byte-identical. One real defect was found by looking at that output rather than by a test: the
+graph came out empty, and 51 fixtures were green while it was. Section 2 replays the defect,
+section 3 shows the guard refusing it, section 8 follows the digests out to the bytes on disk
+they name, and sections 9 and 10 are two mutation matrices -- 24 planted weakenings of the
+guard and 19 of the generator, 43 caught, 0 survived, every source file restored and verified
+with `cmp`.
+
+== 0. What the generator reports about this workspace
+
+The command that has to be run first, on the tree as committed:
+
+    $ python3 scripts/gen-sbom.py --output /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json
+    gen-sbom: wrote /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json; components: 1227 (third-party 1134, vendored 5, workspace 88); dependency edges: 5130; SHA-256 on 1130; serial urn:uuid:1fc225f9-2cf6-5b21-89a7-231d3c4d50f4
+
+The same command again, and a byte comparison:
+
+    $ python3 scripts/gen-sbom.py --output /tmp/grok-goal-ec37f68d1619/implementer/b18/final-b.json
+    gen-sbom: wrote /tmp/grok-goal-ec37f68d1619/implementer/b18/final-b.json; components: 1227 (third-party 1134, vendored 5, workspace 88); dependency edges: 5130; SHA-256 on 1130; serial urn:uuid:1fc225f9-2cf6-5b21-89a7-231d3c4d50f4
+    $ cmp /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json /tmp/grok-goal-ec37f68d1619/implementer/b18/final-b.json
+    exit: 0
+    $ wc -c < /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json
+    1835616
+
+1 835 616 bytes, same serial, no difference at any byte offset. The guard, reading the file as
+a stranger would:
+
+    $ python3 scripts/ci/check-sbom.py --sbom /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json
+    check-sbom: OK (1227 component(s): third-party 1139 (matching THIRD-PARTY-NOTICES), workspace 88; 5130 dependency edges; SHA-256 on 1130; serial urn:uuid:1fc225f9-2cf6-5b21-89a7-231d3c4d50f4)
+
+Note the two third-party counts. The generator reports 1134 registry packages plus 5 vendored
+crates under `third_party/`; the guard reports their union, 1139, because that is the number
+the notices document has to cover and `check-notices-coverage.py` asserts 1139 on the same
+tree. Both numbers are correct for their own question, which is why both are printed.
+
+`--check` exists so that a committed or staged file can be tested for staleness without
+rewriting it:
+
+    $ python3 scripts/gen-sbom.py --check /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json
+    gen-sbom: /tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json is current; components: 1227 (third-party 1134, vendored 5, workspace 88); dependency edges: 5130; SHA-256 on 1130; serial urn:uuid:1fc225f9-2cf6-5b21-89a7-231d3c4d50f4
+    exit: 0
+
+== 1. What is inside the document, counted
+
+The document is not a flat list, so the counts that matter are per-kind:
+
+    $ python3 - <<'PY'
+    import json, collections
+    d = json.load(open("/tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json"))
+    comps = d["components"]
+    print("components", len(comps))
+    print("purl namespaces", dict(collections.Counter(c["purl"].split("/")[0] for c in comps)))
+    print("scope", dict(collections.Counter(c.get("scope", "required") for c in comps)))
+    print("origin", dict(collections.Counter(p["value"] for c in comps
+          for p in c.get("properties", []) if p["name"] == "chaos:origin")))
+    print("source-kind", dict(collections.Counter(p["value"] for c in comps
+          for p in c.get("properties", []) if p["name"] == "chaos:cargo:source-kind")))
+    edges = sum(len(x["dependsOn"]) for x in d["dependencies"])
+    print("dependency objects", len(d["dependencies"]), "edges", edges)
+    print("root dependsOn", len(d["dependencies"][0]["dependsOn"]))
+    print("timestamp key present:", "timestamp" in d["metadata"])
+    print("components with hashes", sum(1 for c in comps if c.get("hashes")))
+    print("hash algorithms", dict(collections.Counter(h["alg"] for c in comps for h in c.get("hashes", []))))
+    print("hashed by origin", dict(collections.Counter(
+        p["value"] for c in comps for p in c["properties"]
+        if p["name"] == "chaos:origin" and c.get("hashes"))))
+    print("components with hashes whose source-kind is not registry",
+          sum(1 for c in comps if c.get("hashes") and all(
+              p["value"] != "registry" for p in c["properties"]
+              if p["name"] == "chaos:cargo:source-kind")))
+    PY
+    components 1227
+    purl namespaces {'pkg:cargo': 1130, 'pkg:generic': 97}
+    scope {'required': 1211, 'optional': 16}
+    origin {'dependency': 1134, 'vendored': 5, 'workspace': 88}
+    source-kind {'registry': 1130, 'git': 4, 'path': 93}
+    dependency objects 1228 edges 5130
+    root dependsOn 29
+    timestamp key present: False
+    components with hashes 1130
+    hash algorithms {'SHA-256': 1130}
+    hashed by origin {'dependency': 1130}
+    components with hashes whose source-kind is not registry 0
+
+Five things in that reading are decisions rather than facts, and each is asserted by the
+guard:
+
+- 1227 components, not 1228. The root crate is reachable and is one of the 1228 package ids,
+  but it is emitted as `metadata.component` (the product) and not as a component. Listing it
+  twice would let a scanner count the product among its own dependencies and would force a
+  second answer to "which of these is the thing we ship".
+- `pkg:generic` for 97 of them: 4 git dependencies and 93 path dependencies, the 88 workspace
+  members plus 5 vendored crates. A `pkg:cargo` purl is a claim that crates.io serves that
+  name at that version, which is false for a crate we patched; a scanner told `pkg:cargo`
+  would resolve a different artifact than the one in the binary.
+- `scope: optional` on 16: the 15 third-party packages reachable only across `build` edges,
+  plus our own `xai-proto-build`. The kinds counted for this are restricted to the shipped
+  subgraph -- a whole-graph reading can inherit a `build` kind through a dev-only parent.
+- 29 direct dependencies of the product node, which is `xai-grok-pager-bin`'s own non-dev edge
+  count, and is the number that makes section 2's `dependency edges: 0` impossible to accept.
+- `hashes` on exactly 1130 components, every one of them `SHA-256` and every one of them from
+  crates.io, and on zero components whose source is a git or a path. That last number is the
+  half that matters: a digest would be a claim to have verified bytes, and for a crate read
+  out of a directory nobody recorded which bytes. Section 8 follows the 1130 out to the files.
+
+== 2. The defect this batch found in its own tool: an inventory with no graph
+
+The first version of `depends()` filtered the children it emitted against a set of purls,
+while the child lists it walked hold cargo package ids. The two sets do not intersect, so
+every edge was dropped, and the run still exited 0. The defect is replayable on demand -- the
+line is restored, the real generator is run against this workspace, and the file is written
+back from the bytes read at the start:
+
+    $ python3 /tmp/grok-goal-ec37f68d1619/implementer/b18/replay_defect.py
+    $ python3 scripts/gen-sbom.py --output /tmp/grok-goal-ec37f68d1619/implementer/b18/defect-replay.json
+    gen-sbom: wrote /tmp/grok-goal-ec37f68d1619/implementer/b18/defect-replay.json; components: 1227 (third-party 1134, vendored 5, workspace 88); dependency edges: 0; SHA-256 on 1130; serial urn:uuid:98e3a643-2aff-58a0-82e3-79d74a53e432
+    exit: 0
+    cmp after restore: identical
+
+Two facts in that transcript are the point. `components: 1227` next to `dependency edges: 0`
+is not a sparse graph: a workspace whose product alone has 29 direct dependencies cannot have
+zero edges, so a reader who knows one of the two numbers can falsify the other. And the exit
+code is 0: nothing about the run looked like a failure.
+
+What caught it was generating against the real workspace. What was green at the time was the
+fixture suite, because its expected edge count had been read off the generator's own output.
+That number now comes from a hand-computed two-package graph (2 edges over root -> middle ->
+leaf plus root -> leaf), and `RealWorkspace` asserts a floor no wrong answer clears, so the
+durable protection is a floor plus an independent re-derivation rather than a remembered
+number.
+
+== 3. The guard refuses the defective document
+
+Same file, run through `check-sbom.py`, which re-derives the edge set from `cargo metadata`
+and compares in both directions:
+
+    $ python3 scripts/ci/check-sbom.py --sbom /tmp/grok-goal-ec37f68d1619/implementer/b18/defect-replay.json
+    check-sbom: FAIL (1 problem(s))
+      the dependency graph is not the build's: 5130 edge(s) the build has are absent [pkg:cargo/addr2line@0.25.1 -> pkg:cargo/gimli@0.32.3, pkg:cargo/aes@0.9.0 -> pkg:cargo/cipher@0.5.1, pkg:cargo/aes@0.9.0 -> pkg:cargo/cpubits@0.1.1, pkg:cargo/aes@0.9.0 -> pkg:cargo/cpufeatures@0.3.0, pkg:cargo/agent-client-protocol-schema@0.11.4 -> pkg:cargo/anyhow@1.0.104, pkg:cargo/agent-client-protocol-schema@0.11.4 -> pkg:cargo/derive_more@2.1.1, pkg:cargo/agent-client-protocol-schema@0.11.4 -> pkg:cargo/schemars@1.0.4, pkg:cargo/agent-client-protocol-schema@0.11.4 -> pkg:cargo/serde@1.0.228 (and 5122 more)], 0 edge(s) the build does not have are present []
+    exit: 1
+
+The missing direction is reported with named examples and a count; the extra direction is
+empty, which is the shape an accidental edge-drop should have. Cutting one edge out of a
+correct document and adding one that the build does not have are separate fixtures
+(`test_an_edge_the_build_has_must_be_in_the_document`,
+`test_an_edge_the_build_does_not_have_must_not_be`), so a guard that only ever looked one way
+would fail one of them.
+
+== 4. Determinism: no timestamp by default, and a serial that moves with the content
+
+The release workflow generates the SBOM in a different job from the one that checks it, so two
+runs of one tree must produce one byte sequence. `metadata.timestamp` is therefore absent
+unless asked for, and `serialNumber` is `urn:uuid:` plus a uuid5 over the sha256 of the
+document with its own serial removed, keys sorted, separators tight:
+
+    $ SOURCE_DATE_EPOCH=1791158400 python3 scripts/gen-sbom.py --output /tmp/grok-goal-ec37f68d1619/implementer/b18/stamped.json
+    gen-sbom: wrote /tmp/grok-goal-ec37f68d1619/implementer/b18/stamped.json; components: 1227 (third-party 1134, vendored 5, workspace 88); dependency edges: 5130; SHA-256 on 1130; serial urn:uuid:d9031ccf-d8a5-5355-9998-4ce99d3f4fa6
+    $ python3 - <<'PY'
+    import json
+    d = json.load(open("/tmp/grok-goal-ec37f68d1619/implementer/b18/stamped.json"))
+    print("timestamp:", d["metadata"].get("timestamp"))
+    print("serial:", d["serialNumber"])
+    plain = json.load(open("/tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json"))
+    print("plain has timestamp key:", "timestamp" in plain["metadata"], "serial:", plain["serialNumber"])
+    print("hashes in the stamped document:", sum(1 for c in d["components"] if c.get("hashes")))
+    PY
+    timestamp: 2026-10-05T00:00:00Z
+    serial: urn:uuid:d9031ccf-d8a5-5355-9998-4ce99d3f4fa6
+    plain has timestamp key: False serial: urn:uuid:1fc225f9-2cf6-5b21-89a7-231d3c4d50f4
+    hashes in the stamped document: 1130
+
+Stamping moves the serial, because the stamp is part of the content. That is the wanted
+direction: the serial identifies this document, not this product, and section 2's replay shows
+the serial changing when a dependency edge disappears. `--timestamp` is what
+`.github/workflows/release.yml` uses, with the commit's committer date, so a release artifact
+carries a date that is true about the commit rather than about the runner's clock.
+
+== 5. The upstream schema, validated once, and deliberately not vendored
+
+`check-sbom.py` is a hand-written structural and semantic validator. Before writing judgements
+into it, the document was validated against the schema CycloneDX itself publishes, fetched to
+a scratch directory and checked with the host's `jsonschema`:
+
+    $ python3 - <<'PY'
+    import json, jsonschema
+    schema = json.load(open("/tmp/grok-goal-ec37f68d1619/implementer/b17/bom-1.6.schema.json"))
+    doc = json.load(open("/tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json"))
+    v = jsonschema.Draft7Validator(schema)
+    errs = list(v.iter_errors(doc))
+    print("jsonschema", jsonschema.__version__, "errors:", len(errs))
+    PY
+    jsonschema 3.2.0 errors: 0
+
+The schema file is 262 666 bytes and is not added to the repository. Two reasons, both about
+obligations rather than convenience: a vendored schema is itself a redistributed third-party
+artifact and would need its own entry in the notices document this batch just made exact, and
+`jsonschema` is not installed in the CI container, so a schema-based check could not run there
+anyway. The consequence is stated plainly: the online check borrows no external authority, so
+its non-vacuity rests on sections 9 and 10 alone. Re-running section 5 needs the upstream file
+and `pip install jsonschema`; the command above is here to be re-run, not believed.
+
+== 6. What the guard imports, and why that is a claim
+
+A generator cannot witness its own output, so the guard shares no code with it beyond
+`scripts/notices_lib.py`, which is also what `check-notices-coverage.py` reads:
+
+    $ grep -n '^import\|^from' scripts/ci/check-sbom.py
+    54:from __future__ import annotations
+    56:import argparse
+    57:import hashlib
+    58:import importlib.util
+    59:import json
+    60:import os
+    61:import re
+    62:import sys
+    63:import uuid
+    64:from pathlib import Path
+
+`importlib.util` loads `notices_lib.py` by path; nothing loads `gen-sbom.py`. The guard
+recomputes the package set, the edge kinds, the purls, the serial and the license expressions
+from `cargo metadata`, then compares. Where the generator and the guard disagree, at least one
+of them is wrong, and the disagreement is the finding.
+
+== 7. The fixtures
+
+`scripts/ci/test-check-sbom.py` builds a synthetic `cargo metadata` document, runs the real
+generator over it, mutates the generated document, and runs the real guard on the result:
+
+    $ python3 scripts/ci/test-check-sbom.py 2>&1 | tail -3
+    Ran 70 tests in 7.027s
+
+    OK
+
+Ten classes, 70 cases. `Baseline` (3) pins the verdict string and the product identity;
+`Coverage` (8) that a dev-only crate is absent and stays absent, that two versions of one name
+are two components, that a git dependency is not claimed to come from crates.io;
+`Truthfulness` (10) that license, `scope`, origin, duplicates and ref-shape lies are each
+reported; `Digests` (17) that the published `hashes` are the lock's digests and only the
+lock's, for the packages the lock has digests for; `Graph` (6) the product hanging off the
+root crate plus a cut edge and an added edge; `Envelope` (5) the format, version and schema
+pointer; `SerialNumber` (3) re-derivation and movement; `Determinism` (6) two byte-identical
+runs, order independence, `--check`, and the timestamp rules; `FailClosed` (9) that a missing
+file, a non-file, unreadable JSON and a bad root are failures rather than skips; and
+`RealWorkspace` (3), which generates and checks against this repository, asserts the component
+and third-party counts are both above 1000, runs both lock parsers over the shipped
+`Cargo.lock` and requires them to agree, and hashes every `.crate` file in the local registry
+cache against the digest the document publishes for it.
+
+== 8. The digests: where they come from, and out to the bytes they name
+
+`cargo metadata` publishes no checksum, so the `hashes` field cannot come from the build
+description at all. It comes from `Cargo.lock`, which is where cargo records the digest of the
+`.crate` it resolved for each registry package. The rule "only crates.io packages carry a
+digest" is therefore a claim about that file, and the file gets measured before anything is
+asserted:
+
+    $ python3 - <<'PY'
+    import re, pathlib
+    text = pathlib.Path("Cargo.lock").read_text()
+    blocks = text.split("[[package]]")[1:]
+    registry = reg_without = other = other_with = 0
+    for block in blocks:
+        source = re.search(r'^source = "([^"]*)"$', block, re.MULTILINE)
+        digest = re.search(r'^checksum = "([0-9a-f]{64})"$', block, re.MULTILINE)
+        if source and source.group(1).startswith("registry+"):
+            registry += 1
+            reg_without += 0 if digest else 1
+        else:
+            other += 1
+            other_with += 1 if digest else 0
+    print("package blocks", len(blocks))
+    print("registry blocks", registry, "of which without a checksum", reg_without)
+    print("non-registry blocks", other, "of which carrying a checksum", other_with)
+    PY
+    registry blocks 1225 of which without a checksum 0
+    non-registry blocks 106 of which carrying a checksum 0
+
+1225 registry entries and none of them is missing a digest; 106 non-registry entries and none
+of them carries one. The generator turns either anomaly into a refusal rather than a judgement
+call, so the 1130 published digests are the registry subset of those 1225 that the shipped
+graph reaches (95 registry packages are in the lock and not in the binary), and no path or git
+package picked a digest up on the way.
+
+The two parsers are deliberately different programs -- `gen-sbom.py` splits the file on the
+`[[package]]` marker and searches inside each block, `check-sbom.py` walks it line by line and
+closes a record at the next table header -- because one shared parse would be one shared blind
+spot, and the whole value of the digest is that two readings have to agree:
+
+    $ python3 - <<'PY'
+    import importlib.util, pathlib, sys
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+    gen = load("gen_sbom", "scripts/gen-sbom.py")
+    check = load("check_sbom", "scripts/ci/check-sbom.py")
+    lock = pathlib.Path("Cargo.lock")
+    a = gen.lock_digests(lock)
+    b, problems = check.lock_digests(lock)
+    print("gen-sbom digests", len(a))
+    print("check-sbom digests", len(b), "problems", problems)
+    print("identical", a == b)
+    PY
+    check-sbom digests 1225 problems []
+    identical True
+
+The guard also treats the lock as evidence rather than as gospel: a digest on a package that
+came from no registry, one package listed twice with two digests, or a digest that is not 64
+lowercase hex digits is each a finding, because in all three cases cargo did not write this
+file. Those branches are fixtures
+(`test_the_guard_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for`,
+`test_the_guard_refuses_a_lock_that_lists_one_package_with_two_digests`,
+`test_the_guard_refuses_a_lock_digest_that_is_not_hex`), and each of the three rules has its
+own row in the section 9 matrix.
+
+The last measurement in this section leaves the repository. Every digest the document
+publishes is compared against the sha256 of the `.crate` file this host actually downloaded:
+
+    $ python3 - <<'PY'
+    import hashlib, json, pathlib
+    doc = json.load(open("/tmp/grok-goal-ec37f68d1619/implementer/b18/final-a.json"))
+    cache = pathlib.Path.home() / ".cargo" / "registry" / "cache"
+    dirs = [d for d in sorted(cache.iterdir()) if d.is_dir()]
+    same = missing = different = 0
+    for c in doc["components"]:
+        if not c.get("hashes"):
+            continue
+        name, version = c["name"], c["version"]
+        crate = next((d / f"{name}-{version}.crate" for d in dirs
+                      if (d / f"{name}-{version}.crate").is_file()), None)
+        if crate is None:
+            missing += 1
+            continue
+        if hashlib.sha256(crate.read_bytes()).hexdigest() == c["hashes"][0]["content"]:
+            same += 1
+        else:
+            different += 1
+    print("registry cache dirs", [d.name for d in dirs])
+    print("crates on disk compared", same + different + missing)
+    print("digests equal", same, "different", different, "not on disk", missing)
+    PY
+    crates on disk compared 1130
+    digests equal 1130 different 0 not on disk 0
+
+The same comparison runs inside the fixture suite as
+`test_the_published_digests_match_the_downloaded_crates`, so it is not a claim about one
+machine, except in the one sense that it needs the crates to have been fetched -- which is why
+it lives in `RealWorkspace` rather than among the portable cases.
+
+What the digest establishes, and what it does not, is worth stating exactly. It says: the
+bytes the registry served for this name at this version hash to this value, and the same is
+true of the copy sitting in the cache the build was resolved against. It does not say the
+registry was honest. The lock's digest is the registry's own publication, so an index that
+served tampered bytes together with a matching digest would produce a document exactly as
+clean as this one. Checking against a second independent copy of the registry, or against
+signatures, is outside what two off-line scripts can do, so neither of them claims it: what
+they claim is agreement between the lock, the document, and the bytes on disk.
+
+== 9. Mutation matrix against the guard: 24 planted weakenings, 0 survived
+
+Each row weakens exactly one claim in `scripts/ci/check-sbom.py` and re-runs the 70 fixtures;
+the file is restored from the bytes read at the start and verified with `cmp` after every row.
+A row that no fixture noticed would mean an untested claim, so the honest fix would be a
+fixture.
+
+    $ python3 /tmp/grok-goal-ec37f68d1619/implementer/b18/mut.py
+    ====================================================================================================
+    coverage: never report a package the build reaches but the SBOM omits
+        killed by: test_a_dropped_component_is_reported_by_name, test_the_example_list_is_capped_and_says_so
+    origin: accept any chaos:origin the document claims
+        killed by: test_a_wrong_origin_is_reported, test_the_origin_and_the_notices_membership_are_two_assertions
+    third-party set: derive it from the build instead of from the document
+        killed by: test_the_origin_and_the_notices_membership_are_two_assertions
+    scope: treat every package as correctly scoped
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    license: stop comparing the expression with the package
+        killed by: test_a_license_that_is_not_the_packages_is_reported
+    purl namespace: stop checking the namespace against the source
+        killed by: test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_registry_package_moved_to_the_other_namespace_is_reported
+    purl shape: accept a ref that does not name this package
+        killed by: test_a_purl_naming_some_other_package_is_reported
+    bom-ref/purl agreement: accept the two naming different things
+        killed by: test_a_bom_ref_that_is_not_the_purl_is_reported
+    serial: stop re-deriving it from the document bytes
+        killed by: test_any_content_change_moves_the_serial, test_the_serial_re_derives_from_the_document
+    graph: compare the edges against nothing, so any graph passes
+        killed by: test_an_edge_the_build_does_not_have_must_not_be, test_an_edge_the_build_has_must_be_in_the_document
+    graph: accept a component with no dependency object
+        killed by: test_every_component_needs_exactly_one_dependency_object
+    product: accept a manifest name that is not the product's
+        killed by: test_the_product_is_named_from_the_manifest_it_ships
+    envelope: accept any specVersion
+        killed by: test_another_spec_version_is_refused
+    membership: accept a component for a package the build does not reach
+        killed by: test_a_dev_only_dependency_is_absent_and_must_stay_absent
+    membership: accept the root crate listed as a component
+        killed by: test_the_binarys_own_crate_is_the_product_not_a_component
+    duplicates: accept the same package listed twice
+        killed by: test_a_component_listed_twice_is_reported
+    hash: accept any 64-hex digest without comparing it to the lock
+        killed by: test_a_digest_borrowed_from_another_package_is_reported, test_a_digest_that_is_not_the_locks_is_reported
+    hash: accept a digest on a package cargo has no digest for
+        killed by: test_a_digest_on_a_local_package_is_reported
+    hash: accept any algorithm name
+        killed by: test_a_malformed_digest_is_reported
+    hash: accept a registry component that publishes no digest
+        killed by: test_a_dropped_digest_is_reported, test_two_hashes_on_one_component_are_reported
+    hash: accept a digest the lock does not record for that package
+        killed by: test_a_digest_the_lock_does_not_record_is_reported
+    lock: accept a checksum on a package that came from no registry
+        killed by: test_the_guard_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for
+    lock: say nothing when the lock file is missing
+        killed by: test_the_guard_says_so_when_the_lock_is_gone
+    lock parse: ignore the source when keying the digests the guard reads
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_a_digest_borrowed_from_another_package_is_reported, test_a_digest_that_is_not_the_locks_is_reported, test_registry_components_carry_the_digest_the_lock_records, test_the_two_lock_parsers_agree_on_the_same_file, test_a_document_on_stdin_is_read, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_two_lock_parsers_agree_on_this_repository, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    ====================================================================================================
+    24 mutations, 24 killed, 0 survived
+    cmp after restore: identical
+
+Two rows are worth reading twice. `third-party set: derive it from the build instead of from
+the document` is the mutation form of a mistake I actually made: the check for "does the
+document agree with the notices set" was first written using the build's own origin
+classification, so a component lying about `chaos:origin` passed it -- the check was being
+told by the thing it was supposed to doubt. The row is killed by one fixture, and that fixture
+is the one that distinguishes a lie about origin from a lie about a vendored crate. Similarly,
+`purl namespace` initially survived an earlier round of this matrix, because the namespace was
+parsed from `bom-ref` while the mutation edited `purl`; the guard now checks both strings
+independently.
+
+The `scope` row is killed by nearly the whole suite because marking every package optional
+breaks the clean-verdict assertion in every fixture. It is reported as killed, which is true,
+and it is the noisiest signal in the table: a mutant that breaks everything proves coverage of
+the verdict path, not of the scope judgement specifically. The scope-specific fixtures are
+`test_a_build_script_only_dependency_is_scope_optional` (the direction that must mark) and
+`test_this_workspaces_own_crates_are_not_third_party` plus the baseline cases (the direction
+that must not).
+
+== 10. Mutation matrix against the generator: 19 planted weakenings, 0 survived
+
+Same procedure against `scripts/gen-sbom.py`, same restore discipline:
+
+    $ python3 /tmp/grok-goal-ec37f68d1619/implementer/b18/mut2.py
+    ====================================================================================================
+    walk: follow every edge, so test-only crates are reported as shipped
+        killed by: test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_the_shipped_binarys_sbom_describes_this_workspace
+    membership: treat the root crate as one of the components
+        killed by: test_a_small_workspace_passes, test_the_binarys_own_crate_is_the_product_not_a_component, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    membership: drop the vendored crates from the origin split
+        killed by: test_a_vendored_crate_is_third_party_and_says_so, test_the_shipped_binarys_sbom_describes_this_workspace
+    purl: put every package in the crates.io namespace
+        killed by: test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_the_shipped_binarys_sbom_describes_this_workspace
+    scope: never mark anything optional, so build-script crates read as linked in
+        killed by: test_the_shipped_binarys_sbom_describes_this_workspace, test_a_build_script_only_dependency_is_scope_optional
+    graph: emit no dependency edges at all
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_product_hangs_off_the_binarys_own_crate, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    graph: drop the product's own edges
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_product_hangs_off_the_binarys_own_crate, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    license: stop normalising the crates.io slash shorthand
+        killed by: test_the_slash_shorthand_survives_as_an_spdx_expression
+    license: leave the field out so nothing is claimed
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional
+    order: emit components in the reverse of the documented sort
+        killed by: test_the_document_is_ordered_by_origin_then_name_then_version
+    serial: write a fixed one instead of deriving it from the bytes
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    timestamp: stamp every run with the wall clock
+        killed by: test_a_timestamp_is_written_only_when_asked_for, test_source_date_epoch_stamps_a_reproducible_release
+    check: report a stale file as current
+        killed by: test_check_reports_a_file_that_is_current_and_one_that_is_not
+    product: name the product after the crate instead of the manifest
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    hash: publish no digests at all
+        killed by: test_a_small_workspace_passes, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_a_digest_that_is_not_the_locks_is_reported, test_a_digest_the_lock_does_not_record_is_reported, test_registry_components_carry_the_digest_the_lock_records, test_a_document_on_stdin_is_read, test_the_published_digests_match_the_downloaded_crates, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_serial_re_derives_from_the_document, test_a_build_script_only_dependency_is_scope_optional, test_the_slash_shorthand_survives_as_an_spdx_expression
+    hash: publish a digest for local and git packages too
+        killed by: test_the_generator_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for
+    hash: tolerate a lock file that is not there
+        killed by: test_the_generator_refuses_a_missing_lock
+    hash: publish a registry component the lock has no digest for
+        killed by: test_the_generator_refuses_a_registry_package_the_lock_has_no_digest_for
+    lock parse: key the digests by name and version, ignoring the source
+        killed by: test_a_small_workspace_passes, test_the_binarys_own_crate_is_the_product_not_a_component, test_the_product_is_named_from_the_manifest_it_ships, test_a_dev_only_dependency_is_absent_and_must_stay_absent, test_a_dropped_component_is_reported_by_name, test_a_git_dependency_is_not_claimed_to_come_from_crates_io, test_a_registry_package_moved_to_the_other_namespace_is_reported, test_a_transitive_dependency_is_its_own_component, test_a_vendored_crate_is_third_party_and_says_so, test_this_workspaces_own_crates_are_not_third_party, test_two_versions_of_one_name_are_two_components, test_a_timestamp_is_written_only_when_asked_for, test_check_reports_a_file_that_is_current_and_one_that_is_not, test_source_date_epoch_stamps_a_reproducible_release, test_the_document_is_ordered_by_origin_then_name_then_version, test_the_document_order_does_not_depend_on_the_input_order, test_two_runs_are_byte_identical, test_a_digest_borrowed_from_another_package_is_reported, test_a_digest_on_a_local_package_is_reported, test_a_digest_that_is_not_the_locks_is_reported, test_a_digest_the_lock_does_not_record_is_reported, test_a_dropped_digest_is_reported, test_a_local_or_git_component_carries_no_digest, test_a_local_or_git_component_carries_no_digest, test_a_local_or_git_component_carries_no_digest, test_a_malformed_digest_is_reported, test_a_malformed_digest_is_reported, test_registry_components_carry_the_digest_the_lock_records, test_the_generator_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for, test_the_guard_refuses_a_lock_digest_that_is_not_hex, test_the_guard_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for, test_the_guard_refuses_a_lock_that_lists_one_package_with_two_digests, test_the_guard_says_so_when_the_lock_is_gone, test_the_two_lock_parsers_agree_on_the_same_file, test_two_hashes_on_one_component_are_reported, test_another_spec_version_is_refused, test_the_components_and_dependencies_blocks_have_to_exist, test_the_product_has_to_be_the_application, test_the_root_crate_has_to_be_named, test_the_version_behind_the_product_has_to_be_the_builds, test_a_document_on_stdin_is_read, test_metadata_that_is_not_json_blames_the_build, test_the_example_list_is_capped_and_says_so, test_a_dependency_object_naming_nothing_is_reported, test_a_dependency_on_a_component_that_is_not_there_is_reported, test_an_edge_the_build_does_not_have_must_not_be, test_an_edge_the_build_has_must_be_in_the_document, test_every_component_needs_exactly_one_dependency_object, test_the_product_hangs_off_the_binarys_own_crate, test_the_published_digests_match_the_downloaded_crates, test_the_shipped_binarys_sbom_describes_this_workspace, test_the_two_lock_parsers_agree_on_this_repository, test_a_serial_that_is_not_a_uuid_is_refused, test_any_content_change_moves_the_serial, test_the_serial_re_derives_from_the_document, test_a_bom_ref_that_is_not_the_purl_is_reported, test_a_build_script_only_dependency_is_scope_optional, test_a_component_listed_twice_is_reported, test_a_license_that_is_not_the_packages_is_reported, test_a_missing_license_entry_is_reported, test_a_normal_dependency_is_not_marked_optional, test_a_purl_naming_some_other_package_is_reported, test_a_wrong_origin_is_reported, test_the_origin_and_the_notices_membership_are_two_assertions, test_the_slash_shorthand_survives_as_an_spdx_expression
+    ====================================================================================================
+    19 mutations, 19 killed, 0 survived
+    cmp after restore: identical
+
+`graph: emit no dependency edges at all` is the mutation form of the section 2 defect, and it
+is killed by the fixtures that exist for exactly that reason: the two edge tests, and
+`RealWorkspace`. `walk: follow every edge` is the notices batch's own defect -- the boolean
+`dev` key that cargo never emits -- replayed on the SBOM side, where the same mistake would
+have shipped 71 test-only crates as parts of the binary.
+
+One row was a driver defect before it was a result. The matrix first reported `<suite
+crashed>` on all 24 rows of section 9, because the driver parsed only stdout for `FAIL:` lines
+while `unittest` writes its report to stderr; a report that cannot see failure lines reports
+every mutant as surviving, which is the direction that would have taught me nothing. The
+driver now reads both.
+
+A second lesson came from the digest rows and lived in the fixture, not the driver. `hash:
+publish a digest for local and git packages too` survived its first run, because the fixture
+lock recorded a checksum only for registry packages: there was no digest there for the mutant
+to misplace, so "a path package carries none" had no way to fail. The rule needed a fixture
+that contradicts it, so the fixture lock can now carry a checksum on a path package's block,
+and the pair
+`test_the_generator_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for` /
+`test_the_guard_refuses_a_lock_that_digests_a_package_cargo_has_no_digest_for` goes red the
+moment either script stops refusing that file. The same table also shows what a stale patch
+looks like: a row whose text no longer matches the source is reported as `PATCH-ERROR (0
+matches)` instead of a pass, which is how the `order:` row announced itself after the sort
+moved out of the line the driver had been patching.
+
+== 11. Where it runs
+
+In CI, as a step of the `rust` job immediately after the notices step, where the cargo
+registry cache is already warm:
+
+      - name: shipped SBOM
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/test-check-sbom.py
+          python3 scripts/gen-sbom.py --output "$RUNNER_TEMP/chaos.cdx.json"
+          python3 scripts/ci/check-sbom.py --sbom "$RUNNER_TEMP/chaos.cdx.json"
+          # Twice, and byte for byte: the serial number is a fingerprint of the document, so this is
+          # where CI learns that two runs of one tree still agree.
+          python3 scripts/gen-sbom.py --output "$RUNNER_TEMP/again.cdx.json"
+          cmp "$RUNNER_TEMP/chaos.cdx.json" "$RUNNER_TEMP/again.cdx.json"
+
+In the container entry point, the gate count is unchanged at 39: both files need a
+whole-workspace `cargo metadata --frozen`, so they are recorded in
+`scripts/ci/docker-entry-ci-only.tsv` (8 data rows, each a name and a reason, tab separated)
+with the reason spelled out, the same treatment as `check-notices-coverage.py` two rows above.
+`check-guard-wiring.py` is what makes an omission from that ledger impossible:
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (80 files in scripts/ci/, 79 reachable, 71 run by scripts/verify-in-docker.sh, 8 recorded CI-only, 1 exempt)
+
+In the release workflow, the `build` job generates the file for the Linux x64 artifact with
+the commit's committer date as the timestamp, checks it, regenerates it and `cmp`s the two,
+then uploads an artifact named `sbom`; the `package` job downloads that artifact and attaches
+`sbom/chaos.cdx.json` to the GitHub release files. The stamp is derived from the commit rather
+than from the runner clock so that the artifact carries a date that is about the code.
+
+== 12. What this document deliberately does not claim
+
+- No claim that a digest proves the registry honest. Section 8 says what the 1130 `hashes`
+  establish: agreement between `Cargo.lock`, the document and the bytes in the cache. A
+  registry that served tampered bytes with a matching digest would satisfy every check here,
+  and nothing in either script compares the lock against a second source or against a
+  signature.
+- No integrity statement about the built artifact itself. The digests describe the inputs
+  cargo fetched; the checksums of the files this repository releases are still open work, and
+  a consumer who wants "the binary I downloaded is the binary CI built" needs those.
+- No vulnerability scan. The SBOM is the input such a scan needs; nothing here consults an
+  advisory feed, and doing so needs network access CI's `rust` job does not assume.
+- No npm-side SBOM. The npm package is assembled in a job with no Rust toolchain, so it cannot
+  reach `cargo metadata`. The one file describes the binary the package installs.
+- No claim that two different trees produce the same document. The serial is a fingerprint of
+  the content by design: a `Cargo.lock` change must change it, which is what makes `cmp` in
+  sections 0 and 11 meaningful rather than merely decorative.

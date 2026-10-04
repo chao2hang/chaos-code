@@ -988,13 +988,65 @@ container's `third-party notices` gate, and the bundle assembly fixtures -- whic
 the real assembler and a real `npm pack --dry-run` -- run in `npm-scripts` and in the
 container's `npm package guards` gate.
 
-Two things this does not do, so nobody has to rediscover it: it emits no SBOM and runs no
-vulnerability scan, and two entries (`borrow-or-share 0.2.2`, `notify 8.2.0`) send the
+Two things this does not do, so nobody has to rediscover it: it runs no vulnerability scan
+(`check-sbom.py` describes what is in the binary; nothing here consults an advisory feed), and two
+entries (`borrow-or-share 0.2.2`, `notify 8.2.0`) send the
 reader to the upstream repository for the text instead of pasting it. Reviewing a change
 to the document needs `git diff --text THIRD-PARTY-NOTICES`, because `.gitattributes`
 marks it `-diff linguist-generated`. The measurement behind every number above, and the
 eight mutations that show the guards are not vacuous, are in
 `docs/verification/third-party-notices-2026-10-05.log`.
+
+## An SBOM is generated from the same dependency graph
+
+`scripts/gen-sbom.py` writes a CycloneDX 1.6 document -- the machine-readable answer to
+"what is in this binary", which is the form a scanner or a customer's security review can
+actually load. `THIRD-PARTY-NOTICES` is written for a person reading a license; this is the
+same set of packages read by the same function, `notices_lib.shipped_dependencies()`, so the
+two cannot disagree, and `scripts/ci/check-sbom.py` asserts they do not.
+
+```sh
+python3 scripts/gen-sbom.py --output /tmp/chaos.cdx.json  # write it
+python3 scripts/ci/check-sbom.py --sbom /tmp/chaos.cdx.json  # what CI asserts
+python3 scripts/ci/test-check-sbom.py     # fixtures: generator + guard, no toolchain needed
+python3 scripts/gen-sbom.py --check /tmp/chaos.cdx.json  # fail unless the file is current
+```
+
+The document is not committed. It is a function of `Cargo.lock`, so a checked-in copy would
+be a second thing to keep current and the first thing to drift; CI generates it in the `rust`
+job (recorded in `scripts/ci/docker-entry-ci-only.tsv`, because `cargo metadata --frozen`
+needs a warm registry) and a release attaches `chaos.cdx.json` to the GitHub Release next to
+the notices. Nothing is byte-reproducible unless two runs of one tree produce the same
+bytes, so that is what the CI step checks: it generates the file twice and `cmp`s them. The
+`serialNumber` is a UUIDv5 re-derived from the document's own canonical bytes rather than a
+random one, and `metadata.timestamp` is absent unless asked for (`--timestamp`, or
+`SOURCE_DATE_EPOCH`, which is why the release step stamps the commit's date rather than the
+wall clock).
+
+What is in it, and what is deliberately not:
+
+- 1227 components today: 1139 third-party packages (1134 from crates.io, 5 vendored under
+  `third_party/` and flagged `chaos:vendored-with-local-modifications`), plus the 88
+  workspace crates the binary links. The crate that builds the binary is
+  `metadata.component`, not a component, so the product is not counted among its own
+  dependencies.
+- the dependency graph itself, over the same non-dev edges. A flat list tells you a crate is
+  present; only the graph tells you whether the binary can reach it.
+- `scope: optional` with `chaos:cargo:edge-kinds = build` on the 16 packages reached only
+  through a build script -- 15 third-party ones plus our own `xai-proto-build`. They are in
+  the build and not linked into the executable, and calling them `required` would be a claim
+  a scanner would act on.
+- `pkg:cargo/` only for packages that really came from crates.io. The two git dependencies
+  are forks pinned to a revision, and a `pkg:cargo/` purl invites a lookup that resolves a
+  different artifact and scores it; those, and the path crates, get `pkg:generic/`.
+- `hashes` with `alg = SHA-256` on the 1130 components that came from crates.io, read out of
+  `Cargo.lock`. That is where cargo records the digest of the `.crate` it resolved, and it is the
+  only integrity claim available: `cargo metadata` publishes none, which is why the git forks and
+  the path crates carry no `hashes` at all. Making one up for those would be worse than saying
+  nothing, so `check-sbom.py` refuses a document that does either way -- a missing digest, a digest
+  that is not the lock's, or a digest on a package the lock has no checksum for.
+- no npm copy. The assembler that builds the npm package directories runs in a job with no Rust
+  toolchain, and the SBOM is derived from `Cargo.lock`; the release asset is where a user finds it.
 
 ## Licensing of this source
 

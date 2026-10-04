@@ -291,6 +291,36 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+      # The SBOM is the other half of THIRD-PARTY-NOTICES: the notices are what this distribution
+      # owes its users in license texts, this is what the binary is actually made of, and a
+      # vulnerability scanner can only work with the second. It is derived from Cargo.lock, so one
+      # leg describes every platform, and linux-x64 is the leg the release already requires.
+      # `cargo metadata --frozen` resolves offline, so the two git dependencies have to be in the
+      # cargo cache already -- the build above is what puts them there, which is why this cannot be
+      # a job of its own on a clean checkout. The stamp is the commit's date, so the document is
+      # reproducible from the revision rather than from a wall clock, and the second generation is
+      # compared against the first byte for byte.
+      - name: SBOM for the shipped binary
+        if: matrix.artifact == 'chaos-linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sbom-out
+          stamp="$(git log -1 --date=format:%Y-%m-%dT%H:%M:%SZ --format=%cd)"
+          python3 scripts/gen-sbom.py --timestamp "$stamp" --output sbom-out/chaos.cdx.json
+          python3 scripts/ci/check-sbom.py --sbom sbom-out/chaos.cdx.json
+          python3 scripts/gen-sbom.py --timestamp "$stamp" --output sbom-out/again.cdx.json
+          cmp sbom-out/chaos.cdx.json sbom-out/again.cdx.json
+
+      - name: Upload SBOM
+        if: matrix.artifact == 'chaos-linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-out/chaos.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+
   # ─────────────────────────────────────────────────────────────────────────
   package:
     needs: [resolve-version, signing-preflight, build]
@@ -312,6 +342,14 @@ jobs:
           path: artifacts
           pattern: bin-*
           merge-multiple: false
+
+      # Generated on the linux-x64 leg, where the cargo cache is warm; it describes Cargo.lock, so
+      # it is the same document whatever platform a user installs.
+      - name: Download the SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom
 
       - name: Layout release-bins
         id: layout
@@ -577,5 +615,8 @@ jobs:
             # Whoever downloads a binary instead of installing from npm still has to receive
             # the notices; this is the same document that goes inside every tarball.
             crates/codegen/xai-grok-pager/npm/THIRD_PARTY_NOTICES.md
+            # ... and the machine-readable answer to "what is in this binary", which is what an
+            # SBOM consumer (a scanner, a customer's security review) can actually load.
+            sbom/chaos.cdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
