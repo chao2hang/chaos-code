@@ -314,6 +314,45 @@ process: it points `GIT_BIN_PATH` at a shim that records its own pid and then bl
 asserts the pid stops existing once the capture budget expires. Take the flag out and that
 test goes red, which is the difference between this gate and a grep.
 
+### A browser spec that no config names is skipped without failing
+
+`npm run test:e2e` in `apps/chaos-ui` is `node ./e2e-runner.mjs`, which loops over a hand-written
+list of two Playwright configs, and each config then decides what to collect by matching `testMatch`
+against the absolute path. That is the whole registration mechanism, and it keeps its names in five
+hand-maintained places: the top-level `testMatch` of `playwright.config.ts`, that list re-typed
+inside each of its three projects, and one `const` in `playwright.git.config.ts`. Nothing in the
+tool makes those lists agree. Measured against the Playwright this package installs (1.63.0) with
+`test --list --reporter=json`: a `*.pw.ts` that no pattern matches is simply not collected and the
+process exits 0; a project's `testMatch` replaces the top-level one rather than narrowing it, and
+all three projects here set their own, so a name added only at the top level -- where a reader looks
+first -- registers nothing while still looking alive, because it matches the twelve the projects do
+name; and a project collecting nothing is silent, since Playwright reports `No tests found` only
+when a whole config collects nothing. Both failure directions are quiet, and "nothing was collected"
+is indistinguishable from "everything passed" at the exit code.
+
+`scripts/ci/check-e2e-registration.py` judges those lists against the specs on disk. It reads a
+`testMatch` that is a regex literal, an array of them, or a `const` naming one, and checks six
+things: every `e2e/*.pw.ts` is claimed by exactly one config, so one spec is not run twice against
+two different hosts; a config whose projects all override `testMatch` is asked whether its
+top-level list still selects anything the projects do not; every project collects at least one
+spec, which is the viewport variant nobody notices; every pattern, and every alternative inside a
+`(?:a|b|c)` group, still matches a spec that exists, which is the renamed-file case; the runner's
+`configs` list is the set of config files on disk, because CI types `npm run test:e2e` rather than a
+config path; and `package.json`'s `test:e2e` still names that runner, because a script that went
+back to a bare `playwright test` runs one config and reports a clean suite. `--list` prints the
+resulting map of spec to config and project. Specs are taken from the filesystem and not from git's
+index, because Playwright reads the filesystem and a spec nobody staged is still collected.
+
+What the guard cannot read is a finding and never a pass -- no configs, no specs, a `testMatch`
+outside the three forms it understands, a glob string, an unresolvable `const`, a pattern that will
+not compile, a regex flag whose meaning it has not been given. The glob is the instructive one:
+Playwright does accept a glob `testMatch`, so refusing one is a limit of this reader and not a claim
+about the tool, and the finding says to extend the reader rather than leave a pattern unjudged. The
+gate runs in the container even though that container cannot start a browser, because what it judges
+is two lists and a set of file names. Whether the suite then collects and passes is a separate fact,
+told by the job that does start a browser; being collected is not being green, and this gate does
+not claim otherwise.
+
 ## Fast local gate loop
 
 The container answers "does a fresh clone work?". It does not answer "did my edit

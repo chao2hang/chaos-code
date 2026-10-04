@@ -860,3 +860,14 @@ jobs:
           # budget is a failure too, and prints the command that would refresh it.
           python3 scripts/ci/test-check-lab-coverage.py
           python3 scripts/ci/check-lab-coverage.py
+          # Which browser specs run is decided by a hand-written list inside each Playwright config
+          # plus a second list in `apps/chaos-ui/e2e-runner.mjs`, and a spec outside both is not an
+          # error: Playwright collects the files it matches, reports the tests it found, exits 0.
+          # The suite here is 14 specs over 2 configs whose names are re-typed in five places, and
+          # `playwright.config.ts` sets `testMatch` at the top level and again in all three of its
+          # projects, where a project's list replaces the top level rather than narrowing it -- so
+          # a new name written only at the top registers nothing at all. This reads the configs the
+          # way Playwright does, and fails on a spec nothing collects, a project collecting nothing,
+          # a name no spec satisfies any more, and a config no runner names.
+          python3 scripts/ci/test-check-e2e-registration.py
+          python3 scripts/ci/check-e2e-registration.py

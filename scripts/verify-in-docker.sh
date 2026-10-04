@@ -303,6 +303,11 @@ gates=(
   # `scripts/ci/docker-labs.tsv` saying what CI cannot supply; a row past its date budget fails the
   # same way, and names the command that would refresh it.
   "Docker lab coverage: python3 scripts/ci/test-check-lab-coverage.py && python3 scripts/ci/check-lab-coverage.py"
+  # Which browser specs run is decided by a list inside each Playwright config and a second list in
+  # `apps/chaos-ui/e2e-runner.mjs`. A spec outside both is collected by nobody, and Playwright still
+  # reports the tests it found and exits 0. This container cannot start a browser, but the rule is a
+  # fact about those two lists and the file names on disk, so the judgment does not need one.
+  "e2e registration: python3 scripts/ci/test-check-e2e-registration.py && python3 scripts/ci/check-e2e-registration.py"
   # The host gate runner reads the array below, so it is checked from inside it: the
   # fixture cases of scripts/verify-gates.sh --self-test include parsing this real file,
   # which fails here if the entry format changes and no local runner notices.

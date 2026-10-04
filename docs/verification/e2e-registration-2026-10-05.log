@@ -1,0 +1,461 @@
+# Fourteen browser specs, two configs, five hand-written lists (2026-10-05)
+
+`npm run test:e2e` in `apps/chaos-ui` is `node ./e2e-runner.mjs`. That runner loops over a
+hand-written list of Playwright config files and hands each to `playwright test --config`;
+each config then decides what to collect by matching `testMatch` against the file path. That
+is the whole registration mechanism for the browser suite, and both of its failure directions
+are quiet: a `*.pw.ts` that no pattern matches is never collected and the run still exits 0,
+and a pattern that matches nothing any more is never reported either.
+
+This batch adds `scripts/ci/check-e2e-registration.py`, which reads those lists and the file
+names on disk and fails on a spec nothing collects, a project collecting nothing, a name no
+spec satisfies any more, and a config no runner names. `docs/ci-test-debt.md` had recorded the
+gap on 2026-10-05 as the one left open by the batch that added the second config; that
+paragraph is rewritten here to say what closed it.
+
+Everything quoted below is copied verbatim out of runs on 2026-10-05. The Playwright
+measurements in section 1 come from the copy of Playwright the repository pins, not from
+documentation.
+
+== 0. What is in this batch
+
+    scripts/ci/check-e2e-registration.py          new gate, 734 lines
+    scripts/ci/test-check-e2e-registration.py     new fixtures, 500 lines, 40 cases
+    .github/workflows/ci.yml                      runs both, in the guards job
+    scripts/verify-in-docker.sh                   gates array gains "e2e registration"
+    apps/chaos-ui/README.md                       the rule, next to how to run the suite
+    docs/ci-test-debt.md                          the gap rewritten as closed, plus the lesson
+    CHANGELOG.md, TODO.md                         entries for the gate
+
+The gate is deliberately a reader of text, not a runner of browsers: everything it judges is a
+fact about two lists and a set of file names, which is why it can run in the container that
+has no browser, and why it costs milliseconds in both roots.
+
+== 1. What Playwright actually does, measured rather than assumed
+
+Every rule the gate enforces is a claim about collection. Those claims were measured with the
+Playwright the repository installs, over throwaway projects whose `node_modules` is a symlink
+to `apps/chaos-ui/node_modules`, using `--list` so nothing starts a browser or a host. Each
+case below prints the config, the files in `testDir`, the exit code and what was collected.
+
+    $ python3 {SCRATCH}/b15-playwright-semantics.py
+    playwright --version: Version 1.63.0
+
+    == A. one config, testMatch names alpha only; beta sits in the same directory
+        | export default defineConfig({
+        |   testDir: './e2e',
+        |   testMatch: /alpha\.pw\.ts/,
+        | })
+        files:  alpha.pw.ts, beta.pw.ts
+        exit 0
+          collected: {"alpha.pw.ts": ["alpha"]}
+
+    == B. top level matches both, every project sets its own testMatch naming only alpha
+        | export default defineConfig({
+        |   testDir: './e2e',
+        |   testMatch: /(?:alpha|beta)\.pw\.ts/,
+        |   projects: [
+        |     {
+        |       name: 'desktop',
+        |       testMatch: /alpha\.pw\.ts/,
+        |     },
+        |     {
+        |       name: 'mobile',
+        |       testMatch: /alpha\.pw\.ts/,
+        |     },
+        |   ],
+        | })
+        files:  alpha.pw.ts, beta.pw.ts
+        exit 0
+          collected: {"alpha.pw.ts": ["alpha", "alpha"]}
+
+    == C. a project whose testMatch names a spec that is no longer there
+        files:  alpha.pw.ts
+        exit 0
+          collected: {"alpha.pw.ts": ["alpha"]}
+
+    == D. no testMatch anywhere, so Playwright's own default pattern decides
+        files:  alpha.pw.ts, beta.pw.ts
+        exit 1
+          collected: {}
+          error: Error: No tests found
+
+    == E. testMatch as a glob string instead of a pattern
+        files:  alpha.pw.ts, beta.pw.ts
+        exit 0
+          collected: {"alpha.pw.ts": ["alpha"]}
+
+    == F. every project in the config collects nothing
+        files:  alpha.pw.ts
+        exit 1
+          collected: {}
+          error: Error: No tests found
+    (config text elided for cases C through F; each is printed in full by the driver)
+
+Five things follow, and the gate's rule set is built out of them.
+
+- - - A is the reason the gate exists: `beta.pw.ts` is in the `testDir`, on disk, valid, and
+  was collected by nobody, with exit 0. Nothing in a green run distinguishes it from a spec
+  that ran. - B is the shape `playwright.config.ts` actually has. The top level matches
+  `beta`; both projects set their own `testMatch`, and a project's list replaces the top level
+  rather than narrowing it, so `beta` is collected by nobody and the run still exits 0. In the
+  repository today the three project lists and the top-level list are identical strings, which
+  is why nothing is broken -- and why re-typing one of five copies is the mistake most likely
+  to be made. - C is silent too: a project that collects nothing is reported only if no
+  project at all finds anything, which is what F shows (exit 1, `No tests found`). So "a
+  viewport variant matches no spec" is invisible exactly when the rest of the suite is green.
+  - D shows the default pattern does not match `*.pw.ts`. A config with no `testMatch`
+  therefore collects nothing, and this is the one case in the list that Playwright itself
+  complains about. - E shows a glob `testMatch` works. The gate refuses to read one rather
+  than guess at it, so the finding it prints says `this reader understands a regex literal, an
+  array of them, or a const naming one. Extend it rather than let a pattern go unread` -- a
+  limit of the reader, not a claim that globs are broken.
+
+== 2. The gate against the repository as it stands
+
+    $ python3 scripts/ci/check-e2e-registration.py
+    check-e2e-registration: OK (14 spec file(s), each claimed by exactly one of 2 config(s) that e2e-runner.mjs names)
+
+`--list` prints the map the gate built, one spec per line, tab-separated, naming the project
+that selects it. It is the answer to "would this file run", which is the question the suite
+had no way to ask before.
+
+    $ python3 scripts/ci/check-e2e-registration.py --list
+    e2e/approval-competition.pw.ts    playwright.config.ts (project `observer-browser`)
+    e2e/approved-workspace-ops.pw.ts  playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/attachment-upload.pw.ts       playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/commit-message-safe-mode.pw.ts        playwright.git.config.ts (project `desktop-chromium`) + playwright.git.config.ts (project `mobile-chromium`)
+    e2e/commit-message.pw.ts  playwright.git.config.ts (project `desktop-chromium`) + playwright.git.config.ts (project `mobile-chromium`)
+    e2e/diff-undo.pw.ts       playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/phone-shell.pw.ts     playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/reconnect-snapshot.pw.ts      playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/settings-panel.pw.ts  playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/static-host.pw.ts     playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/streaming-integrity.pw.ts     playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/tool-activity.pw.ts   playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/turn-grouping.pw.ts   playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+    e2e/workspace-flow.pw.ts  playwright.config.ts (project `desktop-chromium`) + playwright.config.ts (project `mobile-chromium`)
+
+Spec names come from the filesystem, not from git's index, because Playwright reads the
+filesystem. `e2e/support/` holds helpers and a mock provider endpoint; none of it matches
+`*.pw.ts`, and the gate's spec scan skips `node_modules` and dot-directories the way
+Playwright's own scan does.
+
+== 3. The four mistakes, injected into a mirror of the real tree
+
+The fixtures in section 4 use miniature configs. This section is the same shipped gate pointed
+at a copy of the real `apps/chaos-ui` -- same two configs, same runner, same 14 spec names --
+with one fact changed per scenario, so the findings are quoted against the files this
+repository actually has. The working tree was never touched: the copy lives outside the
+repository and each scenario rebuilds it, and `git status --porcelain` after the run lists
+only this batch's own files.
+
+    $ python3 {SCRATCH}/b15-realcopy.py
+    scenario: the copy on its own
+        exit 0
+        check-e2e-registration: OK (14 spec file(s), each claimed by exactly one of 2 config(s) that e2e-runner.mjs names)
+
+    === one spec file nothing names is added
+        exit 1
+        check-e2e-registration: FAIL (1 problem(s))
+          e2e/never-registered.pw.ts: no config claims it; the patterns on the table were playwright.config.ts pattern /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell|diff-undo)\.pw\.ts/; playwright.config.ts pattern /approval-competition\.pw\.ts/; playwright.git.config.ts pattern /commit-message(?:-safe-mode)?\.pw\.ts/. It would never run, and the run would exit 0
+
+    === a name every project drops stays at the top level
+        exit 1
+        check-e2e-registration: FAIL (1 problem(s))
+          e2e/streaming-integrity.pw.ts: the top-level `testMatch` of playwright.config.ts matches it, but every project in that config sets its own `testMatch`, which replaces the top level, so the config collects nothing for it
+
+    === the runner stops naming one config
+        exit 1
+        check-e2e-registration: FAIL (1 problem(s))
+          playwright.git.config.ts: nothing runs it -- e2e-runner.mjs lists playwright.config.ts -- so its specs are absent from `npm run test:e2e`, which is what CI types
+
+    === two configs name the same spec
+        exit 1
+        check-e2e-registration: FAIL (1 problem(s))
+          e2e/workspace-flow.pw.ts: claimed by playwright.config.ts and playwright.git.config.ts; `npm run test:e2e` runs every config in turn, so this spec would run twice, against two different hosts
+
+The second scenario is the one worth reading. It deletes `streaming-integrity|` from the two
+project lists and leaves the top-level list intact, which is precisely the edit a careful
+person makes after misreading the precedence: the name is still in the file, still matches,
+and selects nothing. The third is what would have happened when `playwright.git.config.ts` was
+added, had `e2e-runner.mjs` not been updated in the same breath.
+
+== 4. Fixtures
+
+    $ python3 scripts/ci/test-check-e2e-registration.py 2>&1 | tail -4
+    ----------------------------------------------------------------------
+    Ran 40 tests in 1.351s
+
+    OK
+
+`Fixtures` builds a miniature `apps/chaos-ui` in a temporary directory -- two configs with the
+same structure as the real ones, a runner whose `configs` array is a literal, a `package.json`
+-- and runs the shipped gate as a subprocess against it, so every assertion is about the real
+entry point and its real exit code and text. `TextReader` drives the shipped text reader
+directly, because a regex-in-JS reader has failure modes that no config-level fixture can
+reach.
+
+The structure is copied, including the two things a naive scan trips over: a `webServer` entry
+containing `url: \`http://127.0.0.1:${uiPort}/health\`` whose `//` is not a comment, and
+`testMatch: gitSpec`, a pattern reached only through a `const`. Cases are grouped by what they
+protect:
+
+- - - the real repository: `test_the_real_repository_is_clean_and_actually_scanned` runs the
+  shipped gate against this checkout and asserts it passes, that at least 14 specs were read,
+  that none is reported unclaimed, and that three named specs are among them. A gate whose
+  scan directory was wrong would report a spotless empty suite; this case is what stops that
+  being a pass. - one spec, one owner: an unclaimed spec names it and lists the patterns on
+  the table; a spec outside every `testDir` says so instead; two configs claiming one spec
+  name both. - the precedence trap, plus its control: the trap fires when every project
+  replaces the top level, and the control case keeps it from firing when a project inherits. -
+  a project that collects nothing, a stale pattern, and a stale alternative inside a live
+  pattern (reported by name, because `(?:a|b|c)` losing one branch leaves the pattern alive).
+  - the reader's own limits: a glob is refused, an unbound `const` is refused, a `const` used
+  before its binding is refused (JavaScript's temporal dead zone), an uncompilable pattern is
+  reported, an unknown regex flag is reported rather than dropped, `node_modules` and helper
+  files are not specs. - comments: a `testMatch` inside `//` or inside `/* */` registers
+  nothing, and a block comment does not shift line numbers, because the finding points at a
+  line a person has to open. - the runner and the script: a config the runner does not name, a
+  runner naming a file that is not there, the same config listed twice, a `test:e2e` that
+  bypasses the runner, and a package with no `test:e2e` at all. - fail-closed: a tree with no
+  specs, and a tree with no configs, are both errors. A scan that found nothing must not
+  report success, because the symptom of the gate going blind is the green run it exists to
+  doubt.
+
+== 5. Non-vacuity: 26 mutants, 26 killed
+
+The battery driver refuses to touch anything unless the suite is green first, restores the
+source with `shutil.copyfile` after every mutant and proves the restore with `filecmp`
+(`shallow=False`), and aborts if an anchor does not appear exactly once. Each line below is
+the driver's own output: the mutant, what it makes the gate blind to, the suite verdict, and
+the named test.
+
+    $ python3 {SCRATCH}/mutate-e2e-registration.py
+    baseline: Ran 40 tests in 1.366s / OK
+    KILLED   M1 line comments no longer stripped
+              blind to: a commented-out testMatch becomes a registration
+              Ran 40 tests in 1.397s / FAILED (failures=2)
+              first: FAIL: test_a_comment_cannot_fake_a_registration (__main__.Fixtures); FAIL: test_a_url_inside_a_template_is_not_a_comment (__main__.TextReader)
+    KILLED   M2 block comments no longer stripped
+              blind to: a testMatch inside a block comment becomes a registration
+              Ran 40 tests in 1.397s / FAILED (failures=3)
+              first: FAIL: test_a_block_comment_cannot_fake_a_registration_either (__main__.Fixtures); FAIL: test_a_comment_cannot_fake_a_registration (__main__.Fixtures); FAIL: test_a_block_comment_keeps_the_line_count (__main__.TextReader)
+    KILLED   M3 top-level vs project precedence ignored
+              blind to: the trap this guard exists for goes unreported
+              Ran 40 tests in 1.433s / FAILED (failures=1)
+              first: FAIL: test_top_level_name_omitted_by_every_project_is_not_registered (__main__.Fixtures)
+    KILLED   M4 double claim tolerated
+              blind to: two configs running one spec twice is accepted
+              Ran 40 tests in 1.421s / FAILED (failures=1)
+              first: FAIL: test_two_configs_claiming_one_spec_fails_and_names_both (__main__.Fixtures)
+    KILLED   M5 unclaimed spec tolerated
+              blind to: a spec nothing collects is accepted
+              Ran 40 tests in 1.382s / FAILED (failures=3)
+              first: FAIL: test_a_comment_cannot_fake_a_registration (__main__.Fixtures); FAIL: test_a_spec_named_by_nothing_fails_and_names_it (__main__.Fixtures); FAIL: test_a_spec_outside_every_test_dir_fails_even_when_named (__main__.Fixtures)
+    KILLED   M6 testDir not honored
+              blind to: a pattern is allowed to reach above its config's testDir
+              Ran 40 tests in 1.365s / FAILED (failures=1)
+              first: FAIL: test_a_spec_outside_every_test_dir_fails_even_when_named (__main__.Fixtures)
+    KILLED   M7 stale pattern tolerated
+              blind to: a name no spec satisfies any more is accepted
+              Ran 40 tests in 1.407s / FAILED (failures=1)
+              first: FAIL: test_a_pattern_matching_nothing_fails (__main__.Fixtures)
+    KILLED   M8 stale alternative inside a pattern tolerated
+              blind to: one dead name inside an alternation is accepted
+              Ran 40 tests in 1.354s / FAILED (failures=1)
+              first: FAIL: test_a_stale_alternative_inside_a_pattern_fails_by_name (__main__.Fixtures)
+    KILLED   M9 project collecting nothing tolerated
+              blind to: a viewport variant selecting no spec is accepted
+              Ran 40 tests in 1.377s / FAILED (failures=1)
+              first: FAIL: test_a_project_selecting_nothing_fails (__main__.Fixtures)
+    KILLED   M10 config with no testMatch at all tolerated
+              blind to: Playwright's default pattern is treated as if it collected *.pw.ts
+              Ran 40 tests in 1.408s / FAILED (failures=1)
+              first: FAIL: test_a_comment_cannot_fake_a_registration (__main__.Fixtures)
+    KILLED   M11 config the runner does not name tolerated
+              blind to: a config no runner names still reads as registered
+              Ran 40 tests in 1.369s / FAILED (failures=1)
+              first: FAIL: test_a_config_the_runner_does_not_name_fails (__main__.Fixtures)
+    KILLED   M12 runner listing a missing file tolerated
+              blind to: a --config argument pointing at nothing is accepted
+              Ran 40 tests in 1.433s / FAILED (failures=1)
+              first: FAIL: test_a_runner_naming_a_config_that_is_not_there_fails (__main__.Fixtures)
+    KILLED   M13 runner listing a config twice tolerated
+              blind to: one suite running twice per command is accepted
+              Ran 40 tests in 1.425s / FAILED (failures=1)
+              first: FAIL: test_a_config_listed_twice_by_the_runner_fails (__main__.Fixtures)
+    KILLED   M14 package script bypassing the runner tolerated
+              blind to: a test:e2e that runs one config is accepted
+              Ran 40 tests in 1.439s / FAILED (failures=1)
+              first: FAIL: test_a_package_script_that_bypasses_the_runner_fails (__main__.Fixtures)
+    KILLED   M15 missing package script tolerated
+              blind to: a package with no way to start the suite is accepted
+              Ran 40 tests in 1.410s / FAILED (failures=1)
+              first: FAIL: test_a_package_without_the_script_fails (__main__.Fixtures)
+    KILLED   M16 empty spec universe accepted
+              blind to: a tree with no specs reports success
+              Ran 40 tests in 1.426s / FAILED (failures=1)
+              first: FAIL: test_a_tree_with_no_specs_is_an_error (__main__.Fixtures)
+    KILLED   M17 empty config universe accepted
+              blind to: a tree with no configs reports success
+              Ran 40 tests in 1.405s / FAILED (failures=1)
+              first: FAIL: test_a_tree_with_no_configs_is_an_error (__main__.Fixtures)
+    KILLED   M18 glob testMatch read instead of refused
+              blind to: a glob string is read by a reader that cannot read it
+              Ran 40 tests in 1.383s / FAILED (failures=1)
+              first: FAIL: test_a_glob_test_match_is_refused (__main__.Fixtures)
+    KILLED   M19 unknown regex flag applied silently
+              blind to: a flag whose meaning is not implemented is judged anyway
+              Ran 40 tests in 1.488s / FAILED (failures=1)
+              first: FAIL: test_an_unknown_flag_is_reported_rather_than_ignored (__main__.Fixtures)
+    KILLED   M20 const temporal dead zone ignored
+              blind to: a const used before its binding resolves, which it cannot
+              Ran 40 tests in 1.470s / FAILED (failures=1)
+              first: FAIL: test_an_identifier_bound_after_its_use_is_refused (__main__.Fixtures)
+    KILLED   M21 every slash opens a pattern
+              blind to: division is no longer distinguished from a pattern
+              Ran 40 tests in 1.449s / FAILED (failures=1)
+              first: FAIL: test_a_slash_after_a_value_divides_and_does_not_open_a_pattern (__main__.TextReader)
+    KILLED   M22 unknown regex flags dropped rather than read
+              blind to: a pattern with flag d is read as if it had no flag
+              Ran 40 tests in 1.390s / FAILED (failures=1)
+              first: FAIL: test_an_unknown_flag_is_reported_rather_than_ignored (__main__.Fixtures)
+    SURVIVED M23 slash inside a character class ends the pattern
+              blind to: [a/] truncates the pattern, so the suffix is lost
+              Ran 40 tests in 1.360s
+              first: OK
+    KILLED   M24 precedence defect reported twice
+              blind to: one mistake turns into two problems, and the count stops meaning anything
+              Ran 40 tests in 1.415s / FAILED (failures=1)
+              first: FAIL: test_top_level_name_omitted_by_every_project_is_not_registered (__main__.Fixtures)
+    mutants: 24, killed: 23, survived: 1
+     SURVIVED: M23 slash inside a character class ends the pattern
+    after restoring: Ran 40 tests in 1.441s / OK (exit 0)
+
+M23 is recorded as surviving on purpose. The case written to catch it asserted that
+`strip_js_comments` returns a character class unchanged -- which is true whether or not the
+regex scanner understands the class, because that function copies regex literals wholesale.
+The assertion was rewritten against the function that actually decides, `Config._read_regex`,
+so it says what the pattern's source is rather than that a copy round-tripped:
+
+    $ python3 {SCRATCH}/mutate-e2e-registration-23.py
+    baseline: Ran 40 tests in 1.402s / OK
+    KILLED   M23 slash inside a character class ends the pattern
+              blind to: [a/] truncates the pattern, so the suffix is lost
+              FAIL: test_a_regex_character_class_holds_a_slash (__main__.TextReader)
+    KILLED   M25 character-class tracking removed from the regex scanner
+              blind to: a `[` no longer opens a class, so a `]` cannot close one either
+              FAIL: test_a_regex_character_class_holds_a_slash (__main__.TextReader)
+    after restoring: Ran 40 tests in 1.383s / OK (exit 0)
+
+M25 is the other side of the same line: if a `[` does not open a class, a `]` cannot close
+one, and the scanner has to fail somewhere. Twenty-five mutants, zero survivors at that point.
+
+The last mutant came out of writing this file. The unclaimed-spec finding originally listed
+every pattern in the suite, which on the real configs means the same 11-name list printed
+three times, once per place it is re-typed -- three lines of noise burying the two patterns
+that differ. The finding was changed to name each distinct pattern once, and the existing
+fixture was strengthened to pin that, because nothing had ever asserted the shape of that
+message. M26 puts the duplicates back:
+
+    $ python3 {SCRATCH}/mutate-e2e-registration-26.py
+    baseline: Ran 40 tests in 1.432s / OK
+    M26 duplicated pattern list in the unclaimed finding
+              blind to: a finding that repeats one pattern three times reads as three
+              FAIL: test_a_spec_named_by_nothing_fails_and_names_it (__main__.Fixtures) / Ran 40 tests in 1.418s / FAILED (failures=1)
+    killed
+    after restoring: Ran 40 tests in 1.384s / OK (exit 0)
+
+Total: 26 mutants, 26 killed, every source restored byte-identically and confirmed by `cmp`.
+Two of the 26 (M23 and M25) exist because the first version of the case written to catch M23
+was insensitive, and the honest reading of that is the same lesson as before: a mutation is
+only worth what the surviving assertion can see, so the assertion has to be aimed at the
+function that makes the decision.
+
+== 6. Fail-closed, and the hole that closing found
+
+A gate that cannot read its subject has to say so. The list of things that are errors rather
+than skips: no specs anywhere, no configs, a `testMatch` that is neither a regex literal, an
+array of them, nor a `const` naming one (which is why a glob is refused, although E in section
+1 shows globs work), an unresolvable or late-bound `const`, an uncompilable pattern, an
+unknown regex flag, a missing `--ui-dir` (exit 2). The reason is the specific asymmetry of
+this subject: every failure mode of the suite looks like a passing run, so a green light from
+a gate that read nothing is exactly the evidence that is worthless.
+
+Writing the fixtures is what turned up a real one. The flag scan read `[gimsuy]*`, but
+JavaScript also defines `d` (hasIndices), so `/x\.pw\.ts/d` was being read as a pattern with
+no flags: the compiled behaviour was right for this repository's patterns and wrong as a
+matter of fact, and the finding a person would need -- "this reader does not know what `d`
+means, so it is not judging this pattern" -- never fired. `[dgimsuvy]*` is now read, and
+anything outside `imsuvy` is reported. M22 kills the narrow version; it is the only mutant in
+the battery that was found by a fixture being written rather than by a defect being reported.
+
+== 7. Both runners, and the wiring that says they agree
+
+The gate is wired on executable lines in `.github/workflows/ci.yml` (guards job) and in the
+`gates` array of `scripts/verify-in-docker.sh`. The host runner parses that array rather than
+keeping its own copy, so one entry becomes a gate in three places: CI, the container, and
+`scripts/verify-gates.sh` on the host.
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (72 files in scripts/ci/, 71 reachable, 67 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+
+    $ bash scripts/verify-gates.sh --only "e2e registration"
+    == gates extracted from /home/chaos/hunt/dev/projects/chaos-code/scripts/verify-in-docker.sh
+       host run: the ${bootstrap} prefix is dropped, build gates are skipped
+       a skipped build gate plus a changed Rust file is a NOT COVERED failure, not a pass
+       env: RUST_MIN_STACK=16777216 (mirrors the container's --env; set it to override)
+       --only is in effect (1 pattern(s)); this is a filtered run, not a sweep
+    PASS  e2e registration
+
+    all gates passed on the host (1 run, 0 skipped, 1 of 40 selected by --only)
+
+The container run is the one that matters more, because the container is where a fresh clone
+is judged, and this container has no browser. The gate's subject is two lists and a set of
+file names, so it needs nothing else, and it reads the same checkout through `/src`.
+
+    $ scripts/verify-in-docker.sh --only "e2e registration"
+    == source tree: /home/chaos/hunt/dev/projects/chaos-code at 508191d5: 4048 files, checksum 1991408400 (path set 2894107834)
+       4 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    == --only is in effect: 1 of 38 gates selected, this is not a sweep
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == e2e registration
+    test_a_block_comment_cannot_fake_a_registration_either (__main__.Fixtures.test_a_block_comment_cannot_fake_a_registration_either) ... ok
+    test_a_comment_cannot_fake_a_registration (__main__.Fixtures.test_a_comment_cannot_fake_a_registration)
+    A commented-out `testMatch` is dead text; treating it as a claim is going blind. ... ok
+    (… 36 result lines and 3 docstring lines elided here: the same 40 cases the host ran …)
+    ----------------------------------------------------------------------
+    Ran 40 tests in 1.379s
+
+    OK
+    check-e2e-registration: OK (14 spec file(s), each claimed by exactly one of 2 config(s) that e2e-runner.mjs names)
+
+    selected gates passed in chaos-verify:local
+      --only was in effect: 1 of 38 gates ran, so this is not a full sweep
+    CONTAINER EXIT: 0
+
+The tree line is worth reading twice, because this run was made before the commit and the
+entry point says so rather than implying otherwise: `4 path(s) differ from HEAD`, naming the
+two new files and the two wiring edits. The gate's inputs are `apps/chaos-ui` and nothing
+else, and no file under it was among those four, which is why a run on that working tree still
+says something about the commit that followed. The container counts 38 gates and the host
+counts 40: four of the host's entries are recorded CI-only or host-only, and that difference
+is itself reported by `check-guard-wiring.py` and by
+`check-workflow-{yaml,shells,toolchain}.py`, all three of which were re-run and pass.
+
+== 8. What the gate does not judge
+
+- - - `testIgnore`, `grep`, `grepInvert`, `shard`, and the positional and `--grep` filters of
+  `playwright test` are outside it. The rule is about registration, not about every way a test
+  can fail to run. - A config that builds `testMatch` at runtime (from `process.env`, from a
+  loop) is refused rather than judged. That refusal is a finding, so the day someone writes
+  one, the gate says which file and which line, and the reader gets extended or the config
+  gets simplified. - The gate asserts a spec is *collected*. Whether the tests inside it then
+  pass is the browser suite's business, which runs in its own CI job and cannot run in this
+  container: there is no browser here. - Two specs whose patterns could both match one path is
+  a double claim and a failure, but two patterns that could match two different files are not
+  compared for overlap. A file is judged against the patterns, never the other way around.

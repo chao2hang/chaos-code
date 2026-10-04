@@ -84,6 +84,18 @@ npm run test:e2e
 端口；不设置时端口自动分配。只想跑这一组时可显式指定配置：
 `npx playwright test --config playwright.git.config.ts`。
 
+新增一份 `*.pw.ts` 必须同时改两处手写清单，否则它一次也不会跑，而 `npm run test:e2e` 照旧全绿：
+Playwright 只收集 `testMatch` 匹配上的文件，匹配不到的那些它不说、也不报错，退出码仍是 0。
+`playwright.config.ts` 尤其容易踩空——它在顶层写了一份 `testMatch`，三个 project 又各自重写一份，而
+project 的 `testMatch` 是**替换**顶层而不是收窄它：只往顶层加名字，等于什么都没登记，那条 pattern 仍
+然匹配其余十二份规格，看上去毫无异样。这条规则由 `scripts/ci/check-e2e-registration.py` 钉住（宿主与
+容器两条门禁里都有它）：它按 Playwright 的方式读这两份配置，逐个规格问「谁会收集我」，并拒收没人认领
+的规格、所有 project 都替换掉的顶层名单、收集不到任何东西的 project、已经指向不存在文件的旧名字、
+runner 没点名的配置，以及不再调用 `e2e-runner.mjs` 的 `test:e2e`。它读不出来的东西一律算失败而不是跳
+过（例如用 glob 字符串或用 `process.env` 现拼出来的 `testMatch`），因为这个门禁存在的理由正是怀疑一
+次绿色的运行。 `python3 scripts/ci/check-e2e-registration.py --list` 会打印现在这张对照表，一行一份
+规格，后面列出是哪个 project 收集了它。
+
 ## 性能采集
 
 本地可执行 `CHAOS_PERF_REPORT_DIR=/path/to/reports npm run perf:collect` 生成 JSON 性能报告；默认在可用本地端口启动 Vite 和 Playwright Chromium。输出目录为必填项。要让 UI 连接实际 Web Engine，需另行运行 `cargo run -p xai-grok-web` 并设置 `CHAOS_PERF_BASE_URL` 指向经过 Vite 代理的 UI 页面；报告会记录 Web host URL 是否由调用方提供，但不会自动启动 Web host。先运行 `npm run build`。`CHAOS_PERF_SAMPLES` 可设置页面就绪采样数（默认 20，范围 1–100）。

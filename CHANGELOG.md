@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### 门禁：新增的浏览器规格到底会不会被跑，从此是一条门禁的回答，不是人对五处名单的记忆
+
+`npm run test:e2e` 的登记机制只有两张手写名单—— `apps/chaos-ui/e2e-runner.mjs` 里那份配置清单，和每份
+Playwright 配置里的 `testMatch`——而它两个方向都静静地骗人：一份 `*.pw.ts` 不被任何 pattern 匹配，
+Playwright 不收它也不说话，退出码照旧 0；一条 pattern 匹配不到任何文件也一样，改名之后留在名单里的旧名字
+继续替一份已经不存在的覆盖作证。14 份规格、 2 份配置，同一串名字要抄五处，而 `playwright.config.ts` 还把
+最容易踩的那条摆在脚边：三个 project 各自重写了一份 `testMatch`，而 project 的是**替换**顶层而不是收窄它
+——只往顶层加名字等于什么都没登记，那条 pattern 仍然匹配其余十二份规格。新门禁
+`scripts/ci/check-e2e-registration.py` 判六件事：每个规格恰好被一份配置认领、所有 project 都替换顶层时顶层
+那份还选不选得到东西、每个 project 至少收到一份规格、每条 pattern 与 `(?:a|b|c)` 里每个分支都还匹配得到东
+西、runner 点名的配置等于磁盘上的配置、 `test:e2e` 仍然调用那个 runner。
+
+规则不是照文档写的：先用探针把仓库装的这份 Playwright（ `Version 1.63.0`）按六种配置形状各跑一遍
+`--list`。两条与预想相反，也都写进了措辞——一个 project 收不到东西时，只有整个配置什么都收不到，
+Playwright 才会自己抱怨（ `Error: No tests found`，退 1），否则彻底沉默，「手机视口那条 project 其实一份规
+格都没跑」恰好在全套别的都绿的时候不可见；glob 形状的 `testMatch` 是有效的，所以门禁对它是「我读不出来就
+不判」，把限制写成读者自己的，而不是假装工具坏了。四个错法（无人认领的规格、上面那条优先级、runner 不再点
+名某份配置、两份配置抢同一份规格）都打在真实配置的镜像副本上，工作区一个字节没动。
+
+40 例夹具、 26 发变异 0 存活，其中两处值得记：抓 M23 的那条夹具原本断言「整段复制用的那个函数原样带回字符
+类」，这句话在扫描器懂不懂 `[a/]` 的两种情况下**都**为真，改打到真正做决定的 `Config._read_regex` 上，它才
+与反面那一发一起倒下；写证据日志时发现「无人认领」那条 finding 在真实配置上会把同一串 11 个名字印三遍
+（顶层与两个视口 project 各抄一遍），于是改成每个不同 pattern 只提名一次——在那之前没有任何测试断言过这条
+消息长什么样，把它改坏不会有任何东西红。fail-closed 的名单里还挖出一个真洞： flag 扫描原本读 `[gimsuy]*`，
+而 JavaScript 还定义了 `d`，于是 `/x\.pw\.ts/d` 被读成「没有 flag」，那句本该说的「这个 flag 我不认识、这条
+pattern 我不判」永远没机会说出口。门禁在宿主与容器两条腿上都跑——那个容器起不了浏览器，但这条规则是「两张
+名单与磁盘上的文件名」的事实，不需要浏览器。
+
+（2026-10-05；`scripts/ci/check-e2e-registration.py`、`scripts/ci/test-check-e2e-registration.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、`apps/chaos-ui/README.md`、
+`docs/ci-test-debt.md`、`docs/verification/e2e-registration-2026-10-05.log`）
+
 ### 修复：安全模式拒掉的请求由等着它的那个面板认领，界面不再停在「处理中」，也没被记成一次失败的对话
 
 Safe Web Mode 在 socket 层就把碰工作区的消息拦下，回的那一句只有 `safe_web_mode_blocked` 与「Safe Web
