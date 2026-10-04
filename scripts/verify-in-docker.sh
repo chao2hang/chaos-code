@@ -23,13 +23,22 @@
 # Environment:
 #   BASE_IMAGE   base image for docker/verify.Dockerfile (default rust:1-bookworm)
 #   IMAGE_TAG    image tag to build and run (default chaos-verify:local)
+#   CHAOS_TREE_MANIFEST
+#                directory to keep the per-path tree listings in. By default they are
+#                written to a temporary directory removed by this script's own EXIT
+#                trap, so a checksum a later run cannot reproduce leaves nothing to
+#                diff. The directory is created if missing, and a run that cannot use
+#                one it was asked to use stops before any gate instead of printing a
+#                verdict as though it had kept the evidence.
 #
 # The source tree is checksummed before the first gate and again after the last
 # one, and a mismatch is reported as UNATTRIBUTABLE rather than as a result: the
 # container reads the live working tree, so a run that overlapped an edit says
 # nothing about any commit. It is said ahead of the gate verdict, because the
 # movement is usually the explanation for whatever failed. Re-run it with nothing
-# writing to the tree.
+# writing to the tree. The line carries two numbers: a checksum over the contents
+# of every path and a digest of which paths were listed, because the first moves
+# when a path is added and another removed while the file count stays put.
 #
 # Capture evidence with:
 #   scripts/verify-in-docker.sh --full 2>&1 | tee verify-in-docker-$(date +%Y%m%d).log
@@ -71,6 +80,22 @@ while [ $# -gt 0 ]; do
 done
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# `CHAOS_TREE_MANIFEST` keeps the two listings this run is built on. The checksum line is
+# reproducible -- a clean clone of the commit it names gives the same number back -- so when a
+# transcript's number does not reproduce, the tree it measured was not the tree it was compared
+# against, and the only thing that can show that afterwards is the per-path listing. Those used
+# to die in ${tree_dir}. Refusing up front, before an image is built, is deliberate: a run asked
+# to keep evidence and failing to keep it must not go on to print a verdict as though it had.
+tree_manifest="${CHAOS_TREE_MANIFEST:-}"
+if [ -n "${tree_manifest}" ]; then
+  manifest_err="$(mkdir -p "${tree_manifest}" 2>&1)" || {
+    echo "CHAOS_TREE_MANIFEST=${tree_manifest}: mkdir failed: ${manifest_err%%$'\n'*}" >&2
+    echo "   this run was asked to keep the tree listings and cannot, so it builds no image" >&2
+    exit 2
+  }
+fi
+
 image_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
 
 echo "== building ${IMAGE_TAG} from ${BASE_IMAGE}"
@@ -146,6 +171,19 @@ trap 'rm -rf "${tree_dir}"' EXIT
 tree_before="${tree_dir}/before.sums"
 tree_after="${tree_dir}/after.sums"
 
+keep_manifest() { # keep_manifest <name> <sums-file>
+  # Copying can still fail after the directory was accepted (full disk, path replaced by a
+  # file), and that must not kill a run that is already reporting its gates: it says so instead.
+  [ -n "${tree_manifest}" ] || return 0
+  local src="$2"
+  if cp "${src}" "${tree_manifest}/${1}.sums" 2>"${tree_dir}/keep.err" \
+     && cp "${src}.list" "${tree_manifest}/${1}.list" 2>>"${tree_dir}/keep.err"; then
+    return 0
+  fi
+  echo "manifest: could not keep '${1}' in ${tree_manifest}: $(head -n 1 "${tree_dir}/keep.err")" >&2
+  return 0
+}
+
 count_lines() { # `grep -c` prints 0 *and* exits 1 on an empty file, hence the `|| true`
   grep -c '' "$1" 2>/dev/null || true
 }
@@ -178,13 +216,19 @@ fingerprint() { # fingerprint <output-file>
     } >&2
     return 1
   fi
-  xargs -0 cksum <"${out}.list" >"${out}" || rc=$?
+  # The `cd` belongs to the `cksum` as much as to the `git`: the listing holds paths relative to
+  # the repository, so reading them from wherever the script happened to be launched sums nothing.
+  # Splitting this line into two checked halves once left the `cksum` outside, and a run started
+  # from any other directory died here with "summed only 0 of N listed file(s)".
+  ( cd "${repo_root}" && xargs -0 cksum ) <"${out}.list" >"${out}" || rc=$?
   if [ "${rc}" -ne 0 ] || [ ! -s "${out}" ]; then
     {
       echo "fingerprint: cksum summed only $(count_lines "${out}") of" \
            "$(count_lines "${out}.list") listed file(s) from ${repo_root} (exit ${rc})"
       echo "   a partial fingerprint is compared against the run's own after-image and agrees"
       echo "   with it, so the verdict would name a commit this run did not actually read."
+      echo "   a tracked path deleted in the worktree is still listed by git and still cannot be"
+      echo "   read: commit the deletion or restore the file, then run this again."
     } >&2
     return 1
   fi
@@ -193,7 +237,16 @@ fingerprint() { # fingerprint <output-file>
 
 sum_of() { cksum <"$1" | cut -d' ' -f1; }
 
+paths_of() { # Digest of *which* paths were listed, independent of the order git named them and
+  # of what was inside them. `sum_of` is a cksum over lines that each carry a path plus its
+  # bytes, so one path added and another removed moves it while leaving the file count alone: on
+  # 2026-10-04 that coincidence was read as proof that only contents could differ. The listing is
+  # NUL-separated and stays that way, because a newline in a path name is legal in git.
+  LC_ALL=C sort -z <"$1" | cksum | cut -d' ' -f1
+}
+
 fingerprint "${tree_before}" || exit 1
+keep_manifest before "${tree_before}"
 # The line is quoted in run transcripts, so it has to name what it fingerprinted. A bare
 # checksum can only be re-measured by guessing which checkout it came from: on 2026-10-04 a
 # transcript's checksum could not be reproduced from the clone it claimed to describe, and
@@ -201,7 +254,11 @@ fingerprint "${tree_before}" || exit 1
 # a repository with files but no commit is fingerprintable, and says so.
 head_sha="$( ( cd "${repo_root}" && git rev-parse --short HEAD ) 2>/dev/null )" || head_sha=""
 echo "== source tree: ${repo_root} at ${head_sha:-(no commit)}:" \
-     "$(count_lines "${tree_before}") files, checksum $(sum_of "${tree_before}")"
+     "$(count_lines "${tree_before}") files, checksum $(sum_of "${tree_before}")" \
+     "(path set $(paths_of "${tree_before}.list"))"
+if [ -n "${tree_manifest}" ]; then
+  echo "   tree listings kept in ${tree_manifest}: before.list, before.sums"
+fi
 # `grep -c` over `wc -l`: `wc` pads its count on some BSDs, which would make a
 # clean tree compare unequal to `0` below.
 #
@@ -393,10 +450,13 @@ done
 # "unattributable", not as a silent death after the gate summary.
 fingerprint_ok=yes
 fingerprint "${tree_after}" || fingerprint_ok=no
+keep_manifest after "${tree_after}"
 
 moved=""
+moved_shape=""
 if [ "${fingerprint_ok}" != "yes" ]; then
   moved="(the tree could not be checksummed: a path appeared, disappeared or was renamed mid-run)"
+  moved_shape="the after-image is incomplete, so the two cannot be compared path by path"
 elif ! cmp -s "${tree_before}" "${tree_after}"; then
   # `diff` exits 1 when the two files differ, which is precisely the case this branch exists
   # for, and under `set -euo pipefail` that status propagates out of the assignment and ends
@@ -404,6 +464,17 @@ elif ! cmp -s "${tree_before}" "${tree_after}"; then
   # and no verdict printed at all -- the report this function exists to give was the thing
   # that never ran. The listing is what is wanted here, not the exit status.
   moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u || true)"
+  # Whether the two images list the same paths is a separate fact from whether they agree, and
+  # the reader needs both: contents moved and the file list moved look the same in the checksum.
+  paths_before="$(paths_of "${tree_before}.list" || true)"
+  paths_after="$(paths_of "${tree_after}.list" || true)"
+  if [ -z "${paths_before}" ] || [ -z "${paths_after}" ]; then
+    moved_shape="the path set could not be digested, so this run cannot say which half moved"
+  elif [ "${paths_before}" = "${paths_after}" ]; then
+    moved_shape="path set ${paths_before} unchanged, so file contents moved"
+  else
+    moved_shape="path set moved (${paths_before} -> ${paths_after}), so a path appeared, vanished or was renamed"
+  fi
 fi
 
 echo
@@ -422,9 +493,12 @@ fi
 if [ -n "${moved}" ]; then
   echo
   echo "UNATTRIBUTABLE: the source tree changed while the gates ran."
-  echo "  checksum $(sum_of "${tree_before}") -> $(sum_of "${tree_after}"); these paths differ:"
+  echo "  checksum $(sum_of "${tree_before}") -> $(sum_of "${tree_after}"); ${moved_shape}:"
   echo "${moved}" | sed -n '1,20p' | sed 's/^/    /'
   echo "  nothing in this run can be attributed to a commit; re-run it with the tree at rest."
+  if [ -n "${tree_manifest}" ]; then
+    echo "  both listings are in ${tree_manifest}: diff before.sums after.sums"
+  fi
   exit 1
 fi
 

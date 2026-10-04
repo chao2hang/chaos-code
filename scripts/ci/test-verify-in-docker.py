@@ -591,6 +591,193 @@ class VerdictTests(unittest.TestCase):
         self.assertNotIn("differ from HEAD", proc.stdout)
 
 
+class AttributionTests(unittest.TestCase):
+    """The two numbers on the fingerprint line, and the listings behind them.
+
+    A transcript from 2026-10-04 quoted `4020 files, checksum 2692478763`, a number no clean
+    checkout of the commit it was said to describe reproduces. The line carried one number, so the
+    only thing it could rule out was nothing: `cksum` sums lines that each carry a path *and* its
+    bytes, which means a path added and another removed moves the checksum while the file count
+    sits still, and the count agreeing was read as proof that contents alone had moved. The line
+    now separates the two questions, and `CHAOS_TREE_MANIFEST` keeps the per-path listing that
+    answers them, which the run's own `EXIT` trap used to delete.
+    """
+
+    LINE = re.compile(r"== source tree: (\S+) at (\S+): (\d+) files, checksum (\d+)"
+                      r" \(path set (\d+)\)")
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.fx = EntryFixture(Path(self._tmp.name))
+
+    def parts(self, proc: subprocess.CompletedProcess) -> dict:
+        found = self.LINE.findall(proc.stdout)
+        self.assertEqual(len(found), 1, f"exactly one fingerprint line expected:\n{proc.stdout}")
+        directory, sha, files_, checksum, path_set = found[0]
+        return {"dir": directory, "sha": sha, "files": int(files_),
+                "checksum": checksum, "path_set": path_set}
+
+    def test_the_line_carries_a_path_set_number_next_to_the_checksum(self) -> None:
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        got = self.parts(proc)
+        self.assertEqual(got["files"], self.fx.tree_files())
+        self.assertEqual(got["dir"], str(self.fx.root))
+        self.assertEqual(got["sha"], self.fx.head_sha())
+
+    def test_an_untouched_tree_agrees_with_itself_on_both_numbers(self) -> None:
+        first = self.parts(self.fx.run("--only", "tree ownership"))
+        second = self.parts(self.fx.run("--only", "tree ownership"))
+        self.assertEqual(first, second, "the same tree must print the same line twice")
+
+    def test_editing_a_files_bytes_moves_the_checksum_and_leaves_the_path_set_alone(self) -> None:
+        before = self.parts(self.fx.run("--only", "tree ownership"))
+        (self.fx.root / "docs" / "gate-notes.md").write_text("edited in place\n", encoding="utf-8")
+        after = self.parts(self.fx.run("--only", "tree ownership"))
+        self.assertEqual(after["files"], before["files"])
+        self.assertNotEqual(after["checksum"], before["checksum"], "content is inside the checksum")
+        self.assertEqual(after["path_set"], before["path_set"],
+                         "which paths exist did not change, so that number must not move")
+
+    def test_swapping_one_path_for_another_keeps_the_count_and_moves_the_path_set(self) -> None:
+        # The shape the old line could not tell apart from an in-place edit, and the reason the
+        # count agreeing proved nothing: same number of paths, entirely different set. Both paths
+        # here are untracked on purpose -- a tracked path missing from the worktree cannot be read
+        # at all, and `fingerprint` refuses the run rather than summing half a tree.
+        (self.fx.root / "note-a.md").write_text("first\n", encoding="utf-8")
+        before = self.parts(self.fx.run("--only", "tree ownership"))
+        (self.fx.root / "note-a.md").unlink()
+        (self.fx.root / "note-b.md").write_text("second\n", encoding="utf-8")
+        after = self.parts(self.fx.run("--only", "tree ownership"))
+        self.assertEqual(after["files"], before["files"],
+                         "this is the case where the file count is no evidence of anything")
+        self.assertNotEqual(after["path_set"], before["path_set"])
+        self.assertNotEqual(after["checksum"], before["checksum"])
+
+    def test_a_content_move_mid_run_is_called_a_content_move(self) -> None:
+        tracked = self.fx.root / "docs" / "gate-notes.md"
+        proc = self.fx.run("--only", "tree ownership", DOCKER_STUB_TOUCH=str(tracked))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("UNATTRIBUTABLE", proc.stdout)
+        self.assertRegex(proc.stdout, r"path set \d+ unchanged, so file contents moved")
+
+    def test_a_path_appearing_mid_run_is_called_a_path_set_move(self) -> None:
+        proc = self.fx.run("--only", "tree ownership",
+                           DOCKER_STUB_TOUCH=str(self.fx.root / "docs" / "new-mid-run.md"))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("UNATTRIBUTABLE", proc.stdout)
+        self.assertRegex(proc.stdout, r"path set moved \(\d+ -> \d+\)")
+        self.assertIn("a path appeared, vanished or was renamed", proc.stdout)
+
+    def test_the_manifest_keeps_both_listings_and_they_show_the_move(self) -> None:
+        keep = Path(self._tmp.name) / "kept"
+        touched = self.fx.root / "docs" / "gate-notes.md"
+        proc = self.fx.run("--only", "tree ownership", CHAOS_TREE_MANIFEST=str(keep),
+                           DOCKER_STUB_TOUCH=str(touched))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn(f"tree listings kept in {keep}", proc.stdout)
+        self.assertIn(f"both listings are in {keep}", proc.stdout)
+        kept = sorted(p.name for p in keep.iterdir())
+        self.assertEqual(kept, ["after.list", "after.sums", "before.list", "before.sums"])
+        diff = subprocess.run(["diff", str(keep / "before.sums"), str(keep / "after.sums")],
+                              capture_output=True, text=True)
+        self.assertEqual(diff.returncode, 1, diff.stdout)
+        self.assertIn("docs/gate-notes.md", diff.stdout,
+                      "the listing is the artifact that makes a move diffable afterwards")
+        # The listing is the same bytes the run compared, so both numbers on the line have to come
+        # back out of the kept files rather than only having lived in the deleted temporary tree.
+        printed = self.parts(proc)
+        sums = subprocess.run(["cksum"], input=(keep / "before.sums").read_bytes(),
+                              capture_output=True, check=True)
+        self.assertEqual(sums.stdout.split()[0].decode(), printed["checksum"],
+                         "before.sums must be the artifact the checksum was taken from")
+        listing = subprocess.run(["bash", "-c", 'LC_ALL=C sort -z | cksum'],
+                                 input=(keep / "before.list").read_bytes(),
+                                 capture_output=True, check=True)
+        self.assertEqual(listing.stdout.split()[0].decode(), printed["path_set"],
+                         "before.list must be the listing the path-set number was taken from")
+
+    def test_a_run_at_rest_keeps_two_listings_that_are_identical(self) -> None:
+        keep = Path(self._tmp.name) / "kept"
+        proc = self.fx.run("--only", "tree ownership", CHAOS_TREE_MANIFEST=str(keep))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual((keep / "before.sums").read_bytes(), (keep / "after.sums").read_bytes())
+        self.assertEqual((keep / "before.list").read_bytes(), (keep / "after.list").read_bytes())
+        self.assertNotIn("both listings are in", proc.stdout,
+                         "nothing moved, so there is nothing to point a reader at")
+
+    def test_the_tree_is_fingerprinted_when_the_script_is_launched_from_elsewhere(self) -> None:
+        # The listing is relative to the repository, so the `cksum` that reads it has to run there
+        # too. Splitting `fingerprint` into two checked halves put the listing inside a
+        # `cd "${repo_root}"` subshell and left the `cksum` in the caller's directory, which made
+        # every path unreadable from anywhere but the repository root: the run stopped before the
+        # first gate with "summed only 0 of N listed file(s)". The script derives `repo_root` from
+        # `$0`, so a run launched from elsewhere is a normal thing to do.
+        elsewhere = Path(self._tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        from_root = self.fx.run("--only", "tree ownership")
+        self.assertEqual(from_root.returncode, 0, from_root.stdout + from_root.stderr)
+        proc = subprocess.run(["bash", str(self.fx.root / "scripts" / "verify-in-docker.sh"),
+                               "--only", "tree ownership"],
+                              cwd=elsewhere, capture_output=True, text=True, timeout=300,
+                              env={**os.environ,
+                                   "PATH": f"{self.fx.root / 'stub-bin'}{os.pathsep}"
+                                           f"{os.environ['PATH']}",
+                                   "IMAGE_TAG": "stub-image:tag",
+                                   **self.fx.env()})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.LINE.findall(proc.stdout), self.LINE.findall(from_root.stdout),
+                         "the same tree must give the same line whatever directory it was asked from")
+
+    def test_the_path_set_number_ignores_the_order_git_named_the_paths_in(self) -> None:
+        # Two git versions, or a checkout whose index was written in another order, name the same
+        # paths in a different sequence. The content checksum is taken over lines in that sequence
+        # and moves with it; the path-set number is sorted first and must not. The stub reverses
+        # the listing rather than hard-coding names, so it stays right as the fixture repo changes.
+        before = self.parts(self.fx.run("--only", "tree ownership"))
+        stub = ("#!/usr/bin/env bash\n"
+                'if [ "$1" = ls-files ]; then\n'
+                "  names=()\n"
+                '  while IFS= read -r -d \'\' name; do names=("$name" "${names[@]}"); '
+                'done < <("@GIT@" "$@")\n'
+                '  for name in "${names[@]}"; do printf \'%s\' "$name"; head -c 1 /dev/zero; done\n'
+                "  exit 0\n"
+                "fi\n"
+                'exec "@GIT@" "$@"\n').replace("@GIT@", REAL_GIT)
+        self.assertNotIn("@GIT@", stub, "the stub has to reach the real git for the listing")
+        self.fx.stub_git(stub)
+        after = self.parts(self.fx.run("--only", "tree ownership"))
+        self.assertEqual(after["files"], before["files"])
+        self.assertEqual(after["path_set"], before["path_set"],
+                         "the same set of paths must give the same path-set number in any order")
+        self.assertNotEqual(after["checksum"], before["checksum"],
+                            "the content checksum is ordered, which is why the second number exists")
+
+    def test_an_unreadable_path_in_the_listing_is_named_rather_than_left_as_a_count(self) -> None:
+        # A tracked file deleted in the worktree is still listed by git and cannot be read, so the
+        # run refuses to fingerprint the tree. `cksum` names the path on its own stderr and the
+        # script adds the remedy; both have to survive, which is what a `2>/dev/null` on that
+        # child would break.
+        (self.fx.root / "docs" / "gate-notes.md").unlink()
+        proc = self.fx.run("--only", "tree ownership")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("cksum summed only", proc.stderr)
+        self.assertIn("docs/gate-notes.md", proc.stderr,
+                      "the message has to name the path that could not be read")
+        self.assertIn("commit the deletion or restore the file", proc.stderr)
+        self.assertEqual(self.fx.gate_runs(), [], "an unfingerprintable tree runs no gate")
+
+    def test_a_manifest_directory_that_cannot_be_made_builds_no_image(self) -> None:
+        blocked = Path(self._tmp.name) / "blocked"
+        blocked.write_text("not a directory\n", encoding="utf-8")
+        proc = self.fx.run("--only", "tree ownership", CHAOS_TREE_MANIFEST=str(blocked))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn(f"CHAOS_TREE_MANIFEST={blocked}: mkdir failed:", proc.stderr)
+        self.assertEqual(self.fx.calls(), [],
+                         "a run that cannot keep what it was asked to keep reaches no docker")
+
+
 class MountContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

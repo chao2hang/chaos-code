@@ -1,0 +1,378 @@
+# Making a container run's tree checksum attributable, 2026-10-04
+
+`scripts/verify-in-docker.sh` checksums the source tree before the first gate and again
+after the last one, so a run that overlapped an edit can be dismissed instead of believed.
+For two days the attribution was one bare number, and a number quoted out of a transcript
+could not be re-measured: `TODO.md` carried an open row saying a `--full` run's checksum did
+not reproduce from the checkout it was said to describe, and that the listing behind it had
+been deleted by the script's own `EXIT` trap. This measures what that line could and could
+not say, fixes the parts that were actually broken, and records which part is still unknown.
+
+== 0. The row being decided
+
+The row, written on 2026-10-04 and left open by the batch that put the directory and the
+commit on the line:
+
+    == source tree: 4020 files, checksum 2692478763
+
+measured today in the same launch directory, still at `36d0809e` with
+`git status --porcelain` empty: 4020 paths and `3045864519`; a fresh `file://` clone of it
+also `3045864519`. The inference written next to it was that the path count agrees, so the
+difference must be in file contents. That inference is unsound, and section 3 measures why.
+The two claims worth settling first were whether the recipe reproduces at all, and whether
+the instrument reads the same tree in every place it can be run.
+
+== 1. Two other bare checksums reproduce exactly, from clean clones of the commits they name
+
+The only other runs whose fingerprint line survives in a committed log are two `--full`
+sweeps:
+
+    $ grep -n 'source tree:' docs/verification/verify-in-docker-full-8a52ff0a-2026-10-04.log \
+          docs/verification/verify-in-docker-full-a04e91a7-2026-10-04.log
+
+    docs/verification/verify-in-docker-full-8a52ff0a-2026-10-04.log:38:    == source tree: 4001 files, checksum 1801880867
+    docs/verification/verify-in-docker-full-a04e91a7-2026-10-04.log:41:    == source tree: 3996 files, checksum 4160701699
+
+Each was re-measured by cloning the repository again, detaching at the commit that log
+names, and running **that clone's own copy** of the entry point, with `IMAGE_TAG` pointed at
+a throwaway tag so `chaos-verify:local` stayed as it was. The line prints before any gate,
+so `timeout` is enough to stop the run once the number is in hand:
+
+    $ for s in 8a52ff0a a04e91a7; do
+    >   d=/var/tmp/fp-repro-$s
+    >   git clone -q --no-hardlinks file:///home/chaos/hunt/dev/projects/chaos-code "$d"
+    >   ( cd "$d" && git checkout -q --detach "$s" && git status --porcelain | head -3 \
+    >       && echo "clone at $(git rev-parse --short HEAD) clean" )
+    > done
+
+    clone at 8a52ff0a clean
+    clone at a04e91a7 clean
+
+    $ cd /var/tmp
+    $ for s in 8a52ff0a a04e91a7; do
+    >   echo "##### clone $s"
+    >   IMAGE_TAG=chaos-verify:fp-$s timeout 240 \
+    >     bash /var/tmp/fp-repro-$s/scripts/verify-in-docker.sh > /tmp/fp-repro-$s.log 2>&1
+    >   echo "exit=$?"
+    >   grep -E '^== source tree:|differ from HEAD' /tmp/fp-repro-$s.log
+    > done
+
+    ##### clone 8a52ff0a
+    exit=124
+    == source tree: 4001 files, checksum 1801880867
+    ##### clone a04e91a7
+    exit=124
+    == source tree: 3996 files, checksum 4160701699
+
+`exit=124` is the `timeout` firing while the quick gates were still running; the fingerprint
+had already printed. Both numbers came back the same to the digit. The path count is a
+property of the commit, which is why the count is what identified the tree in the first
+place:
+
+    $ for s in a04e91a7 8a52ff0a 36d0809e c8104865 6826fce0 99ae48fe; do
+    >   printf '%s %s\n' "$s" "$(git ls-tree -r --name-only "$s" | wc -l)"
+    > done
+
+    a04e91a7 3996
+    8a52ff0a 4001
+    36d0809e 4020
+    c8104865 4027
+    6826fce0 4028
+    99ae48fe 4031
+
+So the recipe is reproducible: given a checkout with nothing untracked and nothing modified,
+the same commit yields the same checksum on any machine, in any container, on any day. A
+checksum that does not reproduce is therefore not a broken instrument; it is a true
+measurement of a different tree.
+
+The clone ran the entry point as it existed at `8a52ff0a`, where the fingerprint was one
+pipeline:
+
+    ( cd "${repo_root}" && git ls-files -co --exclude-standard -z | xargs -0 cksum ) >"$1"
+
+and the split-and-check rewrite that replaced it writes the same bytes:
+
+    $ cd /var/tmp/fp-attrib
+    $ (git ls-files -co --exclude-standard -z | xargs -0 cksum) > /tmp/old-recipe.sums
+    $ git ls-files -co --exclude-standard -z > /tmp/new-recipe.list
+    $ xargs -0 cksum < /tmp/new-recipe.list > /tmp/new-recipe.sums
+    $ cmp /tmp/old-recipe.sums /tmp/new-recipe.sums && echo "identical bytes"
+
+    identical bytes
+    old=3045864519 new=3045864519
+
+== 2. Same commit, three instruments, three identical numbers
+
+Everything that could plausibly have made the host and the container disagree was measured
+on one clean clone at `36d0809e`: the git version, the uid, `HOME`, and whether a global
+ignore file is configured.
+
+    $ cd /var/tmp/fp-attrib
+    $ git ls-files -co --exclude-standard -z > /tmp/fp-host.list
+    $ xargs -0 cksum < /tmp/fp-host.list > /tmp/fp-host.sums
+    $ printf 'paths=%s content=%s pathset=%s\n' \
+          "$(tr -dc '\0' < /tmp/fp-host.list | wc -c | tr -d ' ')" \
+          "$(cksum < /tmp/fp-host.sums | cut -d' ' -f1)" \
+          "$(LC_ALL=C sort -z < /tmp/fp-host.list | cksum | cut -d' ' -f1)"
+
+    36d0809e
+    --- host (git 2.34.1, uid 1003, HOME=/home/chaos):
+    paths=4020
+    content=3045864519
+    pathset=629663397
+
+    $ docker run --rm --init --workdir /src --volume /var/tmp/fp-attrib:/src \
+          -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src \
+          chaos-verify:local bash -c 'git ls-files -co --exclude-standard -z > /tmp/c.list;
+          xargs -0 cksum < /tmp/c.list > /tmp/c.sums; printf "container (git %s, uid %s, HOME=%s,
+          excludes=%s)\n" "$(git --version | cut -d " " -f3)" "$(id -u)" "$HOME"
+          "$(git config --global core.excludesFile || echo none)"; printf "paths=%s\ncontent=%s
+          \npathset=%s\n" "$(tr -dc "\0" < /tmp/c.list | wc -c | tr -d " ")" \
+          "$(cksum < /tmp/c.sums | cut -d " " -f1)" \
+          "$(LC_ALL=C sort -z < /tmp/c.list | cksum | cut -d " " -f1)"'
+
+    container (git 2.39.5, uid 0, HOME=/root, excludes=none)
+    paths=4020
+    content=3045864519
+    pathset=629663397
+
+The container's git is five minor versions ahead, runs as root, has a different `HOME` and
+no global ignore file, and reports the same three numbers as the host does. `git ls-files`
+also emits its listing already in `LC_ALL=C` byte order, so sorting it changes nothing on
+this tree; the sort stays because it is what makes the second number a statement about set
+membership rather than about order, and section 6 pins that with a listing fed in reverse.
+
+== 3. The file count proved nothing: three shapes, all measured
+
+`cksum` writes `crc bytes path` per file, and the reported checksum is a `cksum` over that
+listing. A path therefore contributes to the number twice: once by being present, once by
+what it holds. That makes the count and the checksum independent questions, which three
+states of one clone show.
+
+Shape A, a tracked file gains a line, no path appears or disappears:
+
+    == clean clone at 36d0809e
+    paths=4020 content=3045864519 pathset=629663397
+
+    == A. a tracked file gains a line: no path appears or disappears
+    paths=4020 content=3341663371 pathset=629663397
+
+Shape B, a file moved without telling git, which is what a developer's `mv` looks like:
+
+    == B. one path traded for another (a plain mv, git not told about it)
+    cksum: scripts/ci/check-guard-wiring.py: No such file or directory
+    paths=4021 content=1453745329 pathset=1358900702
+
+The moved-away path is still tracked, so `git ls-files` still lists it and `cksum` still
+cannot read it. That is also why the entry point refuses to run gates on such a tree rather
+than summing what it can reach: the count went up, not down, because the listing carries the
+ghost and the new name both. The same shape inside the fixture repository, produced by
+`test_an_unreadable_path_in_the_listing_is_named_rather_than_left_as_a_count`, is refused
+with the remedy on its own line:
+
+    $ python3 scripts/ci/test-verify-in-docker.py \
+          AttributionTests.test_an_unreadable_path_in_the_listing_is_named_rather_than_left_as_a_count
+
+    cksum: docs/gate-notes.md: No such file or directory
+    fingerprint: cksum summed only 4 of 5 listed file(s) from /tmp/tmp1qsohg46/repo (exit 123)
+       a partial fingerprint is compared against the run's own after-image and agrees
+       with it, so the verdict would name a commit this run did not actually read.
+       a tracked path deleted in the worktree is still listed by git and still cannot be
+       read: commit the deletion or restore the file, then run this again.
+
+The stub `docker` that the fixtures install records every invocation, and that case asserts
+none was made: the refusal happens before any gate, so the run cannot be quoted as a pass.
+
+Shape C, one path traded for another in a way that leaves the count exactly as it was:
+
+    == C. two untracked files traded for each other: same count, different set
+    paths=4021 content=3801244303 pathset=2997202510
+    paths=4021 content=3940064607 pathset=1581763344
+
+Same number of files, entirely different set, and nothing in the old line could tell this
+apart from shape A. That is the hole the row fell into: "the count agrees, so only contents
+can differ" is false, and the two numbers now printed side by side are what makes the two
+answers separable.
+
+== 4. A regression found while measuring: a run launched from another directory
+
+Splitting the fingerprint into two checked halves moved `git ls-files` inside a
+`cd "${repo_root}"` subshell and left the `cksum` half in whatever directory the script had
+been launched from. The listing holds paths relative to the repository, so from anywhere else
+every one of them is unreadable, and the run stops before its first gate. This is that run,
+against the fixture repository, captured while the bug was still in the tree:
+
+    $ python3 scripts/ci/test-verify-in-docker.py \
+          AttributionTests.test_the_tree_is_fingerprinted_when_the_script_is_launched_from_elsewhere
+
+    == building stub-image:tag from docker.io/library/debian:bookworm-slim
+    sha256:stubbed
+    == preparing cargo cache volumes
+    cksum: .gitignore: No such file or directory
+    cksum: README.md: No such file or directory
+    cksum: docker/verify.Dockerfile: No such file or directory
+    cksum: docs/gate-notes.md: No such file or directory
+    cksum: scripts/verify-in-docker.sh: No such file or directory
+    fingerprint: cksum summed only 0 of 5 listed file(s) from /tmp/tmp4hs3gnw_/repo (exit 123)
+       a partial fingerprint is compared against the run's own after-image and agrees
+       with it, so the verdict would name a commit this run did not actually read.
+
+The script derives `repo_root` from `$0` precisely so it can be run by absolute path, and
+the fixtures set `cwd` to the repository in every case, so nothing caught it. The `cd` is
+now part of the `cksum` half, and one fixture runs the shipped script from a directory that
+is not the repository and compares its line against the same tree measured from the
+repository root.
+
+== 5. What the line says now, from a run against a real container
+
+    $ CHAOS_TREE_MANIFEST=/var/tmp/fp-manifest2 scripts/verify-in-docker.sh \
+          --only "container runner fixtures"
+
+    == building chaos-verify:local from docker.io/library/debian:bookworm-slim
+    == preparing cargo cache volumes
+    == source tree: /home/chaos/hunt/dev/projects/chaos-code at 99ae48fe: 4031 files, checksum 1155391559 (path set 2935949943)
+       tree listings kept in /var/tmp/fp-manifest2: before.list, before.sums
+       2 path(s) differ from HEAD, so this run describes the working tree, not a commit
+    (… 58 lines elided here)
+    selected gates passed in chaos-verify:local
+      --only was in effect: 1 of 37 gates ran, so this is not a full sweep
+
+The two numbers separate the two questions, and the kept listing is what makes a later
+reader able to check the claim instead of re-running it. Two independent re-measurements of
+that same tree agree with the line:
+
+    $ git ls-files -co --exclude-standard -z > /tmp/g1.list
+    $ xargs -0 cksum < /tmp/g1.list > /tmp/g1.sums
+    $ cmp /var/tmp/fp-manifest2/before.sums /tmp/g1.sums && echo "byte-identical"
+
+    byte-identical
+    paths=4031
+    content=1155391559
+    pathset=2935949943
+
+and a second run of the same untouched tree writes a listing no gate could tell apart from
+the first:
+
+    $ diff /var/tmp/fp-manifest/before.sums /var/tmp/fp-manifest2/after.sums && echo "identical"
+
+    identical
+
+When the two images do disagree, the report says which half moved instead of leaving the
+reader to diff it. Both blocks below are the tail of the stdout the two classification
+fixtures assert on, captured from a run of them:
+
+    $ python3 scripts/ci/test-verify-in-docker.py \
+          AttributionTests.test_a_content_move_mid_run_is_called_a_content_move
+
+    UNATTRIBUTABLE: the source tree changed while the gates ran.
+      checksum 2292906840 -> 2278288267; path set 3123974866 unchanged, so file contents moved:
+        docs/gate-notes.md
+      nothing in this run can be attributed to a commit; re-run it with the tree at rest.
+      both listings are in /tmp/tmpf20q_2un/kept: diff before.sums after.sums
+
+or, when a path appeared while the gates ran:
+
+    $ python3 scripts/ci/test-verify-in-docker.py \
+          AttributionTests.test_a_path_appearing_mid_run_is_called_a_path_set_move
+
+    UNATTRIBUTABLE: the source tree changed while the gates ran.
+      checksum 2292906840 -> 166729144; path set moved (3123974866 -> 360617741), so a path appeared, vanished or was renamed:
+        docs/new-mid-run.md
+      nothing in this run can be attributed to a commit; re-run it with the tree at rest.
+
+`CHAOS_TREE_MANIFEST` names the directory the four files go in (`before.list`,
+`before.sums`, `after.list`, `after.sums`). A directory that cannot be created stops the run
+with exit 2 before an image is built: a run asked to keep evidence and unable to keep it
+must not go on to print a verdict as though it had. Without the variable nothing is written
+anywhere and the listings still die in a temporary directory, which is the behaviour every
+existing transcript describes.
+
+== 6. Fixtures and the mutation matrix
+
+`scripts/ci/test-verify-in-docker.py` drives the shipped script with a stub `docker` and a
+throwaway repository. It went from 34 to 46 cases; 12 were added, and every one of them is
+about the shape of a number rather than its value:
+
+    test_the_line_carries_a_path_set_number_next_to_the_checksum
+    test_an_untouched_tree_agrees_with_itself_on_both_numbers
+    test_editing_a_files_bytes_moves_the_checksum_and_leaves_the_path_set_alone
+    test_swapping_one_path_for_another_keeps_the_count_and_moves_the_path_set
+    test_the_path_set_number_ignores_the_order_git_named_the_paths_in
+    test_the_tree_is_fingerprinted_when_the_script_is_launched_from_elsewhere
+    test_an_unreadable_path_in_the_listing_is_named_rather_than_left_as_a_count
+    test_a_content_move_mid_run_is_called_a_content_move
+    test_a_path_appearing_mid_run_is_called_a_path_set_move
+    test_the_manifest_keeps_both_listings_and_they_show_the_move
+    test_a_run_at_rest_keeps_two_listings_that_are_identical
+    test_a_manifest_directory_that_cannot_be_made_builds_no_image
+
+The order case is the one that could not be produced by setting anything up: git will not be
+persuaded to list a tree out of order, so a `git` earlier on `PATH` reverses the listing it
+got from the real one and delegates everything else. That single fixture is what proves the
+content checksum is order-sensitive and the path-set digest is not.
+
+Each mutation was applied to `scripts/verify-in-docker.sh`, the whole file run against it,
+and the file restored with `cp` and checked with `cmp` afterwards (`restored byte-identical`
+at the end of the run). The driver refuses to start from a non-green baseline; the baseline
+was 46 green.
+
+    baseline: 46 fixtures green
+
+    M01 cksum reads the listing from the caller's directory again        killed  ...launched_from_elsewhere
+    M02 the attribution line loses the path-set number                  killed  35 cases, all of them
+    M03 the path-set digest stops sorting the listing                   killed  ...ignores_the_order_...
+    M04 keep_manifest never keeps anything                              killed  2 manifest cases
+    M05 an unusable manifest directory no longer stops the run           killed  ...builds_no_image
+    M06 the classification of a move is inverted                        killed  both classification cases
+    M07 the UNATTRIBUTABLE report stops pointing at the kept listings    killed  ...show_the_move
+    M08 the after-image is never copied out                              killed  2 manifest cases
+    M09 the unreadable-path message loses its remedy                    killed  ...named_rather_than_left_as_a_count
+    M10 the path-set field prints the file count instead of a digest     killed  ...swapping_one_path..., ...show_the_move
+    M11 paths_of returns a constant                                     killed  3 cases
+
+    11/11 killed
+
+M02 is reported honestly as a weak kill: deleting that line leaves the preceding `echo`
+argument hanging on a backslash continuation, so the script stops parsing and every case
+that runs it fails. M10 and M11 were added as the semantic versions of the same question,
+and they are killed by the specific cases that care about the field.
+
+== 7. Reproduce it
+
+    $ python3 scripts/ci/test-verify-in-docker.py            # 46 cases, ~5 s
+    $ scripts/verify-in-docker.sh --only "container runner fixtures"
+
+To see the two numbers disagree the way the row could not, in a throwaway clone of this
+repository:
+
+    $ git clone -q --no-hardlinks "$PWD" /tmp/fp-demo && cd /tmp/fp-demo
+    $ measure() { git ls-files -co --exclude-standard -z > /tmp/f.list;
+    >   xargs -0 cksum < /tmp/f.list > /tmp/f.sums;
+    >   printf 'paths=%s content=%s pathset=%s\n' \
+    >     "$(tr -dc '\0' < /tmp/f.list | wc -c | tr -d ' ')" \
+    >     "$(cksum < /tmp/f.sums | cut -d ' ' -f1)" \
+    >     "$(LC_ALL=C sort -z < /tmp/f.list | cksum | cut -d ' ' -f1)"; }
+    $ measure
+    $ echo first > zz-a.md; measure; rm zz-a.md
+    $ echo second > zz-b.md; measure; rm zz-b.md
+
+The last two lines are shape C: the same `paths=` both times, and both digests moved.
+
+To check the reproducibility claim behind section 1, clone the repository at any commit in
+the history, run the entry point there with `--only` naming one cheap gate, and compare its
+line against a `--full` transcript of the same commit.
+
+== 8. What is still not known
+
+The specific number the row quotes, `2692478763`, is still not identified. Its transcript
+was never retained and the checkout it was measured in was deleted during cleanup, so there
+is nothing left to diff, and section 1 has shown only that a checksum of that kind is a true
+measurement of *some* tree. The count of 4020 is consistent with a clean `36d0809e` and with
+at least two other trees on this machine that day: a checkout at `0faeee1d`, whose tracked
+count is 4018, with two untracked paths in it would print 4020 as well, and shape A and
+shape C above both move the checksum without contradicting the count.
+
+What changed is that this can no longer happen invisibly. A line that cannot be re-measured
+is now a line about a named directory at a named commit, with a digest of the path set
+beside the digest of the bytes and, when `CHAOS_TREE_MANIFEST` is set, the per-path listing
+kept on disk afterwards.
