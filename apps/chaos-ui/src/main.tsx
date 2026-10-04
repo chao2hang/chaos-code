@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { applyServerMessage, appendLocalPrompt, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
+import type { ClientMessage } from './generated/protocol'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
 import { COMPACT_VIEWPORT_QUERY, defaultLayoutState, loadLayoutState, resolveFocusWrap, resolveSidebarVisibility, saveLayoutState, type LayoutState } from './layout'
 import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, validateAttachmentMessage, type AttachmentSource } from './attachments'
@@ -219,7 +220,10 @@ function App() {
     setActiveSuggestionIndex(0)
   }, [prompt, session.files?.entries, session.searchResults?.matches])
 
-  const send = useCallback((message: object) => {
+  /** One frame out. Typed as the wire contract on purpose: a call site that
+   * forgets a field the host needs is a button that does nothing, and the
+   * compiler is a cheaper place to find that than a browser. */
+  const send = useCallback((message: ClientMessage) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
   }, [])
 
@@ -600,14 +604,19 @@ function App() {
     send({ type: 'scan_marketplace', client_msg_id: crypto.randomUUID(), root: marketplaceRoot.trim() || '.' })
   }
   function previewDiff(proposalId: string) {
-    if (!proposalId.trim()) return
-    send({ type: 'preview_diff', client_msg_id: crypto.randomUUID(), proposal_id: proposalId.trim() })
+    if (!proposalId.trim() || !session.sessionId) return
+    updateSession((current) => ({ ...current, diffError: undefined }))
+    send({ type: 'preview_diff', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, proposal_id: proposalId.trim() })
   }
   function acceptDiff(proposalId: string) {
-    send({ type: 'accept_diff', client_msg_id: crypto.randomUUID(), proposal_id: proposalId })
+    if (!session.sessionId) return
+    updateSession((current) => ({ ...current, diffError: undefined }))
+    send({ type: 'accept_diff', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, proposal_id: proposalId, summary: '来自差异面板' })
   }
   function rollbackDiff(proposalId: string) {
-    send({ type: 'rollback_diff', client_msg_id: crypto.randomUUID(), proposal_id: proposalId })
+    if (!session.sessionId) return
+    updateSession((current) => ({ ...current, diffError: undefined }))
+    send({ type: 'rollback_diff', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, proposal_id: proposalId })
   }
 
   const activeWorkspace = session.workspaces.find((w) => w.id === session.activeWorkspaceId)
@@ -1593,6 +1602,8 @@ function App() {
                   />
                 </label>
               </div>
+
+              {session.diffError && <p role="alert">差异操作失败：{session.diffError}</p>}
 
               {session.diffPreview && (
                 <section className="panel-section" aria-label="Diff 详细比对">

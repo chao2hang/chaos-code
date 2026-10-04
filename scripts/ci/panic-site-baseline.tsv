@@ -1,6 +1,6 @@
 # production panic-capable sites per crate, from scripts/ci/panic-site-census.py
 # crate<TAB>unwrap<TAB>expect<TAB>panic<TAB>unsafe  -- see the script for the definition
-chaos-engine	5	8	0	1
+chaos-engine	5	9	0	1
 fuzz	0	0	0	0
 ptyctl	6	0	1	0
 ptyctl-cli	0	0	0	0

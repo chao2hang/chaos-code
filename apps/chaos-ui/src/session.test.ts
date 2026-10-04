@@ -307,6 +307,37 @@ describe('session event projection', () => {
   })
 })
 
+describe('diff review projection', () => {
+  const preview = { proposal_id: 'p1', path: 'note.txt', before: 'one\n', after: 'two\n' }
+  const shown = applyServerMessage(initialSessionState, { type: 'diff_preview', session_id: 's1', preview })
+
+  it('keeps the preview visible when the host refuses to undo it', () => {
+    // The refusal says the file is no longer what this preview describes, which is
+    // the moment the user most needs to still see it. Clearing it here would hide
+    // the reason behind a blank tab.
+    const refused = applyServerMessage(shown, { type: 'error', code: 'diff_failed', message: 'note.txt 在写入之后又被改过，回滚会覆盖那次修改' })
+    expect(refused.diffPreview).toEqual(preview)
+    expect(refused.diffError).toBe('note.txt 在写入之后又被改过，回滚会覆盖那次修改')
+    expect(refused.status).toBe('差异操作失败')
+  })
+
+  it('clears the refusal when a resolve goes through or a new preview arrives', () => {
+    const refused = applyServerMessage(shown, { type: 'error', code: 'diff_failed', message: '提案不存在或已处理' })
+    const resolved = applyServerMessage(refused, { type: 'diff_resolved', proposal_id: 'p1', action: 'rollback_diff', sequence: 4 })
+    expect(resolved.diffPreview).toBeUndefined()
+    expect(resolved.diffError).toBeUndefined()
+    const reloaded = applyServerMessage(refused, { type: 'diff_preview', session_id: 's1', preview })
+    expect(reloaded.diffError).toBeUndefined()
+    expect(reloaded.diffPreview).toEqual(preview)
+  })
+
+  it('does not treat an unrelated failure as a refused diff', () => {
+    const unrelated = applyServerMessage(shown, { type: 'error', code: 'path_escape', message: '路径超出 workspace 范围' })
+    expect(unrelated.diffError).toBeUndefined()
+    expect(unrelated.status).toBe('请求错误')
+  })
+})
+
 describe('attachment upload projection', () => {
   const validating = {
     ...initialSessionState,

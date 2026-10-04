@@ -12,6 +12,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tempfile::tempdir;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use xai_grok_test_support::{MockInferenceServer, MockModelEntry};
 
@@ -480,5 +481,238 @@ fn a_malformed_public_origin_stops_the_host() {
         "http://chaos.example.test",
         Some("rotatable-token"),
         "https",
+    );
+}
+
+/// A browser's worth of session against the built host: one WebSocket, one
+/// session, and the calls the 差异 tab actually makes.
+struct Session {
+    socket: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    session_id: String,
+}
+
+impl Session {
+    async fn open(port: u16) -> Self {
+        let (mut socket, _) = connect_async(format!("ws://127.0.0.1:{port}/ws"))
+            .await
+            .expect("websocket connect");
+        let _handshake = receive(&mut socket).await;
+        socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "create_session",
+                    "client_msg_id": format!("create-{}", uuid::Uuid::new_v4()),
+                    "workspace_id": null,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let session_id = loop {
+            let event = receive(&mut socket).await;
+            if event["type"] == "session_created" {
+                break event["session_id"].as_str().expect("session id").to_owned();
+            }
+        };
+        Self { socket, session_id }
+    }
+
+    async fn send(&mut self, body: Value) {
+        self.socket
+            .send(Message::Text(body.to_string().into()))
+            .await
+            .unwrap();
+    }
+
+    /// Asks the host to write a file and waits for the approval prompt, which is
+    /// the only way a browser gets bytes into a workspace.
+    async fn propose_and_approve(&mut self, relative_path: &str, contents: &str) {
+        self.send(serde_json::json!({
+            "type": "propose_file_write",
+            "client_msg_id": format!("propose-{}", uuid::Uuid::new_v4()),
+            "session_id": self.session_id,
+            "relative_path": relative_path,
+            "contents": contents,
+        }))
+        .await;
+        let request_id = loop {
+            let event = receive(&mut self.socket).await;
+            match event["type"].as_str() {
+                Some("tool_approval_requested") => {
+                    break event["request_id"].as_str().expect("request id").to_owned();
+                }
+                Some("error") => panic!("the proposal was refused: {event}"),
+                _ => {}
+            }
+        };
+        self.send(serde_json::json!({
+            "type": "approve",
+            "client_msg_id": format!("approve-{}", uuid::Uuid::new_v4()),
+            "request_id": request_id,
+        }))
+        .await;
+    }
+
+    /// Waits for the write to be answered, returning the undo point it offered.
+    /// A `file_written` with no `diff_preview` behind it is the regression this
+    /// test file exists for: the tab would have nothing to show.
+    async fn landed_write(&mut self, relative_path: &str) -> Value {
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(30), receive(&mut self.socket))
+                .await
+                .expect("the host answers the approved write");
+            match event["type"].as_str() {
+                Some("diff_preview") if event["preview"]["path"] == relative_path => {
+                    return event["preview"].clone();
+                }
+                Some("error") => panic!("the approved write failed: {event}"),
+                _ => {}
+            }
+        }
+    }
+
+    /// Resolves a proposal and reports what came back, failing on a refusal.
+    async fn resolve(&mut self, kind: &str, proposal_id: &str) {
+        self.send(serde_json::json!({
+            "type": kind,
+            "client_msg_id": format!("{kind}-{}", uuid::Uuid::new_v4()),
+            "session_id": self.session_id,
+            "proposal_id": proposal_id,
+            "summary": "确认保留",
+        }))
+        .await;
+        loop {
+            let event = receive(&mut self.socket).await;
+            match event["type"].as_str() {
+                Some("diff_resolved") => return,
+                Some("error") => panic!("{kind} was refused: {event}"),
+                _ => {}
+            }
+        }
+    }
+
+    /// Sends a resolve call and returns the error the host reported, failing if
+    /// it reported a resolution instead.
+    async fn refused_resolve(&mut self, kind: &str, proposal_id: &str) -> Value {
+        self.send(serde_json::json!({
+            "type": kind,
+            "client_msg_id": format!("{kind}-{}", uuid::Uuid::new_v4()),
+            "session_id": self.session_id,
+            "proposal_id": proposal_id,
+            "summary": "确认保留",
+        }))
+        .await;
+        loop {
+            let event = receive(&mut self.socket).await;
+            match event["type"].as_str() {
+                Some("error") => return event,
+                Some("diff_resolved") => {
+                    panic!("{kind} should have been refused, got {event}");
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The whole point of the 差异 tab, run against the binary an operator starts:
+/// a write lands, the browser is told what it replaced, and 回滚变更 puts those
+/// bytes back.
+#[tokio::test]
+async fn the_built_host_offers_an_undo_point_for_a_write_that_landed() {
+    let workspace = tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("note.txt"),
+        "before the model typed\n",
+    )
+    .unwrap();
+    let root = workspace.path().to_str().unwrap().to_owned();
+    let mut host = start_host(&[("CHAOS_WORKSPACE_ROOT", root.as_str())]);
+    host.wait_for("listening on").await;
+
+    let mut session = Session::open(host.port).await;
+    session
+        .propose_and_approve("note.txt", "after the model typed\n")
+        .await;
+    let preview = session.landed_write("note.txt").await;
+    assert_eq!(
+        preview["before"], "before the model typed\n",
+        "the old side must be what was really on disk: {preview}"
+    );
+    assert_eq!(preview["after"], "after the model typed\n");
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("note.txt")).unwrap(),
+        "after the model typed\n"
+    );
+
+    let proposal_id = preview["proposal_id"].as_str().unwrap();
+    session.resolve("rollback_diff", proposal_id).await;
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("note.txt")).unwrap(),
+        "before the model typed\n"
+    );
+}
+
+/// The other button: 接受变更 says the change stays, spends the undo point, and
+/// must not rewrite the file it is confirming.
+#[tokio::test]
+async fn the_built_host_keeps_an_accepted_write_and_spends_the_undo_point() {
+    let workspace = tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("note.txt"),
+        "before the model typed\n",
+    )
+    .unwrap();
+    let root = workspace.path().to_str().unwrap().to_owned();
+    let mut host = start_host(&[("CHAOS_WORKSPACE_ROOT", root.as_str())]);
+    host.wait_for("listening on").await;
+
+    let mut session = Session::open(host.port).await;
+    session
+        .propose_and_approve("note.txt", "after the model typed\n")
+        .await;
+    let preview = session.landed_write("note.txt").await;
+    let proposal_id = preview["proposal_id"].as_str().unwrap().to_owned();
+    session.resolve("accept_diff", &proposal_id).await;
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("note.txt")).unwrap(),
+        "after the model typed\n"
+    );
+
+    let refusal = session.refused_resolve("rollback_diff", &proposal_id).await;
+    assert_eq!(refusal["code"], "diff_failed", "{refusal}");
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("note.txt")).unwrap(),
+        "after the model typed\n",
+        "a refused rollback must not touch the file"
+    );
+}
+
+/// What the guard is for: the user (or git) edited the file after the model's
+/// write, so 回滚变更 refuses, leaves those edits in place, and does not clear
+/// the preview the browser is showing.
+#[tokio::test]
+async fn the_built_host_refuses_to_roll_back_over_an_edit_it_did_not_make() {
+    let workspace = tempdir().unwrap();
+    std::fs::write(workspace.path().join("note.txt"), "committed\n").unwrap();
+    let root = workspace.path().to_str().unwrap().to_owned();
+    let mut host = start_host(&[("CHAOS_WORKSPACE_ROOT", root.as_str())]);
+    host.wait_for("listening on").await;
+
+    let mut session = Session::open(host.port).await;
+    session
+        .propose_and_approve("note.txt", "written by the model\n")
+        .await;
+    let preview = session.landed_write("note.txt").await;
+    std::fs::write(workspace.path().join("note.txt"), "edited by hand\n").unwrap();
+
+    let refusal = session
+        .refused_resolve("rollback_diff", preview["proposal_id"].as_str().unwrap())
+        .await;
+    assert_eq!(refusal["code"], "diff_failed", "{refusal}");
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("note.txt")).unwrap(),
+        "edited by hand\n"
     );
 }

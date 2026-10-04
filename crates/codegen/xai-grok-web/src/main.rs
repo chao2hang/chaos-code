@@ -67,6 +67,9 @@ async fn main() -> anyhow::Result<()> {
             Engine::with_workspace_and_adapter(root, adapter)?
                 .with_git_adapter(git)
                 .with_terminal_adapter(terminal)
+                // Without this the browser's 接受/回滚 buttons answer
+                // "no adapter" for a host that really does write files.
+                .with_workspace_diff_adapter()?
         }
         (None, None) => match std::env::var("CHAOS_WEB_STATE") {
             Ok(path) => Engine::with_persistence_and_adapter(path, adapter)?,

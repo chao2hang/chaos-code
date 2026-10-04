@@ -1,0 +1,333 @@
+# The 差异 tab's three buttons, and what it took to make one of them undo a write (2026-10-04)
+
+The browser shipped a 差异 panel with Before and After panes and two buttons, 接受变更 and
+回滚变更. On the host a user actually runs, clicking either one did nothing at all, and after
+this batch found the reason, it turned out a second thing was also untrue: a refused rollback
+was reported to the browser as a resolution. This measures both, records what the undo point
+now guarantees, and states what it still does not.
+
+Headline figures: 18 engine tests, 11 host tests against the built binary, 46 reducer tests,
+6 browser cases on two viewports, and 16 source mutations of which all 16 are caught. Three
+mutations survived their first run, and each survivor is a real hole in a test that looked
+fine; they are in section 4 rather than left out.
+
+== 0. Two claims that did not hold before this batch
+
+`TODO.md` said the engine emits `diff_resolved` only after a successful adapter call, and that
+the Diff boundary was covered by a real workspace. Neither described the shipped code.
+
+First, nothing outside a test module implemented the seam:
+
+    $ git grep -n 'DiffAdapter for' e75ee6c7 -- '*.rs'
+    e75ee6c7:crates/codegen/chaos-engine/src/lib.rs:3641:    impl DiffAdapter for FixtureDiff {
+    e75ee6c7:crates/codegen/xai-grok-web/tests/m1_flow.rs:23:impl DiffAdapter for DiffLog {
+    e75ee6c7:crates/codegen/xai-grok-web/tests/workspace_diff_flow.rs:15:impl DiffAdapter for FileDiff {
+
+Three implementations, all inside `mod tests` or a `tests/` file. The host's own engine
+builder never called `with_diff_adapter`, so every 接受/回滚 click reached
+"未配置 Diff adapter", which the browser received as `Error{code: "diff_failed"}`. That is why
+`workspace_diff_flow.rs` and `m1_flow.rs` could stay green for weeks: both installed their own
+fake, so the missing production implementation was never on the path under test.
+
+Second, `resolve_diff` pushed `DiffResolved` unconditionally, next to the error:
+
+    // before
+    if let Err(message) = result {
+        events.push(ServerMessage::Error { code: "diff_failed".into(), message });
+    }
+    events.push(ServerMessage::DiffResolved { proposal_id, action, sequence });
+
+`diff_resolved` is what tells the browser to drop the preview, so a refusal arrived as "the
+preview is gone, nothing more to see" while the file had not moved. The row claiming the
+success-only behaviour was therefore not just incomplete, it was the opposite of the code.
+The fix is one binding and one guard, and `m1_flow.rs`'s third assertion moved from
+`diff_resolved` to `Audit{action: "accept_diff", outcome: "rejected"}` accordingly.
+
+== 1. The first thing the browser found was not the undo point
+
+The new spec drove write → preview → rollback against the built `chaos-web` binary and failed
+all six cases. The cause was not the engine: `previewDiff`, `acceptDiff` and `rollbackDiff` in
+`apps/chaos-ui/src/main.tsx` sent their frames without `session_id`, which the protocol
+requires, so the host answered `invalid_message` and the buttons had been dead in a different
+way than the missing adapter made them. `send` was then typed as `ClientMessage` rather than
+a loose object, which is what keeps that from happening again:
+
+    $ cd apps/chaos-ui && npx tsc --noEmit
+    src/main.tsx(619,10): error TS2345: Argument of type '{ type: "rollback_diff"; client_msg_id: `${string}-${string}-${string}-${string}-${string}`; proposal_id: string; }' is not assignable to parameter of type 'ClientMessage'.
+      Property 'session_id' is missing in type '{ type: "rollback_diff"; client_msg_id: `${string}-${string}-${string}-${string}-${string}`; proposal_id: string; }' but required in type '{ type: "rollback_diff"; client_msg_id: string; session_id: string; proposal_id: string; }'.
+
+That is what the message says today, produced by deleting `session_id` from the fixed call
+once the fix was in, and the file was restored byte-identically afterwards. Doing it to all
+three diff calls at once answers a question the fix otherwise leaves open -- whether the
+loose typing had been hiding the same omission elsewhere in the same file:
+
+    $ cd apps/chaos-ui && npx tsc --noEmit 2>&1 | grep -c "error TS"
+    3
+    $ grep -c "send({" src/main.tsx
+    23
+
+Three errors in a file with 23 `send({...})` call sites, one per diff call, so the other 20
+frames were already complete and the omission was confined to the 差异 panel. The browser
+case catches the same omission at run time, which matters because the dev server transpiles
+without type-checking:
+
+    KILLED   t03-rollback-sends-no-session: exit=1 failing=4
+        1 [desktop-chromium] › e2e/diff-undo.pw.ts:50:1 › a landed write offers its own undo
+          point and 回滚变更 puts the file back (6.0s)
+        3 [desktop-chromium] › e2e/diff-undo.pw.ts:110:1 › the host refuses to roll back over
+          an edit made outside the browser, and says why (6.1s)
+        4 [mobile-chromium] › e2e/diff-undo.pw.ts:50:1 › a landed write offers its own undo
+          point and 回滚变更 puts the file back (6.1s)
+        6 [mobile-chromium] › e2e/diff-undo.pw.ts:110:1 › the host refuses to roll back over
+          an edit made outside the browser, and says why (6.1s)
+
+Four of six, not six: the 接受变更 case does not click 回滚变更, so dropping the field from
+one call cannot touch it. A mutant that only some tests can see is the expected shape; the two
+that pass are the record of which case does not depend on that call.
+
+== 2. What the undo point is, in the terms the tests use
+
+`chaos_engine::WorkspaceDiffAdapter` is a `DiffAdapter` over the workspace the process already
+owns. The rules the tests pin down:
+
+- A write records what it replaced once its bytes have landed. Before those bytes are read
+  during the approved-write arm, because nothing can recover them afterwards; `None` means no
+  undo point rather than a half-known one.
+- `接受` writes nothing. The file is already what the user approved; accepting says it stays,
+  which also takes the undo away.
+- `回滚` puts the recorded bytes back, or removes the path when there was nothing there, and
+  refuses with `"{path} 在写入之后又被改过，回滚会覆盖那次修改"` when the file no longer holds
+  what this proposal wrote. A later edit by the user or by `git` is not this proposal's to
+  erase.
+- A refusal consumes nothing, so the same proposal can be rolled back once the file matches
+  again.
+- Both sides must be text and at most `WORKSPACE_READ_LIMIT` (1 MiB). A binary target is
+  refused before the write, with `file_not_text`, rather than written and then left
+  un-displayable.
+- `DIFF_PROPOSAL_LIMIT` is 32. The oldest proposal is evicted past that, and an evicted
+  proposal refuses with `提案不存在或已处理` instead of rolling anything back.
+- Every path goes through the same root confinement the write path uses, resolved when the
+  change is recorded and again on each of `read_raw`, `write_raw` and `remove`.
+
+The host installs it in `crates/codegen/xai-grok-web/src/main.rs`, on the one arm of the
+engine builder that has a workspace to write back into. `tests/host_startup.rs` reaches that
+builder through the built binary, using the `start_host` helper the file already had.
+`with_workspace_diff_adapter` refuses to be installed twice and refuses a host with no
+workspace, so an engine cannot end up with two adapters or an adapter with nothing to write
+to.
+
+An earlier draft of this batch moved the whole engine builder out of `main.rs` into a `host`
+module so a test could call it directly. Nothing but `main.rs` ended up calling it, and moving
+it out left `main.rs` holding no Chinese at all, which the localization guard reports as a
+path that exists and lost its Chinese (that class cannot be allow-listed). The extraction is
+reverted and the seam is installed where the builder already lives.
+
+The adapter keeps its undo log behind one `Mutex` with exactly one locking method, `fn log`,
+and the panic-site census counts that method: `scripts/ci/panic-site-baseline.tsv` moves
+`chaos-engine` from `5 8 0 1` to `5 9 0 1`, one `expect` added and no `unwrap`. Three separate
+`.lock().unwrap()` sites would have been three additions to a count the gate refuses to let
+grow, and one named method says what a poisoned lock actually means here -- an undo point was
+being added or spent when something panicked, so the log may hold half of one.
+
+== 3. The suites, as they were run
+
+    $ cargo test -p chaos-engine --test workspace_diff_undo
+    test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+    $ cargo test -p xai-grok-web
+    Running tests/host_startup.rs   test result: ok. 11 passed; 0 failed
+    Running tests/m1_flow.rs        test result: ok.  4 passed; 0 failed
+    Running tests/workspace_diff_flow.rs
+                                    test result: ok.  1 passed; 0 failed
+
+and across the whole host package, 27 result blocks with 100 passed and 0 failed:
+
+    $ cargo test -p xai-grok-web 2>&1 | grep -E "test result:" | python3 -c "
+    import sys, re
+    p = f = t = 0
+    for line in sys.stdin:
+        m = re.search(r'ok\. (\d+) passed; (\d+) failed', line)
+        if m:
+            p += int(m.group(1)); f += int(m.group(2))
+        t += 1
+    print('result blocks:', t, 'passed:', p, 'failed:', f)
+    "
+    result blocks: 27 passed: 100 failed: 0
+
+    $ cd apps/chaos-ui && npx vitest run src/session.test.ts
+     Test Files  1 passed (1)
+          Tests  46 passed (46)
+
+    $ cd apps/chaos-ui && npx tsc --noEmit
+    tsc clean
+
+The three new host tests spawn `env!("CARGO_BIN_EXE_chaos-web")` with `CHAOS_WORKSPACE_ROOT`
+pointed at a temp directory and speak WebSocket to it, so they exercise the binary a user
+runs rather than an engine assembled in the test. They are what make the m13 mutation below
+mean something.
+
+== 4. Mutation proof, including the three that first survived
+
+Method, once for all sixteen: the source is copied aside, one seam is broken by an exact
+replacement, the suite that should notice is run, and the file is restored with a plain copy
+and verified with `cmp`. The driver aborts before touching anything if the baseline is not
+green, and restores even when it fails halfway.
+
+Killed on the first run (failing tests are named once each, from the driver's own log):
+
+    m01-rollback-guard-inverted        6 failing, from `!=` to `==` in the changed-file guard
+    m02-rollback-guard-blind           2 failing, the read replaced by the recorded bytes
+    m03-binary-refusal-never-fires     1 failing, `a_binary_target_refuses_the_write...`
+    m05-rollback-restores-after        3 failing, the restore writes the new side back
+    m06-created-rollback-truncates     1 failing, `rollback_of_a_created_file_takes_the_path_away`
+    m07-accept-keeps-undo              1 failing, `accept_keeps_the_bytes_and_spends_the_undo`
+    m08-preview-spends-undo            6 failing, `preview` reading with `take` not `peek`
+    m09-refusal-reports-success        1 failing, `let resolved = true`
+    m10-write-forgets-prior-bytes      5 failing, `prior = Some(None)`
+    m13-host-installs-no-seam          3 failing, the three host_startup tests named in § 3
+
+and in the UI:
+
+    KILLED   t01-refusal-branch-never-taken: exit=1 failing=2
+        keeps the preview visible when the host refuses to undo it 6ms
+        src/session.test.ts > diff review projection > keeps the preview visible when the host
+          refuses to undo it
+    KILLED   t02-refusal-clears-the-preview: exit=1 failing=2
+        keeps the preview visible when the host refuses to undo it 6ms
+        src/session.test.ts > diff review projection > keeps the preview visible when the host
+          refuses to undo it
+
+Two names for one case: vitest reports a failing test both in its progress line and in its
+summary, and the driver lists every line it recognised. The third reducer case, which asserts
+that an unrelated error code is not treated as a diff refusal, stays green under both mutants,
+which is the half of the branch that must not change.
+
+Three survivors, all of them findings about the tests rather than about the code:
+
+**m04, `DIFF_PROPOSAL_LIMIT` raised from 32 to 4096, survived.** The eviction test loops
+`0..=DIFF_PROPOSAL_LIMIT`, so raising the constant moves the goalposts with it: eviction still
+happens, just later, and the test is written against the same number it was supposed to check.
+The value is a product decision, not an implementation detail, so the test now states it:
+
+    assert_eq!(DIFF_PROPOSAL_LIMIT, 32);
+
+**m12, the symlink check removed from `WorkspaceAdapter::target`, survived.** The symlink test
+was refusing for the wrong reason. The file behind the link held bytes different from what the
+proposal recorded, so the changed-file guard fired first and confinement never got a turn. The
+test now parks a file holding exactly the bytes the proposal recorded as its new side, which
+leaves root confinement as the only thing between the restore and a file outside the
+workspace. It kills m12, and so does the pre-existing
+`approved_write_rejects_dangling_symlink_escape`.
+
+**m11, the parent-directory check removed from the same function, survived the whole
+package.** This one was a real gap: every test that reaches `target()` with a symlink puts
+the symlink at the final path component, where the final-component check catches it --
+`workspace_symlink_escape_is_rejected` uses `link.txt`,
+`approved_write_rejects_dangling_symlink_escape` uses `dangling.txt`, and the batch's own
+`rollback_cannot_be_redirected_by_a_symlink_swapped_in_after_the_write` uses `note.txt`. The
+fourth symlink test, `workspace_and_attachment_stagers_reject_staging_symlink_escape`, does
+put a symlinked directory in front of a path, but the workspace is refused while it is being
+opened, so `target()` never runs. A symlinked directory carrying a write for a path that
+does not exist yet is the one shape where only the parent check can fire, because there is
+no final component to inspect. Nothing tested that, so nothing noticed its check being
+deleted. `an_approved_write_through_a_symlinked_directory_stays_inside_the_workspace` now
+does:
+
+    KILLED   m11-target-drops-parent-confinement: exit=101 failing=1
+        an_approved_write_through_a_symlinked_directory_stays_inside_the_workspace
+
+One apparent kill during those re-runs was not a kill, and the driver could not tell. The
+second pass used the whole-package command, to make sure no other target in `chaos-engine`
+could see these mutants either, and reported:
+
+    KILLED   m11-target-drops-parent-confinement: exit=101 failing=1
+        remote::client::tests::a_transport_that_comes_up_later_is_waited_for
+
+That test has nothing to do with path confinement. It is a deadline test: it binds port 0,
+releases it, and expects a peer that rebinds it after 250 ms to need at least one retry, so a
+concurrent test that grabs the same port first makes it fail. It failed on an unrelated mutant
+run, and the driver, which classifies any named failing test as a kill, called it a survivor
+turned victim. The pass was therefore re-run with the one mutant isolated, which is the m11
+result quoted above; the same test also appeared alongside the real one in m04's second pass
+(`only_the_newest_writes_stay_undoable` plus the same `remote::client` case), where the real
+killer was present and the verdict happened to be right anyway. The flake is filed in
+`docs/ci-test-debt.md` rather than left as an unexplained line in a log.
+
+One mutant had to be run twice because the file it lives in moved. m13 breaks the host's
+installation of the seam; the first pass patched the engine builder inside a `host` module the
+batch had extracted out of `main.rs`, and that extraction was reverted afterwards for the
+reason section 2 gives, which left the mutant's anchor pointing at a file no longer in the
+tree. Re-pointed at `crates/codegen/xai-grok-web/src/main.rs` and run again, with the baseline
+for that command green first (`host_startup` 11 passed, `m1_flow` 4 passed):
+
+    KILLED   m13-host-installs-no-seam: exit=101 failing=3
+        the_built_host_offers_an_undo_point_for_a_write_that_landed
+        the_built_host_keeps_an_accepted_write_and_spends_the_undo_point
+        the_built_host_refuses_to_roll_back_over_an_edit_it_did_not_make
+
+The same three names as the first pass, so the sixteen-killed figure counts one run per mutant
+against the files exactly as they are committed. The package counts in section 3 were
+re-measured after the revert too and did not move.
+
+Counting the survivors as the cost they represent: two of the three were tests that would
+have passed with the protection removed, and one was a constant no test could move.
+
+== 5. The browser run
+
+Against the built `chaos-web` binary and the vite dev UI, on desktop-chromium at 1440x1000 and
+mobile-chromium at 390x844:
+
+      ✓   5 [desktop-chromium] › e2e/diff-undo.pw.ts:50:1 › a landed write offers its own undo
+          point and 回滚变更 puts the file back (1.3s)
+      ✓   6 [desktop-chromium] › e2e/diff-undo.pw.ts:86:1 › 接受变更 keeps the file and takes the
+          undo point away (1.0s)
+      ✓   7 [desktop-chromium] › e2e/diff-undo.pw.ts:110:1 › the host refuses to roll back over
+          an edit made outside the browser, and says why (1.0s)
+      ✓  45 [mobile-chromium] › e2e/diff-undo.pw.ts:50:1 › a landed write offers its own undo
+          point and 回滚变更 puts the file back (1.3s)
+      ✓  46 [mobile-chromium] › e2e/diff-undo.pw.ts:86:1 › 接受变更 keeps the file and takes the
+          undo point away (1.1s)
+      ✓  47 [mobile-chromium] › e2e/diff-undo.pw.ts:110:1 › the host refuses to roll back over
+          an edit made outside the browser, and says why (1.1s)
+
+The whole Playwright suite was run as well, because `send`'s retyping, the reducer branch and
+the 差异 panel markup are shared by every other case in it:
+
+    Running 81 tests using 1 worker
+      6 skipped
+      75 passed (1.5m)
+
+Those six are the viewport-conditional cases in `e2e/phone-shell.pw.ts`, each of which skips
+on whichever project it does not apply to: `the drawer only exists at phone width` on desktop,
+`the docked sidebar only exists at desktop width` on mobile. They are conditional skips on
+`main` too, and none of them reads the diff state.
+
+The third case is the one worth reading in full, because it is the behaviour rather than the
+plumbing: a file is written through the browser, then changed on disk by the test process,
+then 回滚变更 is clicked. The alert says `note.txt 在写入之后又被改过，回滚会覆盖那次修改`,
+the file on disk keeps the outside edit, the preview stays open, and after the test puts the
+original bytes back the same proposal rolls back successfully. A refusal that also destroyed
+the preview, or that consumed the proposal, would have failed that case.
+
+== 6. What is still not covered
+
+- Undo points live in the process. Restarting the host forgets every proposal, and the
+  browser shows nothing for a write it did not see in this session. Persisting them is a
+  separate design question: the recorded old side can be large, and a stale proposal surviving
+  a restart would be a proposal to overwrite edits made while nothing was watching.
+- A rollback does not emit `touched_path`, so an editor buffer holding the file keeps its own
+  text until it is re-opened. Emitting it needs a `DiffAdapter` trait change, and the file
+  list re-reads from disk on navigation, so the visible cost today is limited to an open
+  buffer.
+- Partial hunks remain unimplemented everywhere. One write is one proposal, accepted or
+  rolled back whole; the `xai-grok-pager-diff` and `xai-hunk-tracker` integrations `TODO.md`
+  asks for are still absent, and nothing in this batch pretends otherwise.
+- Binary content is refused, not shown. The refusal is tested; a real binary diff is not.
+- Only the 差异 panel's own controls are driven in a browser. The older 待审查差异提案 banner
+  in the chat tab shares `acceptDiff` and `rollbackDiff`, so it benefits from the `session_id`
+  fix, but no case clicks it there.
+
+Reproduce the tests with the four commands in section 3; the mutations are single-line edits
+to `crates/codegen/chaos-engine/src/lib.rs`, `crates/codegen/xai-grok-web/src/main.rs`,
+`apps/chaos-ui/src/session.ts` and `apps/chaos-ui/src/main.tsx`, each named by the text it
+replaces in section 4.

@@ -328,13 +328,13 @@ stub 要说的话写在 `-c` 的正文里，而拒绝理由会把候选的整条
 
 ### M1.4 Diff 闭环
 
-- [~] 建立 `chaos-engine::DiffAdapter` 边界，提供 session-scoped preview/accept/rollback/error 事件；WebSocket 已通过真实 workspace fixture 覆盖文件写入拒绝/批准、Diff 预览、接受和回滚，仍待接入 `xai-grok-pager-diff`、`xai-hunk-tracker` 与 workspace RPC 的生产级部分 hunk/二进制实现。（2026-09-24；`workspace_diff_flow.rs`）
-- [x] 明确“工具已写盘”与“接受/拒绝 Diff”的真实语义：engine 只在 DiffAdapter 成功后发 `diff_resolved`，无 adapter 或失败发 `diff_failed`，不更新磁盘假象。（2026-09-24）
-- [~] 已覆盖 adapter 成功、缺 adapter 和 session 绑定；外部文件修改、部分 hunk、回滚失败和二进制文件仍待真实 workspace adapter。
+- [~] 建立 `chaos-engine::DiffAdapter` 边界，提供 session-scoped preview/accept/rollback/error 事件；workspace host 现在自己装配 `WorkspaceDiffAdapter`（批准的写入在落盘前记录旧字节、回滚前核对文件未被外部修改、路径两侧都受 workspace 根与符号链接约束、非 UTF-8 直接拒绝、全程最多保留 `DIFF_PROPOSAL_LIMIT = 32` 个 undo point 且满则淘汰最旧），WebSocket 已通过真实 workspace fixture 与真实 `chaos-web` 二进制覆盖文件写入拒绝/批准、Diff 预览、接受和回滚，仍待接入 `xai-grok-pager-diff`、`xai-hunk-tracker` 与 workspace RPC 的生产级部分 hunk/二进制实现，且 undo point 仍活在进程内、重启即忘。（2026-10-04；`workspace_diff_flow.rs`、`crates/codegen/chaos-engine/tests/workspace_diff_undo.rs`、`crates/codegen/xai-grok-web/src/main.rs`）
+- [x] 明确“工具已写盘”与“接受/拒绝 Diff”的真实语义：engine 只在 DiffAdapter 成功后发 `diff_resolved`，无 adapter 或失败发 `diff_failed`，不更新磁盘假象。（这一条在 2026-10-04 之前是假的：`resolve_diff` 无条件发 `diff_resolved`，而 `chaos-web` 从未装配任何 adapter，只有自带假 adapter 的测试让它看起来成立；现已改为仅成功才发，并由 `workspace_diff_undo.rs` 与 `m1_flow.rs` 的 `Audit{outcome: "rejected"}` 断言钉住。（2026-10-04）
+- [~] 已覆盖 adapter 成功、缺 adapter 和 session 绑定；外部文件修改（写入之后文件又被改过则拒绝回滚、把原因显示在差异面板并保留预览）、回滚失败（拒绝不再被 `diff_resolved` 掩盖）与二进制文件（提案任一侧非 UTF-8 即拒绝记录）已由真实 workspace adapter 覆盖，部分 hunk 仍无任何实现。
 
 ### M1.5 验收门禁
 
-- [~] E2E：engine/WebSocket 已覆盖读取 workspace 文件 → 请求写入 → 拒绝一次 → 再次批准 → 预览 Diff → 接受 → 回滚并确认磁盘状态；浏览器/桌面人工验收和真实 hunk/二进制场景仍待平台 gate。（2026-09-24；`workspace_diff_flow.rs`）
+- [~] E2E：engine/WebSocket 已覆盖读取 workspace 文件 → 请求写入 → 拒绝一次 → 再次批准 → 预览 Diff → 接受 → 回滚并确认磁盘状态；浏览器侧 `apps/chaos-ui/e2e/diff-undo.pw.ts` 已在 desktop 1440×1000 与 mobile 390×844 两个视口对真实 `chaos-web` 驱动 写入 → 预览 → 回滚 → 外部修改后拒绝回滚并显示原因 → 复原之后回滚成功，桌面人工验收和真实 hunk/二进制场景仍待平台 gate。（2026-10-04；`workspace_diff_flow.rs`、`apps/chaos-ui/e2e/diff-undo.pw.ts`、`docs/verification/workspace-diff-undo-2026-10-04.log`）
 - [~] WebSocket integration 已在 socket 断开后通过持久化 Engine reopen，恢复待审批 approval/question prompt，并验证批准/回答只完成一次；Playwright desktop/mobile 覆盖真实 Web 页面上的单客户端拒绝与允许后无 adapter 失败、问题回答；真实浏览器同一 Engine 的多标签晚到审批 resolve 已由 `apps/chaos-ui/e2e/approval-competition.pw.ts` 验证，仍未覆盖同时到达时的胜出顺序及完整通知时序。（2026-09-30；`approval_resume_flow.rs`、`question_resume_flow.rs`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`、`apps/chaos-ui/e2e/approval-competition.pw.ts`；not-retained log `verification/approval-competition-playwright.log`）
 - [~] WebSocket 双客户端 fixture 已验证同一审批只接受一个终态，第二次 resolve 返回 `approval_not_found`；真实浏览器同一 Engine 多标签晚到竞争已有 `apps/chaos-ui/e2e/approval-competition.pw.ts` 覆盖：首标签允许后，第二标签对同一 request ID 的晚到 resolve 被真实 WebSocket handler 以 `approval_not_found` 拒绝，首标签 UI 保留 fail-closed 结果。该测试不主张模拟并发先后顺序；单页面 allow/reject path 亦由 desktop/mobile Playwright 覆盖。（2026-09-30；not-retained log `verification/approval-competition-playwright.log`）（2026-09-25；`approval_competition_flow.rs`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
 - [x] Safe Web Mode 已通过真实 WebSocket 直接发送 terminal 和 destructive Git mutation 验证无法绕过；当前 Playwright E2E 未新增 Safe Web Mode UI 场景。（2026-09-24；`safe_mode_flow.rs`）

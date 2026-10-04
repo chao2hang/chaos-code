@@ -2,7 +2,7 @@ use base64::Engine as Base64Engine;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -1207,14 +1207,11 @@ impl WorkspaceAdapter {
         })
     }
 
-    fn write(&self, relative: &str, contents: &str) -> Result<usize, ServerMessage> {
+    /// Where a relative path lands on disk, resolved by the same rules `write_raw`
+    /// enforces. `WorkspaceDiffAdapter` needs the path itself to put bytes back,
+    /// and a second copy of these rules would be a second thing to get wrong.
+    fn target(&self, relative: &str) -> Result<PathBuf, ServerMessage> {
         Self::reject_staging_path(relative)?;
-        if contents.len() > 1024 * 1024 {
-            return Err(ServerMessage::Error {
-                code: "file_too_large".into(),
-                message: "文件超过 1 MiB 限制".into(),
-            });
-        }
         let relative_path = Path::new(relative);
         if relative_path.is_absolute() {
             return Err(Self::path_escape());
@@ -1241,12 +1238,83 @@ impl WorkspaceAdapter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(Self::path_escape()),
         }
-        let path = canonical_parent.join(candidate.file_name().ok_or_else(Self::path_escape)?);
+        Ok(canonical_parent.join(candidate.file_name().ok_or_else(Self::path_escape)?))
+    }
+
+    /// The bytes as they sit on disk, `None` when the path is not there. Text is
+    /// not required here: an undo point has to remember what a file held even
+    /// when it cannot show it.
+    fn read_raw(&self, relative: &str) -> Result<Option<Vec<u8>>, ServerMessage> {
+        let path = self.target(relative)?;
+        match std::fs::metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => {
+                return Err(ServerMessage::Error {
+                    code: "read_failed".into(),
+                    message: "无法读取文件".into(),
+                });
+            }
+            Ok(metadata) if !metadata.is_file() => {
+                return Err(ServerMessage::Error {
+                    code: "read_failed".into(),
+                    message: "目标不是普通文件".into(),
+                });
+            }
+            Ok(metadata) if metadata.len() > WORKSPACE_READ_LIMIT as u64 => {
+                return Err(ServerMessage::Error {
+                    code: "file_too_large".into(),
+                    message: "文件超过 1 MiB 限制".into(),
+                });
+            }
+            Ok(_) => {}
+        }
+        std::fs::read(path)
+            .map(Some)
+            .map_err(|_| ServerMessage::Error {
+                code: "read_failed".into(),
+                message: "无法读取文件".into(),
+            })
+    }
+
+    fn write_raw(&self, relative: &str, contents: &[u8]) -> Result<usize, ServerMessage> {
+        if contents.len() > WORKSPACE_READ_LIMIT {
+            return Err(ServerMessage::Error {
+                code: "file_too_large".into(),
+                message: "文件超过 1 MiB 限制".into(),
+            });
+        }
+        let path = self.target(relative)?;
         std::fs::write(&path, contents).map_err(|_| ServerMessage::Error {
             code: "write_failed".into(),
             message: "无法写入文件".into(),
         })?;
         Ok(contents.len())
+    }
+
+    /// Remove a confined file. Rolling back a write that created a path has to
+    /// take the path away rather than leave an empty file behind.
+    fn remove(&self, relative: &str) -> Result<(), ServerMessage> {
+        let path = self.target(relative)?;
+        std::fs::remove_file(&path).map_err(|_| ServerMessage::Error {
+            code: "write_failed".into(),
+            message: "无法删除文件".into(),
+        })
+    }
+
+    fn write(&self, relative: &str, contents: &str) -> Result<usize, ServerMessage> {
+        // This seam only ever carries text, so overwriting a file the browser
+        // could not have read is refused: those bytes can be neither shown nor
+        // put back, and a write that destroys them silently is not a write this
+        // GUI can take responsibility for.
+        if let Some(prior) = self.read_raw(relative)?
+            && std::str::from_utf8(&prior).is_err()
+        {
+            return Err(ServerMessage::Error {
+                code: "file_not_text".into(),
+                message: "目标当前内容不是文本，此入口不会覆盖".into(),
+            });
+        }
+        self.write_raw(relative, contents.as_bytes())
     }
 
     fn path_escape() -> ServerMessage {
@@ -1318,6 +1386,186 @@ impl WorkspaceAdapter {
             }
         }
         Ok(matches)
+    }
+}
+
+/// How many landed writes stay undoable at once. Every entry keeps a copy of the
+/// bytes it replaced, so an unbounded map would be an unbounded memory claim on a
+/// host that runs for days; the oldest change is the first to stop being undoable.
+pub const DIFF_PROPOSAL_LIMIT: usize = 32;
+
+#[derive(Clone)]
+struct RecordedChange {
+    relative_path: String,
+    before: Option<Vec<u8>>,
+    after: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ProposalLog {
+    by_id: HashMap<String, RecordedChange>,
+    /// Insertion order, so eviction has a defined victim instead of whatever the
+    /// hash map happens to hand back.
+    order: VecDeque<String>,
+}
+
+fn workspace_message_text(message: ServerMessage) -> String {
+    match message {
+        ServerMessage::Error { message, .. } => message,
+        _ => "workspace 操作失败".into(),
+    }
+}
+
+/// `DiffAdapter` over the workspace this process already owns.
+///
+/// The write path records a change once its bytes have landed, so `accept` is a
+/// confirmation rather than a write: the file is already what the user approved.
+/// `rollback` puts the recorded bytes back, or takes the file away when it did not
+/// exist, and refuses when the file has moved since -- a later edit by the user or
+/// by git is not this proposal's to erase.
+pub struct WorkspaceDiffAdapter {
+    workspace: Arc<WorkspaceAdapter>,
+    proposals: Mutex<ProposalLog>,
+}
+
+impl WorkspaceDiffAdapter {
+    #[must_use]
+    pub fn new(workspace: Arc<WorkspaceAdapter>) -> Self {
+        Self {
+            workspace,
+            proposals: Mutex::new(ProposalLog::default()),
+        }
+    }
+
+    /// The one place this adapter locks its log.
+    ///
+    /// A poisoned lock is reported as what it is: a panic happened while an undo
+    /// point was being added or spent, so the log may hold half of one. Continuing
+    /// over that would let a rollback act on a proposal nobody recorded.
+    fn log(&self) -> std::sync::MutexGuard<'_, ProposalLog> {
+        self.proposals.lock().expect("workspace undo point lock")
+    }
+
+    /// Record a write that has already landed. Called with the bytes that were on
+    /// disk beforehand, because nothing can recover them afterwards.
+    ///
+    /// # Errors
+    /// Returns a refusal when the path would escape the workspace, when either
+    /// side is too large, or when the prior bytes are not text.
+    pub fn record_change(
+        &self,
+        proposal_id: &str,
+        relative_path: &str,
+        before: Option<&[u8]>,
+        after: &[u8],
+    ) -> Result<(), String> {
+        // Checked now rather than at rollback time: a proposal the workspace would
+        // refuse to write again must never sit in the map looking undoable.
+        self.workspace
+            .target(relative_path)
+            .map_err(workspace_message_text)?;
+        if let Some(prior) = before
+            && std::str::from_utf8(prior).is_err()
+        {
+            return Err(format!(
+                "{relative_path} 的旧内容不是文本，无法作为差异保留"
+            ));
+        }
+        if std::str::from_utf8(after).is_err() {
+            return Err(format!(
+                "{relative_path} 的新内容不是文本，无法作为差异保留"
+            ));
+        }
+        let mut log = self.log();
+        while log.order.len() >= DIFF_PROPOSAL_LIMIT {
+            let Some(oldest) = log.order.pop_front() else {
+                break;
+            };
+            log.by_id.remove(&oldest);
+        }
+        log.order.push_back(proposal_id.to_string());
+        log.by_id.insert(
+            proposal_id.to_string(),
+            RecordedChange {
+                relative_path: relative_path.to_string(),
+                before: before.map(<[u8]>::to_vec),
+                after: after.to_vec(),
+            },
+        );
+        Ok(())
+    }
+
+    fn peek(&self, proposal_id: &str) -> Result<RecordedChange, String> {
+        self.log()
+            .by_id
+            .get(proposal_id)
+            .cloned()
+            .ok_or_else(|| "提案不存在或已处理".into())
+    }
+
+    fn take(&self, proposal_id: &str) -> Result<RecordedChange, String> {
+        let mut log = self.log();
+        let change = log
+            .by_id
+            .remove(proposal_id)
+            .ok_or_else(|| "提案不存在或已处理".to_string())?;
+        if let Some(position) = log.order.iter().position(|id| id == proposal_id) {
+            log.order.remove(position);
+        }
+        Ok(change)
+    }
+}
+
+impl DiffAdapter for WorkspaceDiffAdapter {
+    fn accept(&self, proposal_id: &str, _summary: &str) -> Result<(), String> {
+        // The bytes are already on disk, so accepting must not write anything: it
+        // says the change stays, which also takes the undo away.
+        self.take(proposal_id).map(|_| ())
+    }
+
+    fn rollback(&self, proposal_id: &str) -> Result<(), String> {
+        let change = self.peek(proposal_id)?;
+        let current = self
+            .workspace
+            .read_raw(&change.relative_path)
+            .map_err(workspace_message_text)?;
+        if current.as_deref() != Some(change.after.as_slice()) {
+            return Err(format!(
+                "{} 在写入之后又被改过，回滚会覆盖那次修改",
+                change.relative_path
+            ));
+        }
+        match &change.before {
+            Some(prior) => {
+                self.workspace
+                    .write_raw(&change.relative_path, prior)
+                    .map_err(workspace_message_text)?;
+            }
+            None => {
+                self.workspace
+                    .remove(&change.relative_path)
+                    .map_err(workspace_message_text)?;
+            }
+        }
+        // Only consumed once the bytes are back: a failed restore should stay
+        // retryable rather than leave the change unundoable with nothing shown.
+        self.take(proposal_id)?;
+        Ok(())
+    }
+
+    fn preview(&self, proposal_id: &str) -> Result<DiffPreview, String> {
+        let change = self.peek(proposal_id)?;
+        let as_text = |bytes: &[u8]| -> Result<String, String> {
+            std::str::from_utf8(bytes)
+                .map(str::to_string)
+                .map_err(|_| "内容不是 UTF-8 文本，无法给出文本差异".into())
+        };
+        Ok(DiffPreview {
+            proposal_id: proposal_id.to_string(),
+            path: change.relative_path,
+            before: change.before.as_deref().map(as_text).transpose()?,
+            after: as_text(&change.after)?,
+        })
     }
 }
 
@@ -1439,6 +1687,11 @@ pub struct Engine {
     tool_adapter: Option<Arc<dyn ToolAdapter>>,
     diff_adapter: Option<Arc<dyn DiffAdapter>>,
     workspace: Option<Arc<WorkspaceAdapter>>,
+    /// The workspace's own adapter, when the host asked for one. Held concretely
+    /// and separately from `diff_adapter` because the write path records into it:
+    /// a host-supplied `dyn DiffAdapter` that only resolves proposals it was handed
+    /// has nothing to record, and must not be told to.
+    workspace_diff: Option<Arc<WorkspaceDiffAdapter>>,
     sqlite_store: Option<Arc<SqliteSessionStore>>,
     attachments: Arc<Mutex<HashMap<Uuid, AttachmentUpload>>>,
     settings: Arc<Mutex<GuiSettings>>,
@@ -1469,6 +1722,29 @@ impl Engine {
     pub fn with_git_adapter(mut self, adapter: impl GitAdapter + 'static) -> Self {
         self.git_adapter = Some(Arc::new(adapter));
         self
+    }
+
+    /// Attach the workspace's own [`WorkspaceDiffAdapter`], so an approved write
+    /// can be previewed and taken back instead of only reported as done. The same
+    /// adapter answers `preview_diff`/`accept_diff`/`rollback_diff`.
+    ///
+    /// # Errors
+    /// Returns an error when no workspace is configured, since there would be
+    /// nothing to diff, or when another diff adapter is already installed, since
+    /// silently replacing the one the host chose would hide that decision.
+    pub fn with_workspace_diff_adapter(mut self) -> std::io::Result<Self> {
+        let Some(workspace) = self.workspace.clone() else {
+            return Err(std::io::Error::other("未配置 workspace，无法登记差异提案"));
+        };
+        if self.diff_adapter.is_some() {
+            return Err(std::io::Error::other(
+                "已配置 Diff adapter，不再装 workspace 自带的那个",
+            ));
+        }
+        let adapter = Arc::new(WorkspaceDiffAdapter::new(workspace));
+        self.workspace_diff = Some(Arc::clone(&adapter));
+        self.diff_adapter = Some(adapter);
+        Ok(self)
     }
 
     pub fn with_sqlite_store(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
@@ -1676,6 +1952,7 @@ impl Engine {
             tool_adapter,
             diff_adapter,
             workspace,
+            workspace_diff: None,
             sqlite_store,
             attachments: Arc::new(Mutex::new(HashMap::new())),
             settings: Arc::new(Mutex::new(initial_settings)),
@@ -2774,11 +3051,36 @@ impl Engine {
             if !approved {
                 "rejected"
             } else if let Some(workspace) = &self.workspace {
+                // What the path holds right now. A rollback restores these bytes
+                // and nothing can recover them after the write, so they are read
+                // here or the change is not undoable. `None` means no undo point:
+                // either the host has no diff seam, or the current bytes could not
+                // be read at all and a half-known undo point would be worse than none.
+                let mut prior: Option<Option<Vec<u8>>> = None;
+                if self.workspace_diff.is_some() {
+                    prior = workspace.read_raw(&relative_path).ok();
+                }
                 match workspace.write(&relative_path, &contents) {
                     Ok(bytes) => {
                         session.messages.push(TimelineMessage {
                             role: "tool".into(),
                             text: format!("wrote {relative_path}"),
+                        });
+                        // Only once the bytes have landed: an undo point for bytes
+                        // that never arrived would offer to take back whatever is
+                        // really in the file. A refusal here therefore costs the undo
+                        // point and nothing else, because the write did happen.
+                        let undo = self.workspace_diff.as_ref().and_then(|diff| {
+                            let recorded = prior.as_ref().map(Option::as_deref).unwrap_or(None);
+                            let proposal_id = Uuid::new_v4().to_string();
+                            diff.record_change(
+                                &proposal_id,
+                                &relative_path,
+                                recorded,
+                                contents.as_bytes(),
+                            )
+                            .ok()?;
+                            diff.preview(&proposal_id).ok()
                         });
                         session.sequence += 1;
                         events.push(ServerMessage::ToolStarted {
@@ -2798,6 +3100,15 @@ impl Engine {
                             path: relative_path,
                             bytes,
                         });
+                        if let Some(preview) = undo {
+                            // The browser's diff tab reads this: without it the
+                            // proposal exists but nothing can name it back.
+                            session.sequence += 1;
+                            events.push(ServerMessage::DiffPreview {
+                                session_id: write_session_id,
+                                preview,
+                            });
+                        }
                         "executed"
                     }
                     Err(error) => {
@@ -3248,17 +3559,23 @@ impl Engine {
             "rejected"
         };
         let mut events = vec![ServerMessage::Ack { client_msg_id }];
+        // A refusal is not a resolution: `diff_resolved` clears the browser's
+        // preview, so emitting it after a failed rollback would hide the refusal and
+        // leave the file looking settled when nothing moved.
+        let resolved = result.is_ok();
         if let Err(message) = result {
             events.push(ServerMessage::Error {
                 code: "diff_failed".into(),
                 message,
             });
         }
-        events.push(ServerMessage::DiffResolved {
-            proposal_id,
-            action: action.into(),
-            sequence: session.sequence,
-        });
+        if resolved {
+            events.push(ServerMessage::DiffResolved {
+                proposal_id,
+                action: action.into(),
+                sequence: session.sequence,
+            });
+        }
         session.audit.push(AuditEntry {
             action: action.into(),
             outcome: outcome.into(),

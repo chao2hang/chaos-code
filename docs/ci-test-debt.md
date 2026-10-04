@@ -1140,6 +1140,53 @@ cargo 认它新鲜，紧随的那轮于是报出 `259 passed; 1 failed`——那
 正交的数（内容摘要配路径集摘要、条数配字节数），而不是把措辞写得更强；改指纹代码时至少有一次从与出货
 目录不同的当前目录跑它——一半命令带 `cd`、一半不带，这种形状从默认路径上看不出来。**
 
+## 2026-10-04：两条测试的前提是「这段时间/这个端口归我」，可内核与 CI 机器都没答应
+
+这一批的变异跑批把一个不相关的门测成了「被杀掉」。驱动脚本按「有没有具名的失败测试」判杀伤，
+它分不清「变异让该测的东西变红了」与「另有一只本来就在抖的测试正好红了」：
+
+    KILLED   m11-target-drops-parent-confinement: exit=101 failing=1
+        remote::client::tests::a_transport_that_comes_up_later_is_waited_for
+
+那只测试在 `crates/codegen/chaos-engine/src/remote/client.rs:2287`，与路径逃逸毫无关系。它自己
+绑一个 `127.0.0.1:0` 拿到端口、`drop` 掉，再让一个任务睡 250 ms 之后回来占同一个地址，然后拨号，
+断言这次拨号至少花了 200 ms——即「端口一开始不在，所以必然重试过」。它 panic 在 `client.rs:2312`
+那句 `at least one retry happened: the port was not there first time`，本批跑批里见到两次。原因是
+`drop` 之后那个端口号就还回内核的临时端口池了，而 Linux 的临时端口区间从 32768 起、正是 `:0` 分
+配的那一段：同一时刻另一个测试目标（本批正在把整个 `chaos-engine` 包连同十几个测试目标一起跑）
+调 `bind(:0)`，完全可能拿到同一个号并立刻开始 accept，于是第一次拨号就成功，200 ms 那句断言当场
+不成立。测试要证的「等待存在」是真的，但它借的这件资源在它的整个前提期间都不属于它。
+
+第二条只在 CI 上出现过，同一个任务在下一个提交上又是绿的（run 37194865831 的 `rust check |
+clippy | test`，`test result: FAILED. 3211 passed; 1 failed; 3 ignored`；随后 `6826fce0` 同任务
+成功）：
+
+    thread 'implementations::lsp::tests::a_refresh_we_cannot_act_on_does_not_discard_what_we_know'
+    panicked at crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs:86:5:
+    no summary mentioning "a real problem" within the deadline
+
+它等的是 `drain_until_reported`，预算 `WAIT_TIMEOUT + WAIT_TIMEOUT` 共 8 秒，中间每次
+`drain_lsp_diagnostics` 让出 500 ms 再去 sleep 25 ms。被等的那个 mock 是一个 python 子进程：它要
+先解释器起来、握手、在 didOpen 上发 `textDocument/publishDiagnostics`、再回答 `workspace/
+diagnostic/refresh`（id 9002）。CI runner 是 4 核，整个 workspace 的测试挤在同一时刻，8 秒的墙上
+时间在这种机器上不是「足够久」，而本地开发机上一次也没撞见过——这类差异不会出现在任何一份本地
+跑批里，只会以「CI 偶发」的面目出现，然后被下一次绿默默冲掉。
+
+两条的共性是断言依赖一个自己并不持有的资源：一条依赖端口号在 250 ms 内不被重新分配，一条依赖
+一台机器在两秒内不忙。前者可以在测试里根治（换成与内核分配器无关的资源：一个 bind 住不放的具体
+端口、或一个临时目录里的 Unix socket 路径——那个路径没有第二个进程会去占；本仓库已有的
+`dial_unix_waiting` 正是同一套重试代码的另一条腿）；后者要改的是预算的来源，让等待跟着实际观察
+到的进度走，而不是跟着墙上时间走。这一批没有动这两只测试，只负责把它们量清楚记在这里：那次误判
+是靠在变异跑批里认出「失败的名字与本批改的东西无关」才发现的，重跑单只变异之后才有真的判决，
+来龙去脉写在 `docs/verification/workspace-diff-undo-2026-10-04.log` 第 4 节。
+
+**判据：一只测试若把前提建立在一件自己不持有的资源上（内核随时可以另派的端口号、别人正在用的
+CPU 时间片），它就在每一次并发运行里重新掷一次骰子；写这种测试时先问「这段时间里谁还能拿到这件
+资源」，拿得到就得换个不属于别人的资源（临时目录里的路径、自己 bind 住不放的地址）或换掉墙上时
+间这个量纲。反过来，任何按「有没有具名失败」下判断的工具（变异跑批、flaky 隔离跑）都必须先确认
+那个失败的名字属于本次被改的东西，否则一只在抖的测试能把无关的变异判成已杀——那比没有跑批更糟，
+因为它给出了假的安心。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

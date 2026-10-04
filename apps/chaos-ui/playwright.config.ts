@@ -9,7 +9,7 @@ const assetsDir = process.env.CHAOS_WEB_ASSETS_DIR ? fileURLToPath(new URL(proce
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell)\.pw\.ts/,
+  testMatch: /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell|diff-undo)\.pw\.ts/,
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
@@ -25,12 +25,12 @@ export default defineConfig({
     {
       name: 'desktop-chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } },
-      testMatch: /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell)\.pw\.ts/,
+      testMatch: /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell|diff-undo)\.pw\.ts/,
     },
     {
       name: 'mobile-chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
-      testMatch: /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell)\.pw\.ts/,
+      testMatch: /(?:workspace-flow|tool-activity|approved-workspace-ops|static-host|reconnect-snapshot|attachment-upload|settings-panel|turn-grouping|streaming-integrity|phone-shell|diff-undo)\.pw\.ts/,
     },
     {
       name: 'observer-browser',

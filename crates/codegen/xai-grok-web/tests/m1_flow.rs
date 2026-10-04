@@ -227,8 +227,12 @@ async fn websocket_diff_without_adapter_reports_structured_failure() {
     assert!(
         matches!(next(&mut socket).await, ServerMessage::Error { code, .. } if code == "diff_failed")
     );
+    // A refusal is not a resolution. `diff_resolved` is what clears the browser's
+    // preview, so a host that failed to act must report the audit and stop there,
+    // leaving the page showing the change it could not apply.
     assert!(
-        matches!(next(&mut socket).await, ServerMessage::DiffResolved { action, .. } if action == "accept_diff")
+        matches!(next(&mut socket).await, ServerMessage::Audit { action, outcome, .. }
+            if action == "accept_diff" && outcome == "rejected")
     );
     task.await.unwrap();
 }

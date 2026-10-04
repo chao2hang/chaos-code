@@ -2,6 +2,75 @@
 
 ## Unreleased
 
+### 修复：差异面板那三个按钮按下去一个字节也不会动，因为产品路径里根本没有 DiffAdapter，帧还漏了 session
+
+`apps/chaos-ui` 的差异面板摆着 加载差异、接受变更、回滚变更 三个按钮。`e75ee6c7` 上 `git grep -n
+'DiffAdapter for'` 全仓库只翻出测试模块里的 `FixtureDiff` 与两只 `tests/` 里的假实现：`chaos-web`
+起的那个 `Engine` 的 `diff_adapter` 是 `None`，`resolve_diff` 每次走的都是
+`None => Err(...)` 那一条。按钮按下去一定失败，而 `TODO.md` 那行写的是「已覆盖」——因为覆盖它的
+`workspace_diff_flow.rs` 与 `m1_flow.rs` 各自注入的是自带的假 adapter，产品缺东西它们照样绿。
+
+底下还压着第二层：那些帧本身不合法。`ClientMessage` 的 `preview_diff`/`accept_diff`/`rollback_diff`
+三个变体都要求 `session_id`，可 `send` 的签名是 `(message: object)`，`tsc` 因此从不检查这些对象
+字面量带了什么字段。签名换成 `ClientMessage` 之后编译器立刻报出三条 TS2345（原文见证据日志第 1 节），
+而全文件 23 处 `send({...})` 里其余 20 处当场自证完整——漏字段只发生在差异面板这一处，其余调用点
+本来就带齐。类型改完之后，少写一个 `session_id` 是编译错误，这个缺陷的形状从此不再取决于有没有人
+肉眼看行。
+
+第三层是失败的样子。`resolve_diff` 无论成败都推一条 `diff_resolved`，而前端把 `diff_resolved` 理解
+成「预览已处理」并清空 `diffPreview`。于是「回滚被拒绝」在屏幕上的形状是：预览消失、状态栏一句差异
+操作失败、磁盘上什么都没发生，用户刚读的那段差异再也召不回来。现在只有 `result.is_ok()` 才发
+`diff_resolved`；拒绝带出 `diff_failed` 的原文，前端把它放进新增的 `diffError`，预览留着。
+
+补的实现是 `WorkspaceDiffAdapter`：批准的写入在落盘前先把旧字节读出来，一次写入换一个 undo point，
+两侧都要求 UTF-8、都要求落在 workspace 根之内，全程最多留 `DIFF_PROPOSAL_LIMIT = 32` 个，满了淘汰
+最旧的。回滚先核对文件此刻的字节是否等于当初记录的新字节，不等就拒绝并把原因说出来（「在写入之后又
+被改过，回滚会覆盖那次修改」），等于才写回旧字节；写入前该文件不存在，回滚就把它删掉。两条路径都再过
+一次 `WorkspaceAdapter::target()`，所以「写完之后有人把文件换成指向仓库外的符号链接」这种也只会退在
+`path_escape`，不会被当成一次正当的还原。接线就一行：在 `chaos-web` 那条带 workspace 的引擎构造分支上
+补 `.with_workspace_diff_adapter()`，`tests/host_startup.rs` 用文件里本来就有的 `start_host` 起
+`env!("CARGO_BIN_EXE_chaos-web")` 真产物、走 websocket 把它驱动到底，而不是再注入一个假的。
+
+覆盖：engine 18 例、host 包 27 个结果块 100 例 0 失败、vitest 46 例、`tsc` 干净、Playwright
+`diff-undo` 桌面与 390×844 各 3 例（全量 81 例里 75 通过、6 跳过，跳过的是 `phone-shell` 那几只
+按视口自拒的）。16 发变异 0 存活；三发最初的存活都在说测试而不是产品，其中一条值得单列，见下一条。
+仍未覆盖的也如实列在证据日志第 6 节：undo point 活在进程里、重启即忘；回滚不发 `touched_path`；
+部分 hunk 全仓库依旧没有实现。两条门禁基线各动了一处：`panic-site` 那边 `chaos-engine` 从
+`5 8 0 1` 到 `5 9 0 1`（三处 `.lock().unwrap()` 收成一处带说明的 `.expect`），平台登记那边给两只新的
+`#[cfg(unix)]` 测试写了讲清理由的行，没有借用 `inherited` 那个标记。
+
+（2026-10-04；`crates/codegen/chaos-engine/src/lib.rs`、
+`crates/codegen/chaos-engine/tests/workspace_diff_undo.rs`、
+`crates/codegen/xai-grok-web/src/main.rs`、`apps/chaos-ui/src/main.tsx`、
+`apps/chaos-ui/src/session.ts`、`apps/chaos-ui/e2e/diff-undo.pw.ts`、
+`scripts/ci/panic-site-baseline.tsv`、`scripts/ci/platform-gated-tests.tsv`、
+`docs/verification/workspace-diff-undo-2026-10-04.log`）
+
+### 门禁：`WorkspaceAdapter::target` 里那条父目录越权检查删掉之后，整个包没有一测变红
+
+变异测试顺手量出来的一件事。`target()` 对符号链接做两次判断：路径最后一段如果是链接，拒；最后一段
+还不存在（批准的写入通常是新建文件）时，父目录如果是链接，也拒。后一条被整段删除，
+`cargo test -p chaos-engine --no-fail-fast` 一红不红。原因是所有会走到 `target()` 的既有逃逸测试都把
+链接摆在**最后一段**（`link.txt`、`dangling.txt`、`note.txt`）——于是前一条检查替后一条把活全干了，
+后一条在测试里从来没有出场的机会；第四只 `workspace_and_attachment_stagers_reject_staging_symlink_escape`
+确实把链接摆在目录那一层，可它在打开工作区时就被拒了，压根没走到这条路径。补的这只把链接摆在中间
+（`portal/new.txt`，`portal` 是指向 workspace 之外的目录），这是全仓库唯一能让父目录那条独自上岗的
+形状：最后一段还不存在，没得查。
+
+同批的 m12 是另一种存活，也更值得警惕：那只「写入之后再把文件换成链接」的测试，换进去的文件持有与
+提案记录不同的字节，于是「文件在写入之后又被改过」那道守卫先把它拦下来，逃逸判断根本没轮到——测试
+绿着，但它验证的是另一件事。现在换进去的文件恰好持有提案记录的那份新字节，两道守卫之间只剩下根
+confinement，删掉符号链接判断才真的让测试变红。
+
+第三条存活不涉及安全：`DIFF_PROPOSAL_LIMIT` 从 32 抬到 4096 也没人抗议，因为淘汰测试的循环写的就是
+`0..=DIFF_PROPOSAL_LIMIT`，常量和它本该检验的判定一起被抬走。这个数是产品决定（一个 undo point 同时
+存一份文件的两侧，各自上限 `WORKSPACE_READ_LIMIT`），测试现在把它写死成 `assert_eq!(DIFF_PROPOSAL_LIMIT,
+32)`。三条的完整杀伤名单与代价记在证据日志第 4 节。
+
+（2026-10-04；`crates/codegen/chaos-engine/src/lib.rs`、
+`crates/codegen/chaos-engine/tests/workspace_diff_undo.rs`、
+`docs/verification/workspace-diff-undo-2026-10-04.log`）
+
 ### 门禁：容器入口那行树校验和从此分得清是字节动了还是路径集动了，顺带修好从仓库外启动时它一个门也不跑
 
 `scripts/verify-in-docker.sh` 在第一个门之前、最后一个门之后各给树取一次校验和，好让一次撞上了

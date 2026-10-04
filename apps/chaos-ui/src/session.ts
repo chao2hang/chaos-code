@@ -65,6 +65,9 @@ export type SessionState = {
   hostInfo?: HostInfo
   providerValidation?: { baseUrl: string; model: string; reachable: boolean; errorCode: string | null }
   diffPreview?: DiffPreview
+  /** Why the last 接受/回滚 was refused. The preview stays on screen with it: a
+   * change the host would not undo is a change the user still has to see. */
+  diffError?: string
   marketplaceEntries?: MarketplaceEntry[]
   terminalResult?: { output: string; exit_code: number }
   tuiImport?: { sessionId: string; cwd: string; title: string | null; messageCount: number; sourceUnchanged: boolean }
@@ -287,8 +290,8 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   // showing a plausible-looking default that describes a different process.
   if (message.type === 'host_info') return { ...state, hostInfo: message.info }
   if (message.type === 'settings_updated') return { ...state, settings: { baseUrl: message.base_url, model: message.model, hasApiKey: state.settings?.hasApiKey ?? false }, status: '设置已更新' }
-  if (message.type === 'diff_preview') return { ...state, diffPreview: message.preview }
-  if (message.type === 'diff_resolved') return { ...state, diffPreview: undefined, status: `Diff ${message.action}` }
+  if (message.type === 'diff_preview') return { ...state, diffPreview: message.preview, diffError: undefined }
+  if (message.type === 'diff_resolved') return { ...state, diffPreview: undefined, diffError: undefined, status: `Diff ${message.action}` }
   if (message.type === 'marketplace_scan') return { ...state, marketplaceEntries: message.entries }
   if (message.type === 'terminal_result') return { ...state, terminalResult: { output: message.output, exit_code: message.exit_code }, terminalLoading: false, terminalError: undefined, status: `终端执行完成（退出码：${message.exit_code}）` }
   if (message.type === 'git_mutation_result') {
@@ -311,6 +314,9 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
     const toolFailure = ['tool_unavailable', 'tool_failed', 'terminal_unavailable', 'terminal_failed', 'git_failed'].includes(message.code ?? '')
     if (state.gitLoading && message.code === 'git_failed') return { ...state, pendingGitOperation: undefined, gitLoading: false, gitError: message.message, status: 'Git 操作失败' }
     if (state.terminalLoading && ['terminal_unavailable', 'terminal_failed'].includes(message.code ?? '')) return { ...state, terminalLoading: false, terminalError: message.message, status: '终端执行失败' }
+    // A refused 接受/回滚 keeps the preview: the refusal means the file is no longer
+    // what the preview claims, which is exactly when the user still has to see it.
+    if (message.code === 'diff_failed') return { ...state, busy: false, diffError: message.message, status: '差异操作失败' }
     if (state.filesLoading && !state.fileLoading && !state.searchLoading) return { ...state, filesLoading: false, filesError: message.message, status: '目录读取失败' }
     if (state.fileLoading && !state.filesLoading && !state.searchLoading) return { ...state, fileLoading: false, fileError: message.message, status: '文件读取失败' }
     if (state.searchLoading && !state.filesLoading && !state.fileLoading) return { ...state, searchLoading: false, searchError: message.message, status: '文件搜索失败' }
