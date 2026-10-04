@@ -207,6 +207,10 @@ security sign-off: Windows/macOS compilation and reviewer approval remain open.
 
 ### 1.8 2026-10-02 全仓实测（可复现口径）
 
+> **绝对值已由 §1.9 取代（2026-10-04）。** 这一节量的是 `fa9c1358` 那棵树配**当时的**扫描器，
+> §2.6 修掉扫描器两处口径错误之后 420 这个数就不成立了（同一棵树配当前扫描器是 429）。保留它
+> 是因为「每个 crate 的 unsafe 主要来自什么」那张表仍然有效，§1.9 直接沿用。
+
 上面 1.1–1.6 与 1.4.1/1.4.2 都是 `grep` 关键字行数，1.4.1/1.4.2 连命令都没有记录，
 因此无法复现。2026-10-02 起统一用 `scripts/ci/panic-site-census.py`（口径见 §2.5）：
 它把 unsafe 分成 `unsafe {}` 块 / `unsafe fn` / `unsafe impl` / `unsafe extern` 四类，
@@ -220,7 +224,8 @@ unsafe by kind, every build: 596 block, 25 fn, 7 impl, 26 extern
 
 1.3 的"模式分类"表（`libc::*` / `std::ptr::*` / `transmute` / `static mut`）不在这个
 口径内 —— 那是一张**风险类型**表而不是**位置**表，仍只能当 2026-08 的快照读；生产
-unsafe 的位置与数量以本节为准。生产 unsafe 的 top 10：
+unsafe 的位置与数量以 §1.9 为准。下面这张 top 10 是当时的数，逐 crate 的「主要来自什么」
+仍按原样保留，§1.9 沿用它的描述。
 
 | Crate | 生产 unsafe | 主要来源 |
 |---|---:|---|
@@ -239,6 +244,63 @@ unsafe 的位置与数量以本节为准。生产 unsafe 的 top 10：
 文档、字符串里的 `unsafe` 也算进来），census 数的是**真实构造**，且只算被某个 crate
 root 可达的文件。两个方向都有偏差，所以只有"同一口径下的前后对比"有意义，跨口径
 对比没有意义 —— 这正是 §2.5 存在的理由。
+
+### 1.9 2026-10-04 位置表刷新（生产 unsafe 的当前 top 10）
+
+§1.8 那张表量的是 `fa9c1358` 那棵树配**当时的**扫描器：把那条命令放回那棵树重跑，输出的最后
+两行与 §1.8 逐字相同（`654 unsafe sites in all, 420 in production`，`596 block, 25 fn, 7 impl,
+26 extern`）。§2.6 修掉扫描器的两处口径错误之后，420 这个数就不再成立。这一节给的是**当前
+扫描器**下的同一张表，并把 420 到今天的差拆成两笔分别量：纯口径变动，与代码真变动。
+
+同一命令在当前树上的实测（`8a52ff0a`）：
+
+```
+$ python3 scripts/ci/panic-site-census.py            # 逐 crate 表格
+unsafe by kind, every build: 599 block, 25 fn, 7 impl, 26 extern
+657 unsafe sites in all, 428 in production
+```
+
+生产 unsafe 的 top 10。"两天前"这一列是把**当前**扫描器放回 `fa9c1358` 那棵树量的，为的是让
+这一列与左列只差代码；它不等于 §1.8 里的同名数字，那一个还叠着扫描器的偏差（`xai-grok-pager`
+在 §1.8 是 17，配当前扫描器是 21）。「主要来源」沿用 §1.8 逐 crate 核对过的描述：
+
+| Crate | 生产 unsafe | 两天前 | 主要来源 |
+|---|---:|---:|---|
+| `xai-crash-handler` | 58 | 58 | crash dump 路径，`unsafe fn` + `extern` 集中 |
+| `xai-tty-utils` | 52 | 52 | PTY raw mode |
+| `xai-fast-worktree` | 52 | 52 | AF_UNIX / `poll` / `flock` / procfs FFI |
+| `xai-system-power` | 29 | 29 | 平台 FFI |
+| `xai-grok-pager-render` | 27 | 27 | 终端 ioctl / 终端能力探测 |
+| `xai-grok-pager` | 21 | 21 | |
+| `xai-grok-pager-bin` | 21 | 21 | 入口处的平台调用 |
+| `xai-grok-foreign-sessions` | 21 | 21 | 外部会话集成 |
+| `xai-grok-sandbox` | 19 | 19 | 安全边界（1.6 的 P0 项，量级没变） |
+| `xai-grok-tools` | **18** | 19 | 进程 spawn；全仓 top 10 里只有这一行动过 |
+
+420 到今天的 428 是两笔方向相反的变化叠加出来的，必须分开记：
+
+| 变化 | 数值 | 性质 |
+|---|---:|---|
+| 420 → 429 | +9 | 纯口径，代码一行未动 |
+| 429 → 428 | −1 | 代码真减一处 |
+
+**+9 那笔是 §2.6 的扫描器修正。** 缺陷 2 把写着 `not(test)` 的属性当成测试门控，修好之后 10 处
+unsafe 第一次被算进生产；缺陷 1（字符串字面量在第一个 `"` 处结束）修好之后又有 1 处从生产里退出。
+
+**−1 那笔是代码真的少了一处。** `45628088` 把持久 shell 的状态读端改成 `AsyncFd` 驱动，
+`shell_state.rs` 里 `spawn_blocking` 中那处 `unsafe { File::from_raw_fd(fd.as_raw_fd()) }` 随之
+删掉，没有新的 unsafe 顶上来。`--list` 对得上：该 crate 的 `shell_state.rs` 由 4 处变 3 处，
+`cgroup.rs`、`static_shell.rs`、`terminal.rs`、`persistence.rs` 一处没动。
+
+把当前扫描器同时放到那棵树与今天的树上逐 crate 比对，上面十行**只有 `xai-grok-tools` 变了**，
+其余九个 crate 的生产 unsafe 一个不多一个不少。其余三列同样纹丝不动：生产 `.unwrap()` 300、
+`.expect()` 594、`panic!` 130，与 §2.6 表里「两处都修」那一行完全一致。会动的只有「任意构建」
+的 `.unwrap()` 总数，从 31 888 涨到 32 034；生产那一列没变，所以这净增的 146 处全部落在
+`cfg(test)` 之内。
+
+`--list <crate>` 打印某个 crate 的每一个生产位点（`path:line kind`），上表任何一个数都能这样
+摊开核对；`xai-grok-tools` 今天这 18 处分布在 `cgroup.rs`（8）、`shell_state.rs`（3）、
+`static_shell.rs`（3）、`terminal.rs`（3）、`persistence.rs`（1）。
 
 ---
 
@@ -453,7 +515,8 @@ TODO 也登记了。`xai-grok-compaction/src/strategies/` 三个文件的"确实
 2026-10-04 那批 Windows 修复触发了 census 门禁报"生产位点变多"，追下去发现两个新位点根本在
 `#[cfg(test)] mod tests` 里 —— 也就是说门禁红是因为扫描器**看不见**那个门控。顺着这条线查出两处
 口径错误，两处都会改变上面所有数字，因此这一节取代 §1.8 与 §2.5 表里的绝对值（**口径**没变，变的是
-实现；两张表的"相对结论"仍然成立，但 §2.4 的 A 批按新数已经不存在）。完整过程、逐位点核对与变异证据见
+实现；两张表的"相对结论"仍然成立，但 §2.4 的 A 批按新数已经不存在）。今天的绝对位置表见 §1.9。
+完整过程、逐位点核对与变异证据见
 `docs/verification/panic-site-census-2026-10-04.log`。
 
 **缺陷 1：字符串字面量在第一个 `"` 处结束。** Rust 里反斜杠转义下一个字符，因此以 `\"` 收尾的字面量
@@ -675,7 +738,7 @@ and the current Q4 CSV/baseline referenced in `docs/ci-test-debt.md` and
    这是局部边界修复，不代表逐项审计完成。
 4. **签名集成进 auto_update**（把代码接上真实下载链路）
 5. **shell crate env var unsafe 消除**（一次砍 ~60% 的 unsafe 数量）
-   —— 已完成大半，见 1.4.1 / 1.4.2；剩余按 §1.8 的位置表推进。
+   —— 已完成大半，见 1.4.1 / 1.4.2；剩余按 §1.9 的位置表推进。
 
 ---
 

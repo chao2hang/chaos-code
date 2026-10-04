@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### 改进：审计报告那张 unsafe 位置表换了口径重测，420 正式作废，全仓确实少了一处生产 unsafe
+
+`docs/audit-followup-report.md` §1.8 的 top 10 是 2026-10-02 在 `fa9c1358` 那棵树上配**当时的**
+扫描器量的；§2.6 查出扫描器两处口径错误之后，那一节的绝对值已经没人引用了，可表还留在原地，
+从 §1 读进来的人只能拿到 420。报告现在多了 §1.9：同一张表按**当前**扫描器重新量过，§1.8 顶部
+写明它的绝对值作废并指向 §1.9，§5 的推进依据也改指 §1.9。
+
+为了不让「变化」再一次混着两种东西，§1.9 的「两天前」一列不是抄 §1.8，而是把当前扫描器放回
+`fa9c1358` 那棵树重跑出来的。两笔变化因此分得开：
+
+- 420 → 429（+9）纯属口径。写着 `not(test)` 的属性被当成测试门控，修好之后 10 处 unsafe 第一次
+  被算进生产，另有 1 处反向退出；代码一行没动。
+- 429 → 428（−1）是代码真减。`45628088` 把持久 shell 的状态读端改成 `AsyncFd` 驱动，
+  `shell_state.rs` 里 `spawn_blocking` 中那处 `unsafe { File::from_raw_fd(fd.as_raw_fd()) }`
+  随之删掉，也没有新的 unsafe 顶上来。`--list xai-grok-tools` 对得上：`shell_state.rs` 由 4 处
+  变 3 处，`cgroup.rs`、`static_shell.rs`、`terminal.rs`、`persistence.rs` 一处没动。
+
+逐 crate 比出来最有信息量的一条是：生产 unsafe 的 top 10 里只有 `xai-grok-tools` 这一行动过，
+其余九个 crate 一个不多一个不少；生产 `.unwrap()`（300）、`.expect()`（594）、`panic!`（130）
+三列与 §2.6「两处都修」那一行完全一致。会涨的只有「任意构建」的 `.unwrap()` 总数
+（31,888 → 32,034），而生产那一列纹丝不动，也就是净增的 146 处全在 `cfg(test)` 之内。旧扫描器
+放回 `fa9c1358` 重跑，仍逐字打印 `654 unsafe sites in all, 420 in production`，§1.8 那组数字的
+来历就此钉死；同一棵树上换当前扫描器是 429，这就是 §1.8 与 §1.9 之间那 9 个的全部来源。
+
+（2026-10-04；`docs/audit-followup-report.md` §1.8/§1.9、`scripts/ci/panic-site-census.py`、
+`crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs`、`TODO.md`）
+
 ### 修复：`timeout` 到点放弃的是等待，不是那个 `git`，两处调用点把孩子留在了进程表里
 
 `tokio::process::Command::output()` 自己就在函数体里 `self.spawn()`
