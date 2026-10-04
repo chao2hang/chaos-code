@@ -4,6 +4,7 @@
 // For each supported (platform, arch) target this:
 //   1. Brotli-compresses the built binary into `../chaos-<platform>/bin/<bin>.br`
 //   2. Stamps the sub-package's version to match the meta package
+//   3. Writes the assembled third-party notices into every package directory
 //
 // Each per-platform package is its own npm publish target. The meta package
 // (`chaos-code`) lists all six as `optionalDependencies` pinned to
@@ -24,15 +25,29 @@ const zlib = require('zlib');
 
 const brotliCompress = promisify(zlib.brotliCompress);
 
-// npm/chaos/scripts -> repo root is five levels up
+// npm/chaos/scripts -> repo root is six levels up. CI sets CHAOS_ROOT explicitly; the
+// fallback has to stand on its own, because the notices document below is read from here.
 const repoRoot = process.env.CHAOS_ROOT
     || process.env.XAI_ROOT
-    || path.resolve(__dirname, '..', '..', '..', '..', '..');
+    || path.resolve(__dirname, '..', '..', '..', '..', '..', '..');
 const npmRoot = path.resolve(__dirname, '..', '..');
 
-const NOTICES_SOURCE = path.resolve(
-    npmRoot, '..', '..', 'xai-grok-tools', 'THIRD_PARTY_NOTICES.md');
 const NOTICES_NAME = 'THIRD_PARTY_NOTICES.md';
+// Two different notices travel with the binary, and the tarball has to carry both.
+//
+// The dependency notices live at the repository root and are what `cargo`-level
+// attribution is owed for: one entry per third-party package linked into the binary,
+// plus every license text those entries point at. They are maintained by
+// `scripts/gen-third-party-notices.py` and audited by `scripts/ci/check-notices-*.py`.
+//
+// The ported-code notices belong to `xai-grok-tools`, whose tool implementations were
+// translated out of other projects and modified. Clause 4(b) of Apache License 2.0
+// requires a prominent notice of those modifications, so that file is not optional
+// either, and it is not a substitute for the dependency notices: it describes where
+// this crate's ported code came from, not what the binary links against.
+const DEPENDENCY_NOTICES = path.resolve(repoRoot, 'THIRD-PARTY-NOTICES');
+const PORTED_NOTICES = path.resolve(
+    npmRoot, '..', '..', 'xai-grok-tools', 'THIRD_PARTY_NOTICES.md');
 
 const META_PKG_JSON = path.resolve(__dirname, '..', 'package.json');
 const meta = JSON.parse(fs.readFileSync(META_PKG_JSON, 'utf8'));
@@ -40,6 +55,106 @@ const VERSION = meta.version;
 const META_NAME = meta.name; // chaos-code
 
 function ensureDir(p) { fs.mkdirSync(path.dirname(p), { recursive: true }); }
+
+/**
+ * The notices document that travels inside every tarball.
+ *
+ * Both inputs are reproduced verbatim, because a notice that was paraphrased on the way to
+ * the user is not the notice the author asked for. What this function adds is the header that
+ * tells a reader which of the two they are looking at and where each came from.
+ *
+ * Refusing here is deliberate: an assembled package with no notices still installs, still
+ * runs, and still ships code that its licenses say must travel with its attribution. That is
+ * the one failure mode of a release nobody notices, which is why the inputs are checked
+ * before a single byte of tarball exists.
+ */
+function buildNoticesBundle(dependencyText, portedText) {
+    const nonEmpty = (label, text) => {
+        if (!text || !text.trim()) {
+            throw new Error(`[assemble] third-party notices input ${label} is empty`);
+        }
+        return text.trimEnd();
+    };
+    const dependencies = nonEmpty(DEPENDENCY_NOTICES, dependencyText);
+    const ported = nonEmpty(PORTED_NOTICES, portedText);
+    if (!/^PART I . PER-PACKAGE ENTRIES$/m.test(dependencies)) {
+        throw new Error(
+            `[assemble] ${DEPENDENCY_NOTICES} has no "PART I — PER-PACKAGE ENTRIES" heading, ` +
+            'so it is not the dependency notices document this bundle is built from');
+    }
+    const header = [
+        `# Third-party notices for ${META_NAME} ${VERSION}`,
+        '',
+        'The `chaos` binary you installed is a compiled work that includes code from the',
+        'third-party packages recorded below. Part I gives the license and the copyright',
+        'notice recorded for each of those packages; Part II reproduces the license texts',
+        'themselves. The section at the end covers source code that was ported into this',
+        'product from other projects and then modified.',
+        '',
+        'This file is assembled when the package is built, from two files in the source',
+        'repository, and it is not edited inside the tarball:',
+        '',
+        '- `THIRD-PARTY-NOTICES`: the dependency notices, reproduced in full below.',
+        '- `crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`: the notices for ported',
+        '  source code and for the bundled tool binaries, reproduced in full at the end.',
+        '',
+        'Source repository: https://github.com/chao2hang/chaos-code',
+        '',
+        '---',
+        '',
+    ].join('\n');
+    const footer = [
+        '',
+        '---',
+        '',
+        '## Ported source code and bundled tool binaries',
+        '',
+        'Reproduced verbatim from',
+        '`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md` in the source repository.',
+        '',
+        ported,
+        '',
+    ].join('\n');
+    return header + dependencies + footer;
+}
+
+/**
+ * Write the bundle wherever it has to exist.
+ *
+ * Three places, for three different readers: the meta package directory and the six platform
+ * package directories, because each is its own npm publish target and `package.json` `files`
+ * only pulls the document in when it sits next to that manifest; and one copy at `npm/`,
+ * which is the stable path the release workflow uploads as an artifact and attaches to the
+ * GitHub Release for people who install the binary without npm.
+ *
+ * All six platform directories are written even when only some have a binary, so a partial
+ * assembly cannot leave a directory that is publishable but silent about its dependencies.
+ */
+function writeNoticesBundles(targets) {
+    const bundle = buildNoticesBundle(
+        fs.readFileSync(DEPENDENCY_NOTICES, 'utf8'),
+        fs.readFileSync(PORTED_NOTICES, 'utf8'),
+    );
+    const destinations = [
+        path.join(npmRoot, NOTICES_NAME),
+        path.join(npmRoot, 'chaos', NOTICES_NAME),
+    ];
+    for (const target of targets) {
+        destinations.push(
+            path.join(npmRoot, `chaos-${target.platform}-${target.arch}`, NOTICES_NAME),
+        );
+    }
+    for (const destination of destinations) {
+        ensureDir(destination);
+        fs.writeFileSync(destination, bundle);
+    }
+    console.log(
+        `[assemble] ${NOTICES_NAME}: ${(bundle.length / 1024).toFixed(0)} KB written to ` +
+        `${destinations.length} file(s) from ${path.relative(repoRoot, DEPENDENCY_NOTICES)} ` +
+        `+ ${path.relative(repoRoot, PORTED_NOTICES)}`,
+    );
+    return bundle;
+}
 
 async function packPlatform({ platform, arch, envVar, defaultSource, binName }) {
     const pkgDir = path.join(npmRoot, `chaos-${platform}-${arch}`);
@@ -61,12 +176,6 @@ async function packPlatform({ platform, arch, envVar, defaultSource, binName }) 
     const subPkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
     subPkg.version = VERSION;
     fs.writeFileSync(pkgJsonPath, JSON.stringify(subPkg, null, 4) + '\n');
-
-    if (!fs.existsSync(NOTICES_SOURCE)) {
-        console.error(`[assemble] Missing third-party notices file: ${NOTICES_SOURCE}`);
-        return false;
-    }
-    fs.copyFileSync(NOTICES_SOURCE, path.join(pkgDir, NOTICES_NAME));
 
     // Brotli-compress into the sub-package's bin/.
     const outBr = path.join(pkgDir, 'bin', `${binName}.br`);
@@ -163,6 +272,11 @@ async function main() {
         process.exit(1);
     }
 
+    // Written for every target, not only the selected ones: `publish-npm.sh` publishes
+    // whatever platform directory holds a binary, so a directory assembled in an earlier
+    // run must not be publishable while silent about its dependencies.
+    writeNoticesBundles(targets);
+
     const results = await Promise.all(selected.map(packPlatform));
     const failed = results.filter((r) => !r).length;
     if (failed > 0) {
@@ -180,4 +294,10 @@ async function main() {
     );
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Exported so `scripts/ci/test-assemble-notices.sh` can drive the bundle builder directly;
+// requiring this module must never assemble anything or touch the working tree.
+module.exports = { buildNoticesBundle, writeNoticesBundles, NOTICES_NAME };
+
+if (require.main === module) {
+    main().catch((err) => { console.error(err); process.exit(1); });
+}

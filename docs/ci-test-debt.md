@@ -1419,6 +1419,53 @@ fail-closed 的名单里有一处是写夹具时挖出来的真洞： flag 扫�
 打在真正做决定的那个函数上；而一条从不被断言其形状的面向人的消息，等于没有消息，改动它的那一轮必须同时
 留下一条钉住它的测试。**
 
+## 2026-10-05：夹具的形状是人写的，所以它对外部工具一个字也不能证明
+
+`THIRD-PARTY-NOTICES` 那一套（`scripts/notices_lib.py`、`check-notices-document.py`、
+`check-notices-coverage.py`、`gen-third-party-notices.py`）在写下任何判定之前先去量了一次真实的
+`cargo metadata --format-version 1 --all-features`，第一件事是推翻自己：过滤测试专用依赖那行读的是
+依赖边上的布尔 `dev` 键，而 cargo 根本不产这个键。边的种类只在
+`resolve.nodes[].deps[].dep_kinds[].kind` 里（本仓库实测 `null` 5448、`dev` 225、`build` 82），
+`packages[].dependencies[]` 那 9984 条声明里带 `dep_kinds` 的是 0 条。那个过滤器从来没开火，读出的
+是整张解析图 1210 个包，比真值多 71 个只经测试依赖到达的 crate；HEAD 那份文档里
+`finl_unicode 1.4.0` 与 `wezterm-bidi 0.2.3` 两条条目走的正是这种边，它们各指一次 Part II 的
+Unicode-DFS-2016，于是文件里替两个不进二进制的包背着 3042 字节、28 行的 Unicode 许可全文。
+
+值得单独记的不是这个 bug，而是它为什么能在测试全绿的情况下活着：那批夹具是按「我以为 cargo 输出长
+这样」写的，形状像真的，但它检验的是我对夹具的读法，不是我对 cargo 的假设——再多这类夹具也不会让
+它红。唯一让它红的是把真工具的产物落到磁盘再数一遍。所以现在的夹具是从真实 metadata 的**形状**（含
+`dep_kinds`、含同名两版本、含 build 边）构造的，而证据日志把量的那条命令原样贴出来，让下一个人重跑
+而不是相信我的数字。同一轮里 `notices_lib.py` 关于 copyleft 的那段注释也这样倒下：它写着
+`colored_json`（EPL-2.0）与 `terminfo`（WTFPL）「已经在发布的二进制里」，而按修正后的集合量的结果是
+这两个都只经测试边到达；注释里的事实性断言同样要量，量不过就改注释，不是留着让下一个人误以为担了义
+务。
+
+`splitlines()` 造成两处同源缺陷：生成器自报行数 18747 而 `wc -l` 是 18738，换页符落在版权行中间时条
+目只记下 `Copyright 2021 The`。根因是同一个——GNU GPL 全文按打印排版，每页结尾一个 `\f`（这份文件里
+有 9 个），而 `str.splitlines()` 把它也当换行。这两处改之前都不可能红：仓库里没有一份夹具的许可证全文
+带换页符（那些文本都是我手写的干净文本），文件里那 9 个 `\f` 对测试集是不可见的。现在各有一条夹具把
+`\f` 放进去，其中第一条是拿 `wc -l` 的口径（数 `\n`）去断言工具自报的数，而不是拿同一个函数两边对拍。
+
+prose 里的数字与路径是另一类无人看守的债。两处 docstring 点名的
+`scripts/ci/check-third-party-notices.py` 是一个本仓库从未存在过的文件，而
+`check-doc-path-refs.py` 只读 Markdown、不读 Python，所以没有任何东西会因为它红；把那条 guard 扩到
+Python 字面量这轮没做——扫一遍得到 141 处指向未跟踪路径的提及，绝大多数是 `test-*.py` 里**故意**不
+存在的夹具路径，先给它加一条「什么算真路径」的类别规则才谈得上扩边界。同批 docstring 与 `ci.yml` 步
+骤注释里的 168/39/164 是拿那个被证伪的 1210 集合量的，现按修正后的集合改写为 135/28/191，而这三个
+数出自把 guard 打在 HEAD 那份文档上的真实 FAIL 输出。
+
+容器侧的降级是门禁自己说出口的，不是猜的：coverage guard 需要完整 workspace 的 metadata，登记在
+`scripts/ci/docker-entry-ci-only.tsv` 并附原因；文档 guard、 70 例夹具、生成器测试在容器里跑；
+`test-assemble-notices.sh` 在没有 npm 的容器里打印「npm not installed here; manifest allowlist
+above is the only proof」。八发变异 0 存活（`dev` 键读法、 triage 认名字不认版本、关掉小节剪枝、剪枝
+忽略正文提名、报错报错原因、末节区间吃掉收尾 banner、行数按 `splitlines()` 计、版权行按
+`splitlines()` 切），每发之后源文件逐字节还原并 `cmp` 验证。
+
+**判据：凡夹具的形状是人写出来的，它就只能证明写夹具的人当时怎么想；判定依赖某个外部工具的输出形状
+时，那形状必须先由真工具的一次产物量出来，量的命令进证据日志，否则「测试全绿」与「读对了工具」是两
+件事。同一口径也要统一：工具自报的数与 reviewer 能从磁盘得到的数（`wc -l`）不一致时以 reviewer 一侧
+为准，并留一条钉住它的夹具；注释与 docstring 里凡是能被证伪的句子，都按代码计价，不按散文计价。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

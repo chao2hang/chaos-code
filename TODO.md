@@ -517,7 +517,7 @@ stub 要说的话写在 `-c` 的正文里，而拒绝理由会把候选的整条
 - [x] Repository Playwright flows drive actual Engine/WebSocket/Vite desktop and narrow projects: workspace create/submit/switch/reload/archive, layout/theme, health/handshake, empty/cancel, demo approval reject/allow-to-adapter-failure and question answer, GFM/inline+block formatting, injected HTML inertness, denied relative/javascript hrefs, inert image text with no remote request, and hardened external hrefs. Linux browser CI passed runs `36094218127` and `36133400667`。（2026-09-25）
 - [~] Tauri/WebView browser automation, true tool adapter progress/results/approved mutation/Diff forms, and provider/keyring paths need app adapters, design/credentials and OS runner; current Web automation doesn't imply those modes.
 - [~] GUI CI 已使用 npm cache 与 `package-lock.json`；Rust cache 由现有 CI 提供，pnpm/sccache 尚未引入，避免没有测量就叠加缓存系统。（2026-09-24）
-- [~] 现有 `THIRD-PARTY-NOTICES`、lockfile 和 secret scan 提供基础审查；SBOM、漏洞扫描和自动 license gate 尚待接入工具/CI runner。
+- [~] 自动 license gate 已接入 CI：`scripts/gen-third-party-notices.py` 按 cargo 的非 dev 依赖边算出 1139 个真正随二进制发布的第三方包，`scripts/ci/check-notices-coverage.py` 核对覆盖率/版本漂移/不再发布的条目，`scripts/ci/check-notices-document.py` 核对 License 与上游声明式一致、Part II 指针可达、没有谁都点不到的小节；SBOM 与漏洞扫描仍无产物，仍待接入工具与 CI runner。（2026-10-05；`scripts/gen-third-party-notices.py`、`scripts/notices_lib.py`、`scripts/ci/check-notices-coverage.py`、`scripts/ci/check-notices-document.py`、`.github/workflows/ci.yml`、`docs/verification/third-party-notices-2026-10-05.log`）
 - [~] ignored inventory 已修复并纳入 Q4 CSV；稳定版相关 ignored test 的逐项 owner/豁免审查仍未完成，不能作为 release 通过依据。
 
 ### M5.2 桌面打包与签名
@@ -583,7 +583,7 @@ pwsh、缺 cryptography、内核不肯建网络命名空间都是 exit 2）。
 ### M5.6 发布资料
 
 - [ ] 稳定版发版时再更新 README、用户指南、架构文档、配置参考、故障排查和安全说明；当前 GUI seams/限制和 WSL build guidance 已记录于对应架构、CONTRIBUTING 与 audit docs，不能在产品/平台能力未定前写成功能交付。
-- [ ] 在 release owner 批准的实际产品版本/支持矩阵确定后生成匹配的 CHANGELOG、THIRD-PARTY-NOTICES、SBOM 和 artifact checksums；本轮未发新 version 或 platform artifact，不能为测试 commits 伪造 shipping inventory。
+- [ ] 在 release owner 批准的实际产品版本/支持矩阵确定后生成匹配的 CHANGELOG、THIRD-PARTY-NOTICES、SBOM 和 artifact checksums；本轮未发新 version 或 platform artifact，不能为测试 commits 伪造 shipping inventory。第三方 notices 那一格已经不再等人：`python3 scripts/gen-third-party-notices.py --write` 对着当前依赖图重写它且两次幂等，`scripts/ci/check-notices-coverage.py` 与 `scripts/ci/check-notices-document.py` 在 CI 与容器里各判一次；SBOM 与 artifact checksums 仍要先有真实 shipping inventory。（2026-10-05；`scripts/gen-third-party-notices.py`、`scripts/ci/check-notices-coverage.py`、`scripts/ci/check-notices-document.py`、`THIRD-PARTY-NOTICES`、`docs/verification/third-party-notices-2026-10-05.log`）
 - [ ] 发布说明列出支持平台、已知限制、数据迁移、回滚方式和 Deferred 项。
 - [ ] 发布前召开 go/no-go：P0/P1 为零，所有豁免有 owner 与截止日期。
 

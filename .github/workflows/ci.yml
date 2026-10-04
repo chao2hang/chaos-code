@@ -102,6 +102,18 @@ jobs:
       - name: cargo check (all targets)
         run: cargo check --workspace --all-targets --locked
 
+      # THIRD-PARTY-NOTICES is a legal artifact and it had drifted: 135 shipped packages had no
+      # entry, 28 entries named a version no longer in the build, 191 described packages nothing
+      # ships. None of that is visible in a diff, because the stale entry reads perfectly well and
+      # the missing one is absent. Only comparing against what the build resolves can catch it, and
+      # `cargo metadata --frozen` needs the registry, which is why this sits here -- after
+      # `cargo check`, when the cache is warm -- rather than with the text-only gates below.
+      # `scripts/ci/docker-entry-ci-only.tsv` records why the container does not run it.
+      - name: third-party notices coverage
+        run: |
+          python3 scripts/ci/test-check-notices-coverage.py
+          python3 scripts/ci/check-notices-coverage.py
+
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -672,6 +684,14 @@ jobs:
       - name: publish-npm.sh guards
         run: bash scripts/ci/test-publish-npm.sh
 
+      # Every published package has to carry the third-party notices. `files` in seven manifests
+      # says it, the assembler writes eight copies of the bundle, and publish refuses a directory
+      # without one -- three places making one promise, which is exactly the shape that rots. These
+      # fixtures drive the real assembler and a real `npm pack --dry-run`, so a bundle that stops
+      # being written fails here instead of in the tarball someone installs.
+      - name: notices bundle assembly guards
+        run: bash scripts/ci/test-assemble-notices.sh
+
   workflows-present:
     name: workflows present
     runs-on: ubuntu-latest
@@ -871,3 +891,14 @@ jobs:
           # a name no spec satisfies any more, and a config no runner names.
           python3 scripts/ci/test-check-e2e-registration.py
           python3 scripts/ci/check-e2e-registration.py
+          # THIRD-PARTY-NOTICES is 19 000 lines of legal text with no reader in the repository: a
+          # pointer at a Part II section that is not in the file sends a reader looking for a license
+          # text that is not in the distribution they are holding, and nothing but this check notices.
+          # It is text-only, so it runs here and in the container; its companion, which compares the
+          # entries against `cargo metadata`, is the `rust` job step above. These fixtures also pin
+          # the generator's promises -- a surviving entry comes back byte for byte, a license text is
+          # taken verbatim from the package that ships it, and a run that cannot decide a license
+          # writes nothing at all.
+          python3 scripts/ci/test-check-notices-document.py
+          python3 scripts/ci/check-notices-document.py
+          python3 scripts/ci/test-gen-third-party-notices.py

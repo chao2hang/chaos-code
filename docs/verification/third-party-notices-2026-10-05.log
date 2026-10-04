@@ -1,0 +1,455 @@
+# THIRD-PARTY-NOTICES measured against the build it is supposed to cover (2026-10-05)
+
+`THIRD-PARTY-NOTICES` is the copy of every third-party license text and copyright notice that
+a user of the `chaos` binary is owed. It is a committed file of about 19 000 lines, and until
+this batch nothing in the repository could answer the only question that matters about it:
+does it still cover the dependencies this binary is built from? This log records that reading,
+the regeneration it forced, the two guards, one generator and 70 fixtures that now hold the
+result, and the packaging changes that make the notices reach the person who installs the
+binary.
+
+Headline figures: the committed document covered 976 of the 1139 packages the release build
+resolves, and is now exact on all 1139; 71 entries for test-only crates and 3 unreferenced
+license texts came back out; 8 source mutations were planted and 8 were caught; the gates run
+in the container and in CI, with the one exception recorded in
+`scripts/ci/docker-entry-ci-only.tsv`.
+
+== 0. What the committed document actually said, against what the build ships
+
+The reading is `cargo metadata --frozen --format-version 1` rooted at the one crate that
+produces a shipped binary, `xai-grok-pager-bin`, following every edge that is not a test-only
+edge. Measured against that set, the document as committed on this branch was in three pieces:
+
+    $ python3 scripts/ci/check-notices-coverage.py
+    check-notices-coverage: OK (1139 shipped package(s), every one of them covered by a current entry, and no entry left behind)
+
+That is the line after this batch. Run the same guard against the document as it was committed
+before the batch -- `--root` pointed at a copy of it, `--metadata` at the saved cargo output,
+which is what those two flags exist for -- it refuses it with three findings rather than one,
+because the three have three different fixes. Exit code 1:
+
+    check-notices-coverage: FAIL (3 problem(s))
+      135 shipped package(s) with no entry; run scripts/gen-third-party-notices.py --write. First: alsa 0.9.1, alsa-sys 0.3.1, android_system_properties 0.1.5 (and 132 more)
+      28 entry(ies) naming a version that is not what ships, so the notice on the page describes different source than the code in front of the reader. First: anyhow: entry says 1.0.100, the build resolves 1.0.104, base64: entry says 0.21.7, the build resolves 0.23.1, bytemuck: entry says 1.24.0, the build resolves 1.25.2 (and 25 more)
+      191 entry(ies) for a package version the build does not reach. First: aead 0.5.2, aes 0.8.4, aes-gcm 0.10.3 (and 188 more)
+
+Nothing about the third finding produces a symptom. A stale entry is a well-formed paragraph
+about a crate the linker never sees, and a missing obligation is an absence, so the diff of a
+dependency bump shows the Cargo.lock change and no signal at all about the legal artifact.
+That asymmetry is the entire reason for the guard.
+
+The three document shapes across the batch, counted the same way each time:
+
+    HEAD as committed            entries=1167  texts=12  lines=18898  bytes=762520
+    after the coverage pass      entries=1210  texts=15  lines=19985  bytes=813096
+    as shipped by this batch     entries=1139  texts=12  lines=18738  bytes=762675
+
+== 1. The measurement that had to come first: which edges ship
+
+The first version of the reader filtered test-only edges by looking for a boolean `dev` key on
+each dependency edge. Cargo does not emit one. The kind of an edge lives in exactly one place,
+and it is not the place the field name suggests:
+
+    $ python3 - <<'PY'
+    import collections, json
+    meta = json.load(open("metadata.json"))
+    kinds = collections.Counter()
+    for node in meta["resolve"]["nodes"]:
+        for edge in node.get("deps", []):
+            for kind in edge.get("dep_kinds", []):
+                kinds[str(kind.get("kind"))] += 1
+    print(dict(kinds))
+    print(sum(1 for p in meta["packages"] for d in p["dependencies"] if "dep_kinds" in d),
+          "of", sum(len(p["dependencies"]) for p in meta["packages"]))
+    PY
+    {'None': 5448, 'build': 82, 'dev': 225}
+    0 of 9984
+
+5448 normal edges, 225 dev edges, 82 build-script edges, all of them in
+`resolve.nodes[].deps[].dep_kinds[].kind`. `packages[].dependencies[]`, which is where a
+reader reaching for a `dev` flag looks first, carries no `dep_kinds` at all in 0 of its 9984
+entries, and no edge anywhere carries a boolean `dev`. So the filter never fired, and the
+reader's answer was the whole resolve graph: 1210 packages instead of 1139. Seventy-one of
+them are things the binary never contains, reachable only through `[dev-dependencies]` or
+through something that is:
+
+    alacritty_terminal 0.26.0  anes 0.1.6            ansi-width 0.1.0
+    assert-json-diff 2.0.2     assert_matches 1.5.0  axum-server 0.8.0
+    cast 0.3.0                 ciborium 0.2.1        ciborium-io 0.2.2
+    ciborium-ll 0.2.2          colored 3.0.0         colored_json 5.0.0
+    console 0.15.11            criterion 0.6.0       criterion-plot 0.5.0
+    insta 1.43.2               mockito 1.7.0         plotters 0.3.7
+    pretty_assertions 1.4.1    serial_test 3.2.0     syn 1.0.109
+    termwiz 0.23.3             tinytemplate 1.2.1    wiremock 0.6.5
+    (… 39 pairs elided here …)
+
+Naming a benchmark harness and a mock HTTP server in a document that says "we distribute this
+under these terms" is not a harmless over-inclusion: it asserts an obligation we do not have,
+over three license texts nobody ships (== 2), and it makes the count unusable as a number
+anyone could repeat.
+
+Cargo itself was used to cross-check the corrected set. The comparison is worth reading in
+both directions, and only one of them matters:
+
+    $ cargo tree --frozen --offline -e normal -p xai-grok-pager-bin
+    rc=0, 4262 lines of tree
+    third-party names on normal edges that the shipped set lacks: 0
+    shipped names absent from that host-target tree: 177
+      of those, reached only through a build script: 12
+
+Zero is the direction that would have caught an over-aggressive filter: no third-party package
+that cargo links on this host's normal edges is missing from the notices. The 177 in the other
+direction are explained rather than worrying: `-e normal` leaves build-script dependencies out
+and resolves for the host target only, while the release builds several platforms. A
+Windows-only crate is owed its notice by the Windows artifact, so the walk is target-agnostic
+on purpose, and that is written into `scripts/notices_lib.py` where a future reader will
+compare the two sets and wonder. Build-script edges are kept for the same reason: build code
+is compiled from the same sources, and keeping an edge is the conservative direction.
+
+== 2. Regenerating an 18 000-line legal artifact
+
+With the set correct, the document was rewritten once by the generator, and the rewrite is
+what the committed file is. Run again on the tree this batch ships, the generator reports that
+it has nothing left to do:
+
+    $ python3 scripts/gen-third-party-notices.py
+    shipped third-party packages: 1139; documented entries: 1139 -> 1139
+    entries to drop: 0; entries to write: 0; Part II texts to add: 0; Part II texts to drop: 0
+    no file written; pass --write to rewrite THIRD-PARTY-NOTICES
+
+The step in between -- the drop of the 71 test-only entries -- was run against a scratch copy
+of the document as it stood after the coverage pass, and reported this before writing
+anything:
+
+    shipped third-party packages: 1139; documented entries: 1210 -> 1139
+    entries to drop: 71; entries to write: 0; Part II texts to add: 0; Part II texts to drop: 3
+      - Part II EPL-2.0 (no remaining entry asks for the text)
+      - Part II Unicode-DFS-2016 (no remaining entry asks for the text)
+      - Part II WTFPL (no remaining entry asks for the text)
+      - alacritty_terminal 0.26.0
+      - anes 0.1.6
+      - ansi-width 0.1.0
+      - assert-json-diff 2.0.2
+      - assert_matches 1.5.0
+      - axum-server 0.8.0
+      - cast 0.3.0
+      - ciborium 0.2.1
+      - ciborium-io 0.2.2
+      - ciborium-ll 0.2.2
+      - … 61 more
+    no file written; pass --write to rewrite THIRD-PARTY-NOTICES
+
+Replaying that report mode plus `--write` onto the saved pre-fix copy, with `--repo` and
+`--metadata` as the only seams, ended in `wrote THIRD-PARTY-NOTICES: 18738 lines`, and `cmp`
+against the document this batch commits reports no difference. A second `--write` on the
+result takes the other branch and touches nothing:
+
+    shipped third-party packages: 1139; documented entries: 1139 -> 1139
+    entries to drop: 0; entries to write: 0; Part II texts to add: 0; Part II texts to drop: 0
+    THIRD-PARTY-NOTICES already matches what is shipped; left untouched
+
+Report mode writing nothing is what makes the first block safe to run before deciding
+anything, and the byte-identity of the second is what makes a dependency bump show up as a
+notices diff and nothing else.
+
+Three license texts left with the entries that were the only ones asking for them. That is a
+rule with a real exception, and the exception is why it was measured rather than assumed:
+`GPL-2.0-only` lost every entry pointer in an earlier pass and stayed, because prose inside
+another entry names the section by hand:
+
+    $ git grep -n 'Full upstream COPYING is in Part II' -- THIRD-PARTY-NOTICES
+    THIRD-PARTY-NOTICES:6831:           combined work. Full upstream COPYING is in Part II under GPL-2.0-only.
+
+The line is in the `libgit2-sys 0.18.2+1.9.1` entry, which explains that the binary links
+libgit2's GPL build into a combined work. A pruning rule keyed on pointers alone would have
+deleted the one license text a reader following that sentence is looking for. So reachability
+is "pointed at by an entry, or named anywhere else in the file", implemented once in
+`notices_lib.unreachable_sections` and shared by the generator that prunes and the guard that
+judges, with one fixture per side so neither can drift from the other. After the regeneration
+the guard's own reachability check is empty:
+
+    unreachable sections: []
+
+and the twelve texts that remain are the twelve sections Part II holds: Apache-2.0,
+BSD-2-Clause, BSD-3-Clause, BSL-1.0, CC0-1.0, CDLA-Permissive-2.0, GPL-2.0-only, ISC, MIT,
+MPL-2.0, Unicode-3.0, Zlib. Against the committed file that is one text in and one out:
+CC0-1.0 was added because shipped packages declare it with no section to point at, and
+Unicode-DFS-2016 left because every entry that pointed at it stopped shipping. Counted on
+newlines the texts are 1534 lines for GPL-2.0-only, 373 for MPL-2.0, 121 for CC0-1.0, 39 for
+Unicode-3.0 and 75 or fewer for the other eight. Nothing here re-typed them: the generator
+takes a Part II text only from a file inside the package that declares it and refuses when no
+package ships an unambiguous copy, and a text already in the document is never rewritten, so
+the eleven sections that predate this batch are byte-for-byte what a human committed.
+
+== 3. What the shipped document contains
+
+Counts taken out of the committed file, because the useful claim about a generated artifact is
+that someone counted it:
+
+    entries                                  1139      one per shipped (name, version)
+    entries pointing at a Part II text       1137
+    entries pointing at the upstream repo     2      borrow-or-share 0.2.2, notify 8.2.0
+    entries explaining a license choice     717      `(upstream declares: ...)` + the chosen term
+    copyright block from the package's own license file   870
+    copyright block falling back to metadata authors    243
+    entries saying no notice exists at all               26
+    entries carrying a vendored-modification note         4
+
+Those 26 and the 2 upstream pointers are the honest floor of this artifact: for a package that
+publishes no copyright line and names no authors, the entry says so in words and points at the
+repository rather than inventing a holder, and for two crates no unambiguous copy of the
+declared text could be found in what they ship, so the entry points upstream instead of
+paraphrasing a license. The generator prints that second case as `! Part II <id>: no package
+ships an unambiguous copy of the text` rather than quietly writing something plausible.
+
+The choice recorded for a package that declares alternatives is a rule, not a taste, and this
+batch re-derived it rather than trusting the note that came with it: of the 1167 committed
+entries, 692 declare an expression, spanning 25 distinct expressions, and `choose_licenses`
+reproduces the term HEAD recorded for 692 of 692 with no disagreements.
+`scripts/ci/check-notices-document.py` re-checks the same rule on the current file on every
+commit, and reports the count in its own verdict line.
+
+== 4. Two guards, 70 fixtures, and the one thing the container cannot run
+
+    $ python3 scripts/ci/check-notices-document.py
+    check-notices-document: OK (1139 entries, 12 license texts, 717 license choices explained, every Part II pointer resolves)
+
+`check-notices-document.py` judges the file against its own rules: Part I before Part II and
+the closing banner present; entries in `(name, version)` order with one entry per
+package-version; a `Source:` line giving an http(s) URL; a `Copyright notice:` block with
+something indented under it; a `License:` line naming either a single declared id or the
+chosen id plus the expression upstream actually declares, with the choice checked to be a term
+of that expression and inside the license set this project ships; exactly one `License text:`
+pointer per entry, resolving to a section that exists (or to upstream, for an id Part II does
+not hold); and no Part II section that nothing reaches. It reads text only, so it runs in the
+container and in the `workflows-present` job.
+
+`check-notices-coverage.py` asks the question that needs the build: same entries as the
+shipped dependency set, no entry for anything else, and no package covered only by an entry
+for a different version. It cannot run in the container, and that is a recorded decision with
+a reason rather than an oversight -- `scripts/ci/docker-entry-ci-only.tsv` carries one
+`<name><TAB><reason>` row per script and `check-guard-wiring.py` fails on an unrecorded
+omission. The first sentence of each of the two rows this batch added, verbatim:
+
+    check-notices-coverage.py
+      Needs `cargo metadata --frozen` over the whole workspace, which unpacks every .crate in the
+      resolution; a clean container's cargo cache is empty at the point a text gate would run, and
+      ordering this after the entry point's own `cargo check` would make a notices failure wait
+      twenty minutes for a build it is not about.
+      (… the row continues: the CI step sits in the `rust` job right after `cargo check`, where the
+      cache is warm, and its text-only companion `check-notices-document.py` is mirrored …)
+
+    test-check-notices-coverage.py
+      Fixtures for the guard above, and one of its cases runs that guard against this repository's
+      own `Cargo.lock` to pin that the reading is the one the build uses -- which is the same
+      cargo-and-registry need, so it is wired into the same `rust` job step.
+      (… the row continues: the synthetic cases would run anywhere, and splitting them out would put
+      one guard in two places, which is how budgets and verdicts drift apart …)
+
+The fixture suites are where the promises are actually pinned:
+
+    $ python3 scripts/ci/test-gen-third-party-notices.py 2>&1 | tail -3
+    Ran 15 tests in 0.488s
+    OK
+
+    $ python3 scripts/ci/test-check-notices-document.py 2>&1 | tail -3
+    Ran 36 tests in 1.169s
+    OK
+
+    $ python3 scripts/ci/test-check-notices-coverage.py 2>&1 | tail -3
+    Ran 19 tests in 1.656s
+    OK
+
+The 15 generator fixtures are the ones that matter most, because that script holds the only
+write handle on a document whose hand-written content must survive it. They drive the real
+command line against a scratch repository shape through the `--metadata` seam, so no case
+needs a toolchain or a registry, and they assert: a surviving entry comes back byte for byte
+including a `VENDORED WITH LOCAL MODIFICATIONS:` block; a handed-in text lands verbatim while
+a text that cannot be sourced is refused with a reason; a vendored package supplies its own
+license text and its own copyright line; a dropped entry takes with it the one text nobody
+else asks for, but not a text kept alive by prose; report mode writes nothing; a second
+`--write` is byte-identical; and four refusal paths leave the file untouched, including
+metadata that is not JSON and a license the project's rules cannot judge.
+
+== 5. Defects found by measuring rather than by testing
+
+Three things surfaced while writing the evidence for a batch that was otherwise finished. Each
+is small; all three were wrong in the direction of a plausible number nobody would have
+questioned.
+
+The generator reported its own output as `len(text.splitlines())` lines, which on this
+document printed 18747 for a file that `wc -l` counts as 18738. The difference is nine form
+feeds: the GNU GPL texts are laid out for a printer and end a page with `\f`, and
+`str.splitlines()` treats one as a line break. A count printed by a tool and repeated by a
+reviewer against `wc -l` has to be the same number, so the generator now counts newlines
+(`line_count`), pinned by a fixture that hands in a license text containing a form feed and
+compares the printed figure with the file's own.
+
+The same function family was used one level down, where it mattered more: `copyright_lines`
+read a package's license file with `splitlines()`, so a page break landing inside an
+attribution line would have recorded `Copyright 2021 The` in the entry and dropped the rest of
+the sentence. The fixture writes a LICENSE file with exactly that shape and requires the whole
+line back.
+
+Two docstrings named `scripts/ci/check-third-party-notices.py`, a script that has never
+existed in this repository; the guards are `check-notices-document.py` and
+`check-notices-coverage.py`. Nothing caught it, and the reason is worth recording:
+`check-doc-path-refs.py` judges path mentions in Markdown against the tracked tree, and reads
+no Python. A scan of Python string literals finds 141 mentions of paths that are not tracked,
+of which the overwhelming majority are fixture paths that are supposed to not exist --
+deliberately missing files inside `test-*.py`. Extending that guard to docstrings would need a
+category rule for fixtures before it said anything useful, so this batch fixes the two prose
+errors and leaves the guard's scope where it is, with the measurement here.
+
+Also corrected: the drift figures quoted in the generator's docstring and in the `ci.yml` step
+comment (168/39/164) had been measured against the 1210-package reading, the one this batch
+proved wrong. They now read 135/28/191, which is what the guard reports against the corrected
+set.
+
+A fourth was inside a comment, which is the kind no test can reach. The license allowlist
+in `scripts/notices_lib.py` justified accepting EPL-2.0, MPL-2.0 and WTFPL by saying those
+crates "are already inside the released binary". Measured against the corrected shipped set,
+two of the three are not: `colored_json 5.0.0` (EPL-2.0) and `terminfo 0.9.0` (WTFPL) are
+among the 71 packages reachable only through test edges, and the entries that actually kept a
+Unicode license text in the committed document were these:
+
+    $ python3 - <<'PY'
+    import importlib.util, subprocess
+    spec = importlib.util.spec_from_file_location("nl", "scripts/notices_lib.py")
+    nl = importlib.util.module_from_spec(spec); spec.loader.exec_module(nl)
+    head = subprocess.run(["git", "show", "HEAD:THIRD-PARTY-NOTICES"],
+                          capture_output=True, text=True, check=True).stdout
+    doc = nl.Document(head)
+    for entry in doc.entries:
+        if "Unicode-DFS-2016" in entry.body:
+            print(f"{entry.name} {entry.version} -> Part II {entry.references()}")
+    start, end = doc.section_spans["Unicode-DFS-2016"]
+    body = head[start:end]
+    print(f"Unicode-DFS-2016 section: {len(body.encode())} bytes, {body.count(chr(10))} lines")
+    PY
+    finl_unicode 1.4.0 -> Part II ['Unicode-DFS-2016', 'Apache-2.0', 'MIT']
+    wezterm-bidi 0.2.3 -> Part II ['MIT', 'Unicode-DFS-2016']
+    Unicode-DFS-2016 section: 3042 bytes, 28 lines
+
+`finl_unicode` and `wezterm-bidi` are not shipped either, so the committed document carried
+3042 bytes of Unicode terms for two packages that never reach the binary, under a comment
+asserting the opposite about two other packages. The comment now names what is actually
+shipped (`smartstring` as `MPL-2.0+`, and `cssparser`/`nucleo`/`selectors` as `MPL-2.0`),
+states that EPL-2.0 and WTFPL arrive through test edges only, and keeps both allowed because
+the decision recorded there is what this project is willing to ship under, not what today's
+graph happens to contain. The point generalises: a factual claim in a comment costs nothing to
+check and nothing checks it automatically, so it rots in the one place a reader trusts to
+explain a decision.
+
+== 6. Non-vacuity: eight planted defects, eight caught
+
+Every mutation below is a one-line break of a shipped source file, applied to the working
+tree, run against the fixture suite that should notice, then restored and compared byte for
+byte. The full driver output:
+
+    == m1-dev-key-read-wrong: rc=1 restored=True ['FAILED (failures=2)'] failing=['test_a_dev_only_dependency_is_not_shipped', 'test_the_shipped_set_is_the_one_the_build_resolves']
+    == m2-triage-matches-any-same-name-entry: rc=1 restored=True ['FAILED (failures=1)'] failing=['test_two_versions_in_one_binary_are_two_obligations']
+    == m3-prune-disabled: rc=1 restored=True ['FAILED (failures=1)'] failing=['test_a_text_only_the_dropped_entry_asked_for_goes_with_it']
+    == m4-prune-ignores-prose: rc=1 restored=True ['FAILED (failures=1)'] failing=['test_a_text_named_in_prose_survives_without_a_pointer']
+    == m5-wrong-cause-reported: rc=1 restored=True ['FAILED (failures=1)'] failing=['test_a_document_that_does_not_parse_blames_the_document']
+    == m6-last-section-span-eats-the-banner: rc=1 restored=True ['FAILED (failures=5)'] failing=['test_a_text_named_in_prose_survives_without_a_pointer', 'test_a_copyright_line_split_by_a_form_feed_stays_one_line', 'test_a_handed_in_license_text_is_used_verbatim', 'test_a_vendored_package_supplies_its_own_text_and_copyright', 'test_the_line_count_it_prints_is_the_one_wc_l_reports']
+    == m7-line-count-by-splitlines: rc=1 restored=True ['FAILED (failures=1)'] failing=['test_the_line_count_it_prints_is_the_one_wc_l_reports']
+    == m8-copyright-split-on-form-feed: rc=1 restored=True ['FAILED (failures=1)'] failing=['test_a_copyright_line_split_by_a_form_feed_stays_one_line']
+
+Two of those rows describe each other and are worth the extra sentence. m2 makes the coverage
+guard treat any entry of the same package name as coverage, which is exactly the mistake a
+two-versions-in one-binary layout invites;
+`test_two_versions_in_one_binary_are_two_obligations` is the fixture that distinguishes "this
+version is covered" from "something named like this is covered". m6 breaks the span of the
+last Part II section so that deleting a text also deletes the closing banner; it dies in five
+fixtures at once, which is what a shared reader is supposed to do -- and it is the reason the
+generator's pruning and the document guard cannot keep their own copies of the format.
+
+== 7. The notices have to reach the person who installs the binary
+
+A correct file in the repository is half of the obligation. The seven npm platform packages
+and the GitHub Release each need a copy, so the assembler now builds a bundle from
+`THIRD-PARTY-NOTICES` plus `crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md` and writes
+it into every package directory, the seven manifests list it in `files`, and `publish-npm.sh`
+refuses to publish a directory without one:
+
+    $ bash scripts/ci/test-assemble-notices.sh
+    [assemble] THIRD_PARTY_NOTICES.md: 1 KB written to 8 file(s) from THIRD-PARTY-NOTICES + crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md
+    assemble-notices: the shipped builder wrote the bundle to all 8 destinations
+    assemble-notices: 4 malformed inputs refused
+    assemble-notices: the assembler CLI wrote the bundle into every package directory
+    assemble-notices: real bundle is 751 KB
+    assemble-notices: all 7 manifests include THIRD_PARTY_NOTICES.md
+    assemble-notices: npm pack would ship THIRD_PARTY_NOTICES.md, bin/chaos.br, package.json
+    assemble-notices guards: OK (bundle shape, refusals, real inputs, manifest allowlist)
+
+The generated bundle is a build artifact and is ignored by git
+(`crates/codegen/xai-grok-pager/npm/ .gitignore`), so the tree the release job checksums stays
+as it was; the eighth copy is the top-level package directory the assembler fills before
+packing. The last two lines of that output are the two that would otherwise be asserted by
+nothing: `all 7 manifests include THIRD_PARTY_NOTICES.md` is read out of the manifests
+themselves, and the `npm pack` line runs a real `npm pack --dry-run` against an assembled fake
+platform set and reads the file list npm would actually ship, which is the only thing
+separating "listed in files" from "in the tarball".
+
+== 8. Where these run
+
+Three places, and the split is deliberate. The `rust` job of `.github/workflows/ci.yml` runs
+the coverage guard after `cargo check`, where the registry cache is warm:
+
+    - name: third-party notices coverage
+      run: |
+        python3 scripts/ci/test-check-notices-coverage.py
+        python3 scripts/ci/check-notices-coverage.py
+
+The text-only document guard and the generator fixtures run in `workflows-present` and in the
+container, in the same gate that runs the other prose guards:
+
+    "third-party notices: python3 scripts/ci/test-check-notices-document.py && python3 scripts/ci/check-notices-document.py && python3 scripts/ci/test-gen-third-party-notices.py"
+
+and the assembler fixtures were added to the existing `npm package guards` gate. A container
+run of just those two gates:
+
+    $ bash scripts/verify-in-docker.sh --only "third-party notices" --only "npm package guards"
+    (… the two gates' own output, ending in:)
+    assemble-notices: npm not installed here; manifest allowlist above is the only proof
+
+    selected gates passed in chaos-verify:local
+      --only was in effect: 2 of 39 gates ran, so this is not a full sweep
+    exit=0
+
+That printed line is the container's honest limit and it says so: the image has no npm, so
+inside the container the manifest allowlist is the proof and the `npm pack --dry-run` proof
+runs on the host and in the `npm-scripts` job. The wiring itself is judged by
+`check-guard-wiring.py`, which is what turned up that the coverage fixtures needed their own
+tsv row rather than a silent gap:
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (78 files in scripts/ci/, 77 reachable, 71 run by scripts/verify-in-docker.sh, 6 recorded CI-only, 1 exempt)
+
+== 9. What this does not do
+
+The document is now provably consistent with the build and provably internally consistent. It
+is not a compliance program, and four specific things are still out:
+
+  - No SBOM. The set this batch computes is exactly the input a CycloneDX or SPDX document
+    would need, and `cargo metadata` is already the only tool required, but no artifact of that
+    form is produced, so a scanner that ingests SBOMs has nothing to ingest.
+  - No vulnerability scanning of the shipped set. Nothing here reports a CVE; wiring an
+    advisory database against the same 1139 packages is a separate decision about a runner and
+    a feed.
+  - Two entries could not source an unambiguous copy of the license their package declares, so
+    they point at the upstream repository instead of Part II. A reader is owed a pointer, which
+    they have, not a text, which they are not owed by that license.
+  - The 26 entries whose published package carries no copyright line and whose metadata names
+    no authors say so in prose. That is a truthful record of what those packages publish, not
+    a resolved attribution.
+
+One further thing is out by policy rather than by omission: the license-choice rule is derived
+from what this repository had already recorded, and a declared expression outside the allowed
+set is a refusal that tells a human to extend `ALLOWED_LICENSES`, never a guess by a script.
+
+One thing is explicitly out of scope by policy rather than by omission: the license-choice
+rule is derived from what this repository had already recorded, and a declared expression
+outside the allowed set is a refusal that tells a human to extend `ALLOWED_LICENSES`, never a
+guess by a script.

@@ -41,8 +41,24 @@ has_bin() {
   return 1
 }
 
+NOTICES_NAME="THIRD_PARTY_NOTICES.md"
+
+# The tarball is the only copy of the third-party notices most users ever receive, and a
+# package with no notices still installs, still runs, and still ships code whose licenses
+# require attribution to travel with it. The check lives in the one funnel every publish
+# goes through, rather than only in the assembler that writes the file, because the failure
+# it prevents is invisible after the fact.
+has_notices() {
+  local file="$1/$NOTICES_NAME"
+  [[ -f "$file" && -s "$file" ]]
+}
+
 publish_one() {
   local dir="$1"
+  if ! has_notices "$dir"; then
+    echo "error: $(basename "$dir") has no non-empty $NOTICES_NAME — run assemble first" >&2
+    return 1
+  fi
   echo "==> publishing $(basename "$dir")"
   if [[ "$DRY_RUN" == "1" ]]; then
     (cd "$dir" && npm pack --dry-run)

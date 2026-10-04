@@ -478,9 +478,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Checked before anything is published: a package that installs fine but carries
+          # no third-party notices is a release defect nobody would ever report.
+          [[ -s THIRD_PARTY_NOTICES.md ]] || { echo "::error::npm/THIRD_PARTY_NOTICES.md was not assembled"; exit 1; }
           for p in chaos-linux-x64 chaos; do
             if [[ -d "$p" ]]; then
               echo "== $p =="
+              [[ -s "$p/THIRD_PARTY_NOTICES.md" ]] \
+                || { echo "::error::$p/THIRD_PARTY_NOTICES.md was not assembled"; exit 1; }
               (cd "$p" && npm pack --dry-run 2>&1 | tail -20)
             fi
           done
@@ -536,8 +541,11 @@ jobs:
             crates/codegen/xai-grok-pager/npm/chaos-*/package.json
             crates/codegen/xai-grok-pager/npm/chaos-*/bin/
             crates/codegen/xai-grok-pager/npm/chaos-*/THIRD_PARTY_NOTICES.md
+            crates/codegen/xai-grok-pager/npm/THIRD_PARTY_NOTICES.md
           retention-days: 7
-          if-no-files-found: warn
+          # Missing here means the release carries binaries with no third-party notices
+          # attached anywhere, which is exactly the silent gap this step exists to catch.
+          if-no-files-found: error
 
       # Keep GitHub Release independent of npm: npm publish failures should
       # fail this job, but must not skip attaching successfully built binaries.
@@ -566,5 +574,8 @@ jobs:
             release-bins/chaos-win32-x64.exe.sig
             release-bins/chaos-win32-arm64.exe
             release-bins/chaos-win32-arm64.exe.sig
+            # Whoever downloads a binary instead of installing from npm still has to receive
+            # the notices; this is the same document that goes inside every tarball.
+            crates/codegen/xai-grok-pager/npm/THIRD_PARTY_NOTICES.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

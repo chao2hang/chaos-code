@@ -295,6 +295,13 @@ gates=(
   "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
   "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
   "documented commands: python3 scripts/ci/test-check-evidence-commands.py && python3 scripts/ci/check-evidence-commands.py"
+  # THIRD-PARTY-NOTICES is a legal artifact with no reader in the repository: 19 000 lines that
+  # nobody opens until someone asks which license a shipped binary carries. Two of its defects have
+  # no symptom at all -- a pointer at a Part II section that is not in the file, and an entry whose
+  # `(upstream declares: ...)` is a claim the package does not make. Both are facts about text, so
+  # they are judged here as well as in CI; the companion that compares entries against what the
+  # build resolves needs a warm registry and is recorded in scripts/ci/docker-entry-ci-only.tsv.
+  "third-party notices: python3 scripts/ci/test-check-notices-document.py && python3 scripts/ci/check-notices-document.py && python3 scripts/ci/test-gen-third-party-notices.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
   # The complement of guard wiring, which accounts for `scripts/ci/` only. The acceptance labs one
   # directory up -- `scripts/*-in-docker.sh` -- were nobody's: five of the six had never been named
@@ -367,7 +374,7 @@ gates=(
   # overwrite the first; these fixtures drive the shipped script and pin that it cannot.
   "upstream recon: python3 scripts/ci/test-upstream-recon.py"
   "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py && python3 scripts/ci/test-installer-download-size.py && python3 scripts/ci/test-installer-download-stall.py"
-  "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && bash scripts/ci/test-publish-npm.sh"
+  "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && bash scripts/ci/test-publish-npm.sh && bash scripts/ci/test-assemble-notices.sh"
   "docs localization: ${bootstrap}; bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"
   "localization guard self-tests: python3 scripts/l10n-guard-selftest.py && python3 scripts/check-doc-l10n-selftest.py"
   "secret scan: ${bootstrap}; bash scripts/ci/secret-scan.sh"

@@ -48,6 +48,7 @@ docs/internal/22-environment-variables.md	recorded-absent	the second include_str
 crates/codegen/xai-grok-shell/AGENTS.md	recorded-absent	docs/ci-test-debt.md:179 says in the same breath that the file is not in this fork and never was
 docs/release-process.md	recorded-absent	named as the document that is absent here; the real release/signing notes live in docs/release-signing.md
 sync/recon/2026-10-03-2bdd1d6a6-2.md	recorded-absent	recon record an accidental live run of scripts/upstream-recon.sh wrote, never committed, deleted after measuring; the citing sentence says so
+scripts/ci/check-third-party-notices.py	recorded-absent	CHANGELOG.md and docs/ci-test-debt.md name it as the guard two docstrings pointed at although this repository never had that file; the same sentences record the fix
 
 # --- True when written, moved since ------------------------------------------------
 crates/codegen/xai-grok-update/build.rs	historical	moved to crates/codegen/xai-grok-signature/build.rs by 76cf8928; CHANGELOG.md:1694 records the original addition

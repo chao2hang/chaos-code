@@ -938,6 +938,64 @@ change is worth porting.
 Please report security issues through the process described in
 [`SECURITY.md`](SECURITY.md). Do not open a public issue for vulnerabilities.
 
+## Third-party notices ship with the binary
+
+`THIRD-PARTY-NOTICES` at the repository root is the license text and copyright
+attribution that every user of a released `chaos` is owed. It is not documentation:
+`assemble-platform-packages.js` reproduces it verbatim as `THIRD_PARTY_NOTICES.md` in
+every npm package directory, beside the ported-code notice owned by
+`xai-grok-tools`, and `scripts/ci/publish-npm.sh` refuses to publish a package
+directory without a non-empty one. A tarball missing it still installs and still
+runs, which is why this is a gate rather than a checklist item.
+
+The set it has to cover is the set the binary is actually built from: every package
+reached by a dependency edge that is not exclusively a test edge. Read that from
+`resolve.nodes[].deps[].dep_kinds[].kind` (`null`, `"dev"`, `"build"`), not from a
+boolean on the declaration -- `cargo metadata` puts no `dev` key on
+`packages[].dependencies[]`, so a filter written against one silently never fires and
+reads the whole resolve graph instead. This repository measures 5448 `null`, 225 `dev`
+and 82 `build` edges, and 0 of its 9984 declarations carry `dep_kinds`; the first
+version of the reader filtered on the missing key and reported 1210 packages where 1139
+ship. The set is deliberately target-agnostic: 177 of the 998 names are absent from a
+host-target `cargo tree -e normal`, because they are reached through build scripts or
+only on another platform, and shipping their notices is correct.
+
+```sh
+python3 scripts/gen-third-party-notices.py           # report, change nothing
+python3 scripts/gen-third-party-notices.py --write   # repair the document
+python3 scripts/ci/check-notices-coverage.py         # what CI asserts
+python3 scripts/ci/check-notices-document.py         # internal consistency
+```
+
+`check-notices-coverage.py` reports three findings, because they are repaired
+differently: shipped packages with no entry, entries naming a version the build no
+longer resolves, and entries for packages nothing ships any more. All three are
+invisible in a diff -- a stale entry reads fine, a missing one is an absence, and a
+dependency bump changes one `Cargo.lock` line. `--write` splices every surviving entry
+body out of the old text and back into the new one byte for byte, because entry bodies
+hold verbatim upstream `NOTICE` files and `VENDORED WITH LOCAL MODIFICATIONS:` blocks
+that no tool should paraphrase; running it twice prints
+`already matches what is shipped; left untouched`. Part II texts are appended only from
+the package that declares them and pruned when the last entry pointing at one goes
+away -- a section is also kept when surviving prose names it, which is how
+`GPL-2.0-only` stays for the vendored `libgit2` COPYING note.
+
+The gates sit where their subject lives: the coverage guard is a step in the `rust` job
+(it needs `cargo metadata`, so it is recorded in
+`scripts/ci/docker-entry-ci-only.tsv` with the reason rather than skipped quietly), the
+document guard and the generator's fixtures run in `workflows-present` and in the
+container's `third-party notices` gate, and the bundle assembly fixtures -- which drive
+the real assembler and a real `npm pack --dry-run` -- run in `npm-scripts` and in the
+container's `npm package guards` gate.
+
+Two things this does not do, so nobody has to rediscover it: it emits no SBOM and runs no
+vulnerability scan, and two entries (`borrow-or-share 0.2.2`, `notify 8.2.0`) send the
+reader to the upstream repository for the text instead of pasting it. Reviewing a change
+to the document needs `git diff --text THIRD-PARTY-NOTICES`, because `.gitattributes`
+marks it `-diff linguist-generated`. The measurement behind every number above, and the
+eight mutations that show the guards are not vacuous, are in
+`docs/verification/third-party-notices-2026-10-05.log`.
+
 ## Licensing of this source
 
 By downloading or using this source, you agree that your use is governed by

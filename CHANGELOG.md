@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### 门禁：18 898 行法律文件第一次被对着构建读，而读出来的第一个数是「覆盖率 976/1139」
+
+`THIRD-PARTY-NOTICES` 是分发 `chaos` 二进制时欠每个用户的第三方许可证全文与版权声明，18 898
+行，签在仓库里，此前没有任何工具能回答唯一要紧的问题：它还覆盖这个二进制实际构建自的那些依赖
+吗？量出来的答案是 1139 个被发布的第三方包里只有 976 个有条目与之严格对齐，另有 135 个包完全
+没有条目、28 个条目写的是已经不构建的旧版本、191 个条目描述的东西根本不发布。这三种坏法在
+diff 上都不可见：过期的条目读起来通顺，缺失的条目是一个不在场的人，而依赖升级的 diff 里只有
+Cargo.lock 那一行。新加的 `scripts/ci/check-notices-coverage.py` 把这三件事拆成三条 finding，
+因为它们的修法各不相同；`scripts/ci/check-notices-document.py` 管文件自身的一致性（指针是否
+指向存在的 Part II 小节、`License:` 是否真是上游声明式里的一个词、有没有谁都点不到的小节）；
+`scripts/gen-third-party-notices.py` 是把它读对之后写回去的那只手，`--write` 两次结果逐字节相
+同。
+
+在写任何判定之前必须先量一件事：哪些边算「装进二进制」。第一版按依赖边上的布尔 `dev` 键过滤
+测试专用依赖，而 cargo 根本不产这个键——边的种类只在
+`resolve.nodes[].deps[].dep_kinds[].kind` 里，本仓库实测为 `null` 5448 条、`dev` 225 条、
+`build` 82 条，`packages[].dependencies[]` 那 9984 条声明里 0 条带 `dep_kinds`。于是那个过滤器
+从来没开火，读出来的是整张解析图 1210 个包，比真值多出 71 个只经测试依赖到达的 crate
+（criterion、insta、mockito、wiremock、termwiz、一份第二副本的 syn 1.0.109……）。过度收录不是无
+害的：HEAD 那份文档里 `finl_unicode 1.4.0` 与 `wezterm-bidi 0.2.3` 两条条目走的正是测试边，而它
+们各指一次 Part II 的 Unicode-DFS-2016，于是这份「我们以这些条款分发这些软件」的文件替两个不进
+二进制的包背着 3042 字节、28 行的 Unicode 许可全文；同一侧还有 EPL-2.0 的 `colored_json` 与
+WTFPL 的 `terminfo`。修正后的集合用 cargo 自己反查过一次，只有那个方向有意义：`cargo tree
+--frozen --offline -e normal -p xai-grok-pager-bin` 列出的第三方包，0 个不在集合里。
+
+同一轮里被量出来、而不是被测出来的还有五处。生成器自报的行数用 `len(text.splitlines())`，在这
+份文件上报 18747，而 `wc -l` 是 18738——GNU GPL 全文按打印排版，每页结尾一个换页符
+`\f`，`splitlines()` 把它也当换行；同一个函数族在 `copyright_lines` 里更疼，因为换页符若落在
+署名行中间，条目就会只记下 `Copyright 2021 The` 而把句子其余部分丢掉。两处 docstring 里点名的
+`scripts/ci/check-third-party-notices.py` 是一个本仓库从未存在过的文件名，而
+`check-doc-path-refs.py` 只读 Markdown、不读 Python，所以没有任何东西会因为它红；对 Python
+字符串字面量扫一遍得到 141 处指向未跟踪路径的提及，绝大多数是 `test-*.py` 里**故意**不存在的
+夹具路径，于是这一轮只改那两处 prose，不去把那条门禁的边界挪动。还有一处是自我纠错：docstring
+与 `ci.yml` 步骤注释里的 168/39/164 是拿那个被证伪的 1210 集合量的，现在按修正后的集合写作
+135/28/191。最后一处在注释里：copyleft allowlist 那段解释为什么接受 EPL-2.0、MPL-2.0、WTFPL 时
+写着那几个 crate「已经在发布的二进制里」，而按修正后的集合量，`colored_json`（EPL-2.0）与
+`terminfo`（WTFPL）恰恰只经测试边到达——注释里的事实性断言没有任何东西自动检查，所以它就烂在
+读者最信任的那个地方。
+
+八发变异 0 存活（`dev` 键读法、triage 认名字不认版本、关掉小节剪枝、剪枝忽略正文提名、报错报
+错原因、末节区间吃掉收尾 banner、行数按 `splitlines()` 计、版权行按 `splitlines()` 切），每发
+之后源文件逐字节还原并 `cmp` 验证。70 例夹具里 15 例打在生成器上——它是对这份文件唯一的写入
+把手，故断言集中在「活下来的条目逐字节回来（含 `VENDORED WITH LOCAL MODIFICATIONS:` 块）」、
+「许可证全文只从声明它的那个包自己的文件取」、「判不了的许可证就一个字都不写」。装配侧同样不
+留口头承诺：`test-assemble-notices.sh` 驱动真实装配器，量到 8 个目的地、7 份 manifest 的
+`files` 白名单、以及一次真实 `npm pack --dry-run` 的文件清单。
+
+（2026-10-05；`scripts/notices_lib.py`、`scripts/gen-third-party-notices.py`、
+`scripts/ci/check-notices-document.py`、`scripts/ci/check-notices-coverage.py`、
+`scripts/ci/test-check-notices-document.py`、`scripts/ci/test-check-notices-coverage.py`、
+`scripts/ci/test-gen-third-party-notices.py`、`scripts/ci/test-assemble-notices.sh`、
+`THIRD-PARTY-NOTICES`、`crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js`、
+`crates/codegen/xai-grok-pager/npm/chaos/package.json`、`scripts/ci/publish-npm.sh`、
+`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`scripts/verify-in-docker.sh`、
+`scripts/ci/docker-entry-ci-only.tsv`、`docs/verification/third-party-notices-2026-10-05.log`）
+
 ### 门禁：新增的浏览器规格到底会不会被跑，从此是一条门禁的回答，不是人对五处名单的记忆
 
 `npm run test:e2e` 的登记机制只有两张手写名单—— `apps/chaos-ui/e2e-runner.mjs` 里那份配置清单，和每份
