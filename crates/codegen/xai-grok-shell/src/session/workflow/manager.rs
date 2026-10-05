@@ -929,15 +929,20 @@ mod tests {
         )
     }
 
+    /// A spawn event that never arrives has to fail the test, not the job. The only
+    /// ceiling on the CI job is its `timeout-minutes`, so an unbounded `recv()`
+    /// trades a named failure for a silent wait out the whole job budget; `what`
+    /// says which awaited spawn the deadline fired on.
     async fn recv_spawn(
         rx: &mut SubagentEventRx,
+        what: &str,
     ) -> xai_grok_tools::implementations::grok_build::task::types::SubagentSpawnRequest {
         use xai_grok_tools::implementations::grok_build::task::types::SubagentEvent;
         match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
             Ok(Some(SubagentEvent::Spawn(req))) => req,
-            Ok(Some(_)) => panic!("expected spawn, got a non-spawn event"),
-            Ok(None) => panic!("expected spawn, channel closed"),
-            Err(_) => panic!("expected spawn, timed out"),
+            Ok(Some(_)) => panic!("{what}: expected spawn, got a non-spawn event"),
+            Ok(None) => panic!("{what}: expected spawn, channel closed"),
+            Err(_) => panic!("{what}: no spawn event within 2s"),
         }
     }
 
@@ -997,7 +1002,7 @@ mod tests {
         let (_run_id, outcome_rx) = manager
             .launch(resolve_inline(parallel_n_script(1)).unwrap(), spec())
             .unwrap();
-        let req = recv_spawn(&mut rx).await;
+        let req = recv_spawn(&mut rx, "first spawn").await;
         assert!(
             manager.active_work.load(Ordering::Acquire) > 0,
             "a running workflow must count toward the session's active work (GBT-6282)"
@@ -1094,9 +1099,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("resumed spawn") else {
-            panic!("expected resumed spawn event");
-        };
+        let req = recv_spawn(&mut subagent_rx, "resumed spawn").await;
         assert_eq!(
             req.runtime_overrides.reasoning_effort.as_deref(),
             Some("high")
@@ -1156,10 +1159,7 @@ mod tests {
         let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
         use xai_grok_tools::implementations::grok_build::task::types::SubagentEvent;
-        let spawn_req = subagent_rx.recv().await.expect("spawn request");
-        let SubagentEvent::Spawn(_spawn) = spawn_req else {
-            panic!("expected spawn request");
-        };
+        let _spawn = recv_spawn(&mut subagent_rx, "spawn request").await;
         assert!(manager.pause(&run_id));
         assert_eq!(
             manager.tracker.lock().get(&run_id).unwrap().status,
@@ -1185,19 +1185,15 @@ mod tests {
                 },
             )
             .unwrap();
-        let spawn_req = subagent_rx.recv().await.expect("respawned agent");
+        let req = recv_spawn(&mut subagent_rx, "respawned agent").await;
         use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
-        if let SubagentEvent::Spawn(req) = spawn_req {
-            let id = req.id.clone();
-            let _ = req.result_tx.send(SubagentResult {
-                success: true,
-                output: std::sync::Arc::from("resumed output"),
-                subagent_id: id,
-                ..Default::default()
-            });
-        } else {
-            panic!("expected spawn event");
-        }
+        let id = req.id.clone();
+        let _ = req.result_tx.send(SubagentResult {
+            success: true,
+            output: std::sync::Arc::from("resumed output"),
+            subagent_id: id,
+            ..Default::default()
+        });
         let outcome = outcome_rx.await.unwrap();
         match outcome {
             WorkflowOutcome::Completed { result } => {
@@ -1220,9 +1216,7 @@ mod tests {
             .launch(resolve_inline(script.into()).unwrap(), spec())
             .unwrap();
 
-        let SubagentEvent::Spawn(_first) = subagent_rx.recv().await.expect("first spawn") else {
-            panic!("expected spawn event");
-        };
+        let _first = recv_spawn(&mut subagent_rx, "first spawn").await;
         assert_eq!(
             manager.tracker.lock().get(&run_id).unwrap().agents_used,
             1,
@@ -1249,9 +1243,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("respawned agent") else {
-            panic!("expected respawn event");
-        };
+        let req = recv_spawn(&mut subagent_rx, "respawned agent").await;
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
             success: true,
@@ -1351,9 +1343,7 @@ mod tests {
         let (run_id, outcome_rx) = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
             .unwrap();
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("first spawn") else {
-            panic!("expected spawn event");
-        };
+        let req = recv_spawn(&mut subagent_rx, "first spawn").await;
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
             success: true,
@@ -1463,10 +1453,7 @@ mod tests {
         .unwrap();
         let (_run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
-        let spawn_req = subagent_rx.recv().await.expect("spawn event");
-        let SubagentEvent::Spawn(req) = spawn_req else {
-            panic!("expected spawn event");
-        };
+        let req = recv_spawn(&mut subagent_rx, "spawn event").await;
         assert!(
             req.await_to_completion,
             "workflow agent spawns must disable the ordinary task-tool await budget"
@@ -1520,9 +1507,7 @@ mod tests {
 
         let mut efforts = HashMap::new();
         for _ in 0..2 {
-            let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
-                panic!("expected spawn event");
-            };
+            let req = recv_spawn(&mut subagent_rx, "spawn").await;
             efforts.insert(
                 req.request.prompt.clone(),
                 req.request.runtime_overrides.reasoning_effort.clone(),
@@ -1606,7 +1591,7 @@ mod tests {
                 .launch(resolve_inline(script.into()).unwrap(), spec())
                 .unwrap();
             outcomes.push(outcome);
-            spawned.push(subagent_rx.recv().await.expect("spawn event"));
+            spawned.push(recv_spawn(&mut subagent_rx, "spawn event").await);
         }
         let error = manager
             .launch(resolve_inline(script.into()).unwrap(), spec())
@@ -1706,9 +1691,7 @@ mod tests {
             )
             .unwrap();
 
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("first spawn") else {
-            panic!("expected spawn event");
-        };
+        let req = recv_spawn(&mut subagent_rx, "first spawn").await;
         assert!(
             req.runtime_overrides.output_schema.is_none(),
             "schema must not be passed to the child runtime"
@@ -1731,10 +1714,7 @@ mod tests {
             ..Default::default()
         });
 
-        let SubagentEvent::Spawn(retry) = subagent_rx.recv().await.expect("corrective retry")
-        else {
-            panic!("expected retry spawn event");
-        };
+        let retry = recv_spawn(&mut subagent_rx, "corrective retry").await;
         assert_eq!(retry.resume_from.as_deref(), Some(first_id.as_str()));
         assert!(retry.prompt.contains("did not satisfy the output contract"));
         assert_eq!(retry.runtime_overrides.output_token_budget, None);
@@ -1786,9 +1766,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
-            panic!("expected spawn");
-        };
+        let req = recv_spawn(&mut subagent_rx, "spawn").await;
         assert_eq!(req.runtime_overrides.output_token_budget, None);
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
@@ -1824,9 +1802,7 @@ mod tests {
         )
         .unwrap();
         let (_run_id, _outcome_rx) = manager.launch(resolved, spec()).unwrap();
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
-            panic!("expected spawn");
-        };
+        let req = recv_spawn(&mut subagent_rx, "spawn").await;
         assert_eq!(req.runtime_overrides.output_token_budget, None);
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
@@ -1863,9 +1839,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let SubagentEvent::Spawn(req) = subagent_rx.recv().await.expect("spawn") else {
-            panic!("expected spawn");
-        };
+        let req = recv_spawn(&mut subagent_rx, "spawn").await;
         assert!(req.owner.is_workflow());
         assert!(manager.cancel(&run_id));
         let _ = outcome_rx.await;
@@ -1899,10 +1873,7 @@ mod tests {
         .unwrap();
         let (run_id, outcome_rx) = manager.launch(resolved, spec()).unwrap();
 
-        let spawn_req = subagent_rx.recv().await.expect("spawn event");
-        let SubagentEvent::Spawn(req) = spawn_req else {
-            panic!("expected spawn event");
-        };
+        let req = recv_spawn(&mut subagent_rx, "spawn event").await;
         let id = req.id.clone();
         let _ = req.result_tx.send(SubagentResult {
             backgrounded: true,
@@ -1940,7 +1911,7 @@ mod tests {
 
         let mut live = Vec::new();
         for _ in 0..CAP {
-            live.push(recv_spawn(&mut subagent_rx).await);
+            live.push(recv_spawn(&mut subagent_rx, "panel spawn").await);
         }
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(150), subagent_rx.recv())
@@ -1953,7 +1924,7 @@ mod tests {
         while completed + live.len() < N {
             complete_spawn(live.remove(0));
             completed += 1;
-            live.push(recv_spawn(&mut subagent_rx).await);
+            live.push(recv_spawn(&mut subagent_rx, "panel spawn").await);
         }
         for req in live {
             complete_spawn(req);
@@ -1974,7 +1945,7 @@ mod tests {
             .launch(resolve_inline(parallel_n_script(4)).unwrap(), spec())
             .unwrap();
 
-        let first = recv_spawn(&mut subagent_rx).await;
+        let first = recv_spawn(&mut subagent_rx, "first parallel spawn").await;
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(150), subagent_rx.recv())
                 .await

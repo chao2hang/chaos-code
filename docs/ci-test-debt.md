@@ -1707,6 +1707,35 @@ overflowed its stack`。原因是矩阵用裸 `cargo test -p xai-grok-shell --li
 **判据：退出码型变异矩阵必须自带一格未变异基线，且该基线不成立时整轮作废；写矩阵的人要单独验证「判据不
 成立时进程非零」；每条存活豁免必须写明它是产品站点还是 `#[cfg(test)]` 助记、以及缺的是哪一种前置状态；
 `Drop` 里的变异体 abort 属于被抓到；空过滤器与未覆盖在退出码上同形，所以每一格还要留下 `N passed` 的 N。**
+
+## 2026-10-05：作业唯一的天花板是 `timeout-minutes` 时，测试里一个等不到事件的裸 `await` 就把「2 秒能命名的失败」换成半小时静默
+
+CI run 37259667663（`a8274d9f`）被判 `cancelled`，用的恰好是 `.github/workflows/ci.yml` 的
+`timeout-minutes: 60` 那一格。日志里最后一个完成的测试打在 04:00:01，libtest 自己的看门狗在 04:00:55 点名
+`session::workflow::manager::tests::active_run_admission_is_bounded_per_session`，此后 29 分钟再没有一行输出，
+直到 runner 在 04:30:09 杀掉 `cargo` 和测试进程。整个作业没有 report 失败，它只是不再说话 —— 而一份「没有失败」
+的日志和一份「还在跑」的日志长得一模一样。
+
+**「慢」和「死」在退出码上是同一个形状，除非等待自己带期限。** 那条测试在它唯一的断言之前只有一个没有期限的
+等待：`subagent_rx.recv().await`。同文件早就有一个带 2 秒期限的 `recv_spawn`，还有 4 条测试在用它 —— 其中
+`parallel_panel_respects_concurrency_cap` 与 `cancel_drops_queued_spawns_before_coordinator` 恰恰在这次被拖死的
+run 里跑完并 ok。同一个 runner、同一类事件、同一个 2 秒：这既说明这个期限在那台机器上够用，也说明「该走哪条形
+状」在本仓库里早有先例（`scheduler/actor.rs` 的 `next_event` 是第三种同一形状，3 秒）。这一批把模块内 15 处裸
+`recv().await` 全收进 `recv_spawn`，并给它加一个 `what` 标签，让期限到点时说的是「哪一个 spawn 没来」，而不是
+一个模块级的泛指；测试代码里的 `.recv().await.expect(` 从 84 处降到 69 处，`manager.rs` 归零。
+
+**期限要被单独钉一次，否则重构会冒充修复。** 把测试自己的中继任务改成丢弃 `Spawn` 事件：改前的源码真的挂死
+（30 秒硬超时被杀，整段输出只有 `running 1 test` 一行），改后 2.06 秒失败并打印
+`spawn event: no spawn event within 2s`。可这还证明不了救场的是期限而非重构 —— 于是把 `recv_spawn` 的超时分支
+换成 `pending()`，其余一概不动，测试又挂回去（30.01 秒）。同一批还得有一格反向证明重写没削弱测试本来要抓的
+东西：把准入阈值改成 `>= 1000`，`active_run_admission_is_bounded_per_session` 仍然红（0.79 秒，红在
+`called \`Result::unwrap_err()\` on an \`Ok\` value`）。
+
+**判据：作业唯一的天花板是 `timeout-minutes` 时，测试里每一次等外部事件都必须自带期限和一句带名字的消息，新
+写的等待要复用仓库里已有的那个带期限 helper 而不是再裸写 `recv().await`；而「我加了期限」这句话要由两格矩阵
+兑现 —— 只删期限必须重新挂死，动真正的被测逻辑必须仍然变红。计时只能罩住测试二进制本身：把 `timeout` 套在
+`cargo test` 上，一次 180 秒的编译会被判成挂死，第一轮的 4 格「存活」全是这么来的。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

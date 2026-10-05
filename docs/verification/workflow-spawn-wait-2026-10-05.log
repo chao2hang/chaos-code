@@ -1,0 +1,211 @@
+# Workflow spawn waits were unbounded, so one missing event cost the whole CI job budget (2026-10-05)
+
+== 1. What this batch changes
+
+`session::workflow::manager::tests` had 15 places that waited for a subagent spawn event with
+`subagent_rx.recv().await`, i.e. with no deadline at all. The module already contained a bounded
+helper, `recv_spawn`, with a 2-second `tokio::time::timeout`, and four tests already used it. This
+batch routes all 15 remaining sites through that helper and gives the helper a `what: &str` label so
+each site's own wording appears in the panic when the deadline fires. Net diff: 34 insertions,
+63 deletions. No production code changed; `recv_spawn` is `#[cfg(test)]` and private to the module.
+
+    $ git diff --stat crates/codegen/xai-grok-shell/src/session/workflow/manager.rs
+     .../xai-grok-shell/src/session/workflow/manager.rs | 97 ++++++++--------------
+     1 file changed, 34 insertions(+), 63 deletions(-)
+
+Four textual shapes were rewritten: `let SubagentEvent::Spawn(..) = recv().await.expect(..) else`,
+a recv into a temporary followed by `let else`, a recv pushed straight into a `Vec`, and one
+`if let SubagentEvent::Spawn(..) .. else { panic!() }`. The last one lost its `else` branch entirely,
+because the helper panics on a non-spawn event with the same message plus the label.
+
+== 2. The CI failure being fixed
+
+CI run 37259667663 on `a8274d9f` ended `cancelled`, consuming exactly the `timeout-minutes: 60`
+ceiling at `.github/workflows/ci.yml:33`. The seven other jobs succeeded; the platform legs were
+skipped because the Linux job never finished. The job never reported a failure -- it stopped
+producing output, which in a CI log is indistinguishable from still running.
+
+    2026-10-05T04:00:01.3117295Z test util::subprocess::tests::post_exit_budget_is_shared_across_streams ... ok
+    2026-10-05T04:00:55.2530026Z test session::workflow::manager::tests::active_run_admission_is_bounded_per_session has been running for over 60 seconds
+    2026-10-05T04:30:09.2758600Z ##[error]The operation was canceled.
+    2026-10-05T04:30:09.6341396Z Terminate orphan process: pid (9174) (cargo)
+    2026-10-05T04:30:09.6381062Z Terminate orphan process: pid (103204) (xai_grok_shell-eda4bd4ea2709cff)
+
+libtest's own watchdog named exactly one test, and 29 minutes passed between that line and the
+runner killing the processes. Successful runs of the same job had taken 39, 41, 44, 45 and 45
+minutes, so the ceiling itself is not normally the constraint.
+
+The same run shows the machine degrading rather than one test being unlucky: an unrelated test also
+crossed the watchdog and then recovered.
+
+    2026-10-05T03:53:59.7401144Z test plan_approval_restored_after_resume has been running for over 60 seconds
+    2026-10-05T03:56:10.4114751Z test plan_approval_restored_after_resume ... ok
+
+That is 2 minutes 11 seconds for a test that normally finishes in well under one.
+
+== 3. Which await was unbounded, and why the event can be missing
+
+`active_run_admission_is_bounded_per_session` launches `WORKFLOW_MAX_ACTIVE_RUNS_PER_SESSION` (= 4)
+workflow runs, waits for each run's spawn event, and then asserts that a fifth launch is refused.
+Before that assertion the only unbounded await was the event wait itself; `cancel_all_and_drain`
+takes a `Duration` and bounds each receiver with `tokio::time::timeout_at`, so it cannot hang.
+
+The event itself cannot be lost in transit. The production sender posts to an unbounded channel
+before it awaits anything (`crates/codegen/xai-grok-tools/src/implementations/grok_build/task/backend.rs:512`),
+and a closed channel surfaces as `Ok(None)` rather than silence. So the wait can only stall if the
+run task never reaches `agent()` -- which is precisely the state a saturated or degraded runner can
+produce, and precisely the state a dropped event produces deterministically.
+
+== 4. Mechanisms ruled out
+
+Two candidate mechanisms were checked and cleared, and the stall's true cause is recorded as
+unresolved rather than guessed at:
+
+* `acquire_agent_slot` (`session/workflow/host_service.rs:376`) parks an agent on a semaphore when
+  no slot is free, and it is reached before the spawn event is sent. But the semaphore is per run
+  (`Semaphore::new(max_concurrent_agents)`, default 32, clamped to machine parallelism with a floor
+  of 2), and this test needs one permit per run. It cannot starve here.
+* `cancel_all_and_drain` was already bounded by `timeout_at(deadline, done)`.
+
+Locally the test is not slow: the module suite finishes in a fifth of a second and 25 consecutive
+rounds of this test passed at roughly 0.08 s each. What is not in doubt is the missing deadline.
+
+== 5. The bounded helper, and the precedent it follows
+
+    /// A spawn event that never arrives has to fail the test, not the job. The only
+    /// ceiling on the CI job is its `timeout-minutes`, so an unbounded `recv()`
+    /// trades a named failure for a silent wait out the whole job budget; `what`
+    /// says which awaited spawn the deadline fired on.
+    async fn recv_spawn(
+        rx: &mut SubagentEventRx,
+        what: &str,
+    ) -> xai_grok_tools::implementations::grok_build::task::types::SubagentSpawnRequest {
+        use xai_grok_tools::implementations::grok_build::task::types::SubagentEvent;
+        match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
+            Ok(Some(SubagentEvent::Spawn(req))) => req,
+            Ok(Some(_)) => panic!("{what}: expected spawn, got a non-spawn event"),
+            Ok(None) => panic!("{what}: expected spawn, channel closed"),
+            Err(_) => panic!("{what}: no spawn event within 2s"),
+        }
+    }
+
+The 2-second bound is not a guess and not new. Two tests that already used it passed in the very run
+that hung -- `parallel_panel_respects_concurrency_cap` receives several spawn events back to back
+under that same bound, and `cancel_drops_queued_spawns_before_coordinator` likewise:
+
+    $ grep -c "workflow::manager::tests::parallel_panel_respects_concurrency_cap \.\.\. ok" b21-ci-job.log
+    1
+    $ grep -c "workflow::manager::tests::cancel_drops_queued_spawns_before_coordinator \.\.\. ok" b21-ci-job.log
+    1
+
+So on that runner, in that degraded run, 2 seconds was demonstrably enough for this event type. The
+shape also already exists twice elsewhere in the workspace: `recv_spawn` itself, and
+`next_event` in `crates/codegen/xai-grok-tools/src/implementations/grok_build/scheduler/actor.rs:1946`
+(3 seconds). A third spelling of "wait forever" was the outlier, not the new bound.
+
+== 6. Red baseline: the pre-fix source really does hang
+
+Before crediting the fix, the failure was reproduced on purpose. The test fixture's relay task is the
+thing that forwards spawn events to the test; making it drop `Spawn` events stands in for "the run
+task never got there". Mutating only the pre-fix source and running only the test binary (compilation
+untimed, `timeout` around the run only):
+
+    $ timeout 30 xai_grok_shell-08161f36e816855b session::workflow::manager::tests::active_run_admission_is_bounded_per_session --exact --nocapture
+    # exit=124 (124 == killed at the 30s bound)
+
+    running 1 test
+
+That is the whole transcript. `running 1 test`, then 30 seconds of nothing, then SIGKILL -- the same
+shape as the CI log at a 60-minute scale. The unmutated baseline in the same harness passed in 0.13 s,
+so the silence is the mutation, not the harness.
+
+== 7. The matrix
+
+Six mutants, each applied to a copy, compiled untimed, run under a 30-second bound, then restored and
+verified with `cmp` against the saved base.
+
+| cell | mutation | expected | result |
+| --- | --- | --- | --- |
+| `B0` | nothing (baseline) | pass | pass in 0.13s |
+| `H1` | pre-fix source + relay drops `Spawn` | hang | hang in 30.01s |
+| `F1` | fixed source + relay drops `Spawn` | fail, names the spawn | fail in 2.06s |
+| `F2` | as `F1`, plus the call site's label renamed | fail, names `LABELPROBE` | fail in 2.06s |
+| `F3` | relay closes the channel instead | fail, says "channel closed" | fail in 0.09s |
+| `F4` | as `F1`, but the deadline branch becomes `pending()` | hang | hang in 30.01s |
+| `F5` | admission ceiling rewritten to `>= 1000` | fail | fail in 0.79s |
+
+`F1`'s failure, verbatim:
+
+    test session::workflow::manager::tests::active_run_admission_is_bounded_per_session ... FAILED
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6931 filtered out; finished in 2.02s
+
+    thread 'session::workflow::manager::tests::active_run_admission_is_bounded_per_session' (3376847) panicked at crates/codegen/xai-grok-shell/src/session/workflow/manager.rs:948:23:
+    spawn event: no spawn event within 2s
+
+`F4` is the cell that keeps the refactor from claiming credit it did not earn: with every part of the
+rewrite in place and only the deadline replaced by `std::future::pending()`, the test hangs again. The
+deadline is the load-bearing part; routing through a shared helper is what makes it cheap to have.
+
+`F5` proves the rewrite did not weaken the test. With the ceiling gone, the fifth launch is accepted
+and the "must be refused" line goes red on its own:
+
+    thread 'session::workflow::manager::tests::active_run_admission_is_bounded_per_session' (3373625) panicked at crates/codegen/xai-grok-shell/src/session/workflow/manager.rs:1598:14:
+    called `Result::unwrap_err()` on an `Ok` value: ("wf_01a10aa94c0c7a02a4b0b912bac2a919", Receiver { .. })
+
+== 8. Two survivors that belonged to the expectation table, not the code
+
+The first full pass reported `matrix: 6 mutants, 4 caught, 2 survived`. Both survivors were my
+expectations being wrong, and both are recorded because the failure mode is easy to repeat:
+
+* `F2` renamed `recv_spawn(&mut subagent_rx, "spawn event")` to `"LABELPROBE"`, but three converted
+  sites share that label text, so `replace(.., 1)` renamed a different call site and the assertion
+  test still printed its own (correct) label. Re-anchored on the admission test's own line
+  `spawned.push(recv_spawn(&mut subagent_rx, "spawn event").await);`, the cell is caught.
+* `F5` expected the needle `called \`Result::unwrap()\` on an \`Ok\` value` while the actual panic came
+  from `unwrap_err()`. The test was red all along; the string comparison said otherwise.
+
+An earlier attempt at the same matrix reported four hangs that were not hangs: `timeout` had been put
+around `cargo test`, so it also bounded the roughly 180-second compile and every cell was killed
+before the test started. Timing may only wrap the test binary.
+
+== 9. Readings
+
+Module suite on the rewritten source:
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-shell --lib session::workflow::manager::tests
+    test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 6908 filtered out; finished in 0.22s
+
+Inventory of the anti-pattern `.recv().await.expect(` in test code, workspace-wide: 84 sites before
+this batch, 69 after, `workflow/manager.rs` at zero. The 69 are spread over other crates' test
+modules; the largest clusters are `grok_build/task/coordinator_tests.rs` (18),
+`xai-file-utils/src/queue_tests.rs` (10) and `grok_build/ask_user_question/mod.rs` (6). Every one of
+the 69 was checked to sit inside a test function, so this is test-side debt, not a production wait.
+
+== 10. CI verdicts and how to reproduce
+
+`a8274d9f` (run 37259667663): `cancelled` at the 60-minute ceiling, root cause this batch's unbounded
+wait, recorded above.
+
+`f0f7f551` (run 37268644414, the batch that introduced the shared lock-recovery trait): `success`,
+all eight jobs -- `rust check / clippy / test`, `GUI browser E2E`, `GUI engine, Web host and
+frontend`, `installer integrity labs`, `npm package scripts`, `docs localization`, `secret scan`,
+`workflows present`. The workflow test did not hang on that run, which is consistent with a
+load-sensitive stall rather than a deterministic deadlock, and is the reason the remaining root cause
+is left open in TODO.md instead of being closed with this change.
+
+    $ git rev-parse --short HEAD
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-shell --lib session::workflow::manager::tests
+    $ python3 {SCRATCH}/b23/matrix.py
+    B0 unmutated baseline: pass in 0.13s
+    H1-orig-drop: expected hang, got hang in 30.01s -- CAUGHT
+    F1-fixed-drop: expected fail, got fail in 2.06s -- CAUGHT needle found
+    F3-closed: expected fail, got fail in 0.09s -- CAUGHT needle found
+    F4-nodeadline: expected hang, got hang in 30.01s -- CAUGHT
+    $ python3 {SCRATCH}/b23/matrix.py --only=F2-label,F5-admission-off
+    matrix: 2 mutants, 2 caught, 0 survived, survivors []
+    $ python3 {SCRATCH}/b23/capture.py
+
+`{SCRATCH}` holds the throwaway harness (`matrix.py`, `capture.py`, the pre-fix and post-fix copies of
+`manager.rs` used as matrix bases); the mutations themselves are applied to a copy and every cell
+restores the source and checks it with `cmp`.

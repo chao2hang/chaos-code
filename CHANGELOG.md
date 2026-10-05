@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### 修复：一条等不到事件的 `await` 把整个 CI 作业安静地拖满 60 分钟，现在它 2 秒就报出自己的名字
+
+CI run 37259667663（`a8274d9f`）被判 `cancelled`，用掉的正是 `.github/workflows/ci.yml` 的
+`timeout-minutes: 60`。日志里最后一个完成的测试打在 04:00:01，libtest 自己的看门狗在 04:00:55 点名
+`session::workflow::manager::tests::active_run_admission_is_bounded_per_session`，此后 29 分钟再无一行输出，
+runner 在 04:30:09 杀掉 `cargo` 与测试进程；另外 7 个作业都是绿的，平台腿因为 Linux 作业没结束而被跳过。
+作业没有报告失败，它只是停止说话 —— 而「还在跑」与「没有失败」在日志里是同一副样子。该测试在它唯一断言
+之前只有一个没有期限的等待 `subagent_rx.recv().await`。
+
+- 2 秒这个期限不是猜的，也不是新发明的形状：同文件早有带期限的 `recv_spawn`，4 条测试在用，其中
+  `parallel_panel_respects_concurrency_cap` 与 `cancel_drops_queued_spawns_before_coordinator` 恰好在被拖死的
+  这一次 run 里跑完并 `ok` —— 同一个 runner、同一类事件、同一个 2 秒；`scheduler/actor.rs` 的 `next_event`
+  （3 秒）是第三种同一形状。`recv_spawn` 多收一个 `what` 标签，三条 panic 分支都把它写进消息；模块内 15 处裸
+  `recv().await`（四种写法：`let … else`、先取临时变量再 `let … else`、直接 `push(…)`、`if let … else panic!`）
+  全部改走它，净 -29 行，`manager.rs` 的裸等待归零，全仓库测试代码里 `.recv().await.expect(` 从 84 处降到
+  69 处。模块切片 `24 passed; 0 failed; 0 ignored; 0 measured; 6908 filtered out; finished in 0.22s`。
+- 期限被单独钉了一次，否则重构会冒充修复：把测试自己的中继任务改成丢弃 `Spawn` 事件，**改前的源码真的挂死**
+  （30 秒硬超时被杀，整段输出只有 `running 1 test` 一行，跟 CI 日志同形），改后 2.06 秒失败并打印
+  `spawn event: no spawn event within 2s`；把标签换成 `LABELPROBE` 消息跟着换；中继改成提前关闭通道走另一条
+  分支（0.09 秒说「channel closed」）；把超时分支换成 `pending()`、其余一概不动，测试又挂回去（30.01 秒），
+  这才证明救场的是期限而不是改写；把准入阈值改成 `>= 1000`，该测试仍然红（0.79 秒），证明重写没削弱它本来
+  要抓的缺陷。矩阵 6 格 `6 caught, 0 survived`。
+- 两处「存活」记在期望表而不是代码头上，因为这种错容易再犯：`F2` 的标签 `"spawn event"` 被三个改造后的站点
+  共用，替换打中了别的调用点；`F5` 把 `unwrap_err()` 写成 `unwrap()` 去比对，测试一直是红的，是字符串比较
+  说它没红。更早一轮还报过 4 个假挂死 —— `timeout` 被套在 `cargo test` 上，于是也把 ~180 秒的编译算进去，
+  每格都在测试启动前被杀。**计时只能罩住测试二进制本身。**
+- 真因诚实记录为未定位：per-run 的 `agent_slots` 信号量（默认 32 个许可，本测试只需 1 个）与
+  `cancel_all_and_drain` 的 `timeout_at` 都已排除；同一次 run 里 `plan_approval_restored_after_resume` 也越过
+  60 秒看门狗、2 分 11 秒后才 `ok`，说明那台机器当时确实在退化；本机 25 轮各 ~0.08 秒通过。下一批
+  `f0f7f551`（run 37268644414）8 个作业全部 `success`，该测试没再挂 —— 这与「负载敏感」而非「确定性死锁」
+  一致，因此剩余 69 处同类裸等待另立 TODO 行跟踪，不因本批改动就地关掉。
+
+（2026-10-05；`crates/codegen/xai-grok-shell/src/session/workflow/manager.rs`、`docs/verification/workflow-spawn-wait-2026-10-05.log`、`docs/ci-test-debt.md`、`TODO.md`、`docs/verification/todo-open-items.tsv`、`docs/architecture/todo-open-item-classification.md`、`CHANGELOG.md`）
+
 ### 修复：十一个文件各自把「锁被毒化」当 panic 用，现在它们共用一条恢复路径
 
 `xai-grok-shell` 读 `std::sync` 锁有两种脾气：一种当场恢复（`unwrap_or_else(PoisonError::into_inner)`），

@@ -19,9 +19,10 @@ timeline turn-grouping pass, the first full Windows CI verdict, the load-bearing
 feature guard and the two CI failures that guard then exposed, the drive-less model
 path fold decided and then executed against a Windows target, the unpin/title
 lost update closed inside the persistence actor itself, the platform gating that turned that Windows
-leg green, and the five mechanisms that accounted for the 42 Windows test failures left over after
+leg green, the bounded spawn-wait that stopped one test from spending the whole CI job
+budget, and the five mechanisms that accounted for the 42 Windows test failures left over after
 that gating, now inventoried row by row, is
-22 unchecked and 114 partial
+23 unchecked and 114 partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -31,14 +32,21 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
-(unchecked/partial), summing to 136. One unchecked row was opened on
-2026-10-05 with the poisoned-lock consolidation: the 28 call sites that
+M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 3/17
+(unchecked/partial), summing to 137. Two unchecked rows were opened on
+2026-10-05. The first came with the poisoned-lock consolidation: the 28 call sites that
 treated poisoning as a panic now recover through one shared trait, and
 the mutation matrix that proved the change named 21 sites whose coverage
 did not come with it, because reaching them needs a live session actor
 that has published a prompt id before the guard is poisoned. That row
-records the missing seam rather than describing it as unreachable. Three
+records the missing seam rather than describing it as unreachable. The
+second carries the 69 `.recv().await.expect(` sites still left in test
+code after `session/workflow/manager.rs` had its own 15 bounded, together
+with the CI stall whose root cause the pass did not establish. The file
+that already ships its own `await_with_timeout` helper is itself one of
+the offenders, so most of what is left is routing the last few lines back
+into a helper the file already has; the row states the tracing route for
+the stall instead of filing it as an environment problem. Three
 unchecked rows were opened on 2026-10-04 while the
 Docker acceptance labs were being re-run, and all three closed the same day: the installer's
 artifact fetch now has a rate floor with fixtures of its own, the reasons its mirror candidates
@@ -130,7 +138,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 2 | 17 |
+| Maintenance items / §8 | 3 | 17 |
 
 ## Locally delivered in this audit pass
 
