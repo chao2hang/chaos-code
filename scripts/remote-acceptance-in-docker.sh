@@ -456,7 +456,12 @@ log "building the artifacts inside ${IMAGE}"
 # while this image is Debian bookworm at 2.36, so on CI every copy died at load
 # time inside a container that had done nothing wrong. The warm caches are the
 # named volumes scripts/verify-in-docker.sh uses.
-mkdir -p "${lab_root}/artifacts"
+# The runtime creates a mount point the image does not already have, and it creates
+# it as root inside whatever is mounted at its parent, so mounting the target volume
+# at /src/target alone leaves a root-owned `target/` in the checkout. Created here
+# first, it belongs to whoever ran the lab -- the same reason scripts/verify-in-docker.sh
+# does this before its own build.
+mkdir -p "${repo_root}/target" "${lab_root}/artifacts"
 if ! docker run --rm --init --workdir /src \
   --volume "${repo_root}:/src" \
   --volume "${lab_root}:/lab" \

@@ -243,9 +243,11 @@ def main(argv=None) -> int:
 
     runners_scanned = []
     mounted = 0
+    mounters: list[str] = []
     for runner in runners:
         if mounts_checkout(shell_lines(runner.read_text(encoding="utf-8", errors="replace"))):
             mounted += 1
+            mounters.append(show(runner))
         runners_scanned.append((runner, show(runner), scan_runner(runner, show(runner))))
     dockerfiles_scanned = [
         (path, show(path), scan_dockerfile(path, show(path))) for path in dockerfiles
@@ -256,6 +258,10 @@ def main(argv=None) -> int:
         for path, name, found in runners_scanned + dockerfiles_scanned:
             if not found:
                 print(f"  judged {name}")
+        # Named, not just counted: "3 scripts were judged" cannot tell a scanner that
+        # found the three entry points from one that matched three unrelated files.
+        for name in mounters:
+            print(f"  mounts the checkout: {name}")
 
     for finding in findings:
         print(finding, file=sys.stderr)

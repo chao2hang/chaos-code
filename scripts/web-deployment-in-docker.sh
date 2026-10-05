@@ -267,7 +267,12 @@ log "building the Web host inside ${IMAGE}"
 # 37297270032 printed was a readiness probe that never answered. The warm caches
 # are the named volumes scripts/verify-in-docker.sh uses, so one machine does not
 # pay for two dependency builds.
-mkdir -p "${lab_root}/artifacts"
+# The runtime creates a mount point the image does not already have, and it creates
+# it as root inside whatever is mounted at its parent, so mounting the target volume
+# at /src/target alone leaves a root-owned `target/` in the checkout. Created here
+# first, it belongs to whoever ran the lab -- the same reason scripts/verify-in-docker.sh
+# does this before its own build.
+mkdir -p "${repo_root}/target" "${lab_root}/artifacts"
 if ! docker run --rm --init --workdir /src \
   --volume "${repo_root}:/src" \
   --volume "${lab_root}:/lab" \

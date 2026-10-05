@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### 修复：两个 Docker 实验台在检出里留下 root 所有的 `target/`，容器卫生门禁在下一次 CI 上把这件事说了出来
+
+上一批把实验台从「宿主编译、容器运行」改成「容器里编译」（见下面那条 2026-10-06 的 Docker 条目），代价是它们第一次把检出 bind mount 进容器，
+同时把缓存卷挂在 `/src/target`。Docker 会替镜像里不存在的挂载点创建目录，而且是**以 root 身份创建在该路径父挂载里**，
+于是每跑一次实验台，宿主的检出里就多出一个不属于它的 `target/`。`scripts/ci/check-container-hygiene.py` 早就有这条规则
+（挂载检出的脚本必须先在宿主把命名卷的挂载点建出来），此前只有 `verify-in-docker.sh` 需要遵守它。run `37346951334`
+的 `workflows present` 作业因此红在两条原文上，红的正是自新测试的 `test_repository_is_clean_and_actually_scanned`。
+
+两个 lab 现按 `verify-in-docker.sh` 同样的做法在 `docker run` 之前 `mkdir -p "${repo_root}/target"`，注释写明为什么必须是宿主而不是容器。
+门禁的 `--verbose` 也从「报数」改为「报名」，自新测试断言那三个名字而不是数字：「3 个挂载检出的脚本」这句话，
+在扫描器认错三个文件与一个都没认错时长得一模一样。反证两条 —— 把 `mkdir` 删掉，门禁重新变红并点名那个 lab，
+说明兑现规则的是这一行；把报名那两行删掉，门禁仍绿而 19 条自新测试红 1 条（`AssertionError: Lists differ: [] != [...]`），
+说明「报名」这件事是被断言着的。逐字复现（在同一 commit 的第二个工作树里跑门禁）与两条变异见
+`docs/verification/docker-lab-glibc-2026-10-06.log` 第 10 节。这一节不证明实验台本身：改完没有再端到端跑一次 lab，
+§9 那次绿灯才是实验台的证据。
+
+（2026-10-06；`scripts/remote-acceptance-in-docker.sh`、`scripts/web-deployment-in-docker.sh`、`scripts/ci/check-container-hygiene.py`、`scripts/ci/test-check-container-hygiene.py`、`docs/verification/docker-lab-glibc-2026-10-06.log`）
+
 ### 修复：今天那份 ZCode 取证文档自己错了四处，其中一处把打包产物里的迁移 SQL 说成了活表
 
 同一批差距登记提交出去之后，把 `docs/verification/zcode-capability-gap-2026-10-06.md` 里每条关于 ZCode 的

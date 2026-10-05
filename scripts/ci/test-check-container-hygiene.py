@@ -28,6 +28,7 @@ character, so the shape that was actually running stays a test case after the sc
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -89,9 +90,9 @@ docker run -d --name "$container_name" --volume "${work_dir}/payload:/lab" "$ima
 """
 
 
-def run_gate(root: Path) -> subprocess.CompletedProcess:
+def run_gate(root: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(GATE), "--root", str(root)],
+        [sys.executable, str(GATE), "--root", str(root), *extra],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -267,10 +268,28 @@ class ContainerHygieneTests(Base):
 
     # -- the scan itself ---------------------------------------------------------------------
 
+    # Every entry point that mounts the checkout, named. The two acceptance labs joined
+    # this list on 2026-10-05, when they started compiling inside the image instead of
+    # copying host binaries in, and both of them then owed the host-side `mkdir` the
+    # target-volume rule checks for.
+    MOUNTS_CHECKOUT = (
+        "scripts/remote-acceptance-in-docker.sh",
+        "scripts/verify-in-docker.sh",
+        "scripts/web-deployment-in-docker.sh",
+    )
+
     def test_repository_is_clean_and_actually_scanned(self) -> None:
-        proc = run_gate(REPO)
+        proc = run_gate(REPO, "--verbose")
         self.assertEqual(proc.returncode, 0, f"stderr: {proc.stderr}")
-        self.assertIn("1 mounts the checkout", proc.stdout)
+        named = sorted(
+            line.split(": ", 1)[1]
+            for line in proc.stdout.splitlines()
+            if line.startswith("  mounts the checkout: ")
+        )
+        self.assertEqual(named, sorted(self.MOUNTS_CHECKOUT), proc.stdout)
+        stated = re.search(r"(\d+) mounts the checkout", proc.stdout)
+        self.assertIsNotNone(stated, proc.stdout)
+        self.assertEqual(int(stated.group(1)), len(named), proc.stdout)
         scanned = int(proc.stdout.split("(")[1].split(" shell script")[0])
         self.assertGreaterEqual(scanned, 12, f"only {scanned} scripts scanned: {proc.stdout}")
 

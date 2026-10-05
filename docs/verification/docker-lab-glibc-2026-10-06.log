@@ -190,3 +190,101 @@ on a cold runner pays, and that is the run whose verdict is the point.
 - The remote lab still runs both its machines from one daemon on one host. It has always been a
   single-host lab with two containers, and the ledger row for it in `scripts/ci/docker-labs.tsv`
   says so.
+
+== 9. The runner leg, on a runner (2026-10-06)
+
+The sentence above that said the runner leg "is only re-proven once a scheduled or dispatched run
+of `Docker acceptance labs` goes green on `ubuntu-latest`; that verdict is appended to this file,
+not assumed here". It is appended here.
+
+    workflow   Docker acceptance labs
+    run        37347119619 (number 2, workflow_dispatch, started 2026-10-05T17:15:55Z)
+    commit     ac19c73a016343c2d4fd0bc469ffa129422b8d0b
+    runner     ubuntu-24.04 (image version 20260927.320.1, glibc 2.39)
+    job        web TLS deployment and M4 remote acceptance -- conclusion success
+    url        https://github.com/chao2hang/chaos-code/actions/runs/37347119619
+
+One job runs both labs, and its log ends both steps the way §7's local transcripts do:
+
+    2026-10-05T17:20:39Z  all 41 TLS deployment checks passed against nginx:1.27-alpine + chaos-verify:local
+    2026-10-05T17:23:29Z  all 130 M4 acceptance checks passed against chaos-verify:local
+
+each preceded by its own build line (`== building the Web host inside chaos-verify:local`,
+`== building the artifacts inside chaos-verify:local`). What §7 measured on this machine and what
+this run measured are now the same claim, made on a host whose glibc is NEWER than the image's --
+which is the direction that used to break it. Before the change, this exact dispatch would have
+produced CI run 37297270032's `the backend never answered on loopback inside its container; giving
+up.`.
+
+One runner-side detail is worth recording because it will confuse the next reader of a red watch:
+`gh run view --json conclusion` returns an empty string for a job whose `status` is still
+`in_progress`, so a watch loop comparing that against `success` sees a failure that did not happen.
+The monitor watching this run printed `FAILED ... conclusion=` for exactly that reason while the
+run was completing; the run itself was green.
+
+== 10. The cost of §4, paid by the next run of the other workflow (2026-10-06)
+
+§4 moved both acceptance labs from copying host-built binaries into the container to compiling them
+inside the image. Compiling needs the warm dependency cache, so each lab now bind-mounts the
+checkout at `/src` AND mounts the named volume at `/src/target`. Docker creates a mount point that
+the image does not already have, and it creates it as root inside whatever is mounted at that path's
+parent -- so the first lab run leaves a `target/` owned by root sitting in the developer's checkout,
+a directory nobody there created.
+
+`scripts/ci/check-container-hygiene.py` already had a rule for precisely this: a script that mounts
+the checkout must create every named-volume mount point on the host first. `verify-in-docker.sh`
+followed it; the two labs had never needed to, because before §4 neither of them mounted the
+checkout at all. Both joined the mounter set in one commit, and the next run of the `CI` workflow
+said so -- run 37346951334, job `workflows present`, whose self-test failed inside
+`test_repository_is_clean_and_actually_scanned` with the gate's own two lines:
+
+    scripts/remote-acceptance-in-docker.sh: /src/target is a named volume mounted inside the checkout but the script never creates ${repo_root}/target on the host, so the runtime makes that mount point as root and the checkout ends up holding a directory its owner did not create
+    scripts/web-deployment-in-docker.sh: /src/target is a named volume mounted inside the checkout but the script never creates ${repo_root}/target on the host, so the runtime makes that mount point as root and the checkout ends up holding a directory its owner did not create
+    container-hygiene: 2 problem(s) in 16 shell script(s) scanned, 3 mounting the checkout, 1 Dockerfile(s)
+
+The same verdict, reproduced on this machine from a second worktree of the very commit CI ran, so the
+reading does not depend on the runner log being kept:
+
+$ python3 scripts/ci/check-container-hygiene.py
+
+    container-hygiene: 2 problem(s) in 16 shell script(s) scanned, 3 mounting the checkout, 1 Dockerfile(s)
+    (exit 1, naming the same two scripts)
+
+Both labs now create the mount point on the host before `docker run`, with a comment saying why it
+has to be the host and not the container. On the fixed tree the gate is green and, because it was
+just changed, names the three mounters it found rather than only counting them:
+
+$ python3 scripts/ci/check-container-hygiene.py --verbose
+
+      mounts the checkout: scripts/remote-acceptance-in-docker.sh
+      mounts the checkout: scripts/verify-in-docker.sh
+      mounts the checkout: scripts/web-deployment-in-docker.sh
+    container-hygiene: OK (16 shell script(s) scanned, 3 mounts the checkout, 1 Dockerfile(s), 0 problem(s))
+    (exit 0)
+
+The count alone was the weak spot: "3 mounting the checkout" reads the same whether the scanner found
+the three entry points or matched three unrelated files, which is how a gate like this goes blind
+without going red. Its self-test therefore now asserts the set of names, not the number:
+
+$ python3 scripts/ci/test-check-container-hygiene.py
+
+    Ran 19 tests in 0.536s
+
+    OK
+
+Two mutations, each on a copy outside this checkout, each restored and compared byte for byte:
+
+- M-A, the fix itself: in the copied `web-deployment-in-docker.sh`, drop `mkdir -p
+  "${repo_root}/target"` and keep the rest of the line. The gate goes back to 1 problem and names
+  that one script. So it is the host-side `mkdir` satisfying the rule, not some other line in the
+  same commit.
+- M-B, the guard itself: delete the two lines that print the names. The gate stays green -- it still
+  counts 3 -- and one of the 19 self-tests goes red, which is the point:
+
+      FAIL: test_repository_is_clean_and_actually_scanned (__main__.ContainerHygieneTests)
+      AssertionError: Lists differ: [] != ['scripts/remote-acceptance-in-docker.sh', ...]
+
+What this section is not evidence of: neither lab was re-run end to end after the `mkdir`, so the
+green §9 stands as the lab evidence and this one is about the host-side artifact the labs leave
+behind. Whether a root-owned `target/` had already damaged a real checkout on some machine is not
+recoverable from here.
