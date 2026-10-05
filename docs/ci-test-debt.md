@@ -1971,6 +1971,30 @@ run、`status=completed` 配 `conclusion=in_progress`、一份 HTTP 200 且内�
 输出不属于 `docker logs`，失败分支要读脚本自己写下的那个日志文件：读错文件的失败信息比没有失败信息更贵，
 它把可查的现场换成了与现场无关的一句话。**
 
+## 2026-10-06：仓库外的取证路径不在任何门禁的视野里，写错一个路径没有东西会红
+
+同日给「web 端与 ZCode 的差距」补的第二遍取证。第一版提交后逐条复量，改掉了四处：CLI 库的表数（21 → 19）、
+`checkpoint` 的命中数（22 → 86，22 是 `worktree` 的数）、把 `automations`/`automation_runs` 说成「表」
+（它们只是 `zcode-server.cjs` 里的 `CREATE TABLE IF NOT EXISTS` 字符串，本机两个库里都没有这张表）、
+以及对 Electron 的结论过弱（那 14 次命中里 13 次是 ZCode 自己的更新通道、设置项与请求头）。
+
+- 这些断言全部关于**仓库之外**的文件：`/home/chaos/.zcode/…` 的 SQLite 库与打包产物。
+  `scripts/ci/check-doc-path-refs.py` 的规则 4 明确只认「首段是本仓库有跟踪内容的顶层条目」的引用，
+  仓库外路径按设计不进它的视野；`check-evidence-paths.py` 只管会话私有目录；`check-evidence-commands.py`
+  只看以 `$ ` 开头的行与标了 shell 的围栏。也就是说，一份纯外部取证文档里的路径可以完全凭空写，
+  44 条闸门一条都不会红。
+- 缺口不在门禁那侧，而在写的那侧：本批第一版把一份未复述的二手摘录直接抄进了文件。凡是关于外部系统的
+  事实（库、日志、安装目录、进程），落笔前必须当场 `find`/`count(*)`/`ls -l` 一遍，并把命令与其输出
+  一起留在同一份文档里 —— 第 5 节那几条复现命令就是这次实跑的那些。
+- 「表在 DDL 里」与「这台机器真用过它」是两件事。第二遍补了一张按 `count(*)` 分的证据等级表
+  （A 有行 / B 零行 / C 只在打包产物里），差距的排序改按它走：`session_input` 16 行、`input_history` 15 行、
+  三张 usage 表 67/56/16 行是 A 级；`permission`、`todo`、`session_target`、`workflow_*` 本机零行是 B 级；
+  `automations` 是 C 级。
+
+**判据：仓库的路径门禁覆盖不到仓库之外，所以关于外部系统的每一句断言的验收只能是人手实测一次，且复现命令
+与输出要写在它旁边；未经复述的摘录不得入册。引用一条已有的账本行或既有文档等于重新对它负责，
+要当场对签名或对文件复核。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

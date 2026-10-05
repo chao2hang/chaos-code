@@ -90,7 +90,7 @@ GUI 新代码默认只进入：
 | 分享、配额、云同步、登录墙 | Unsupported（首个稳定版） | 后续产品/隐私/运维评审 | ADR-007；不作为首版功能 |
 | Whiteboard、Treemapping、轨迹 | Unsupported（无对手证据） | 无 | 2026-10-06 依据作废：此前把它当成 ZCode 已有能力，取自打包产物里 28 次 `whiteboard` 命中，逐条看上下文后确认全部来自随包打入的飞书开放接口 SDK（注释指向 `open.feishu.cn/api-explorer?project=board`），`treemap`/`treeMap` 命中 0 次 |
 | CUA、语音 | Deferred | M5 后 | 单独产品评审 |
-| 定时自动化与闲时任务 | Deferred | M5 后 | 判定不变，但依据要写清：ZCode 侧这**不是**设想而是已交付表与运行历史（`automations` 带 `cron_expr`/`next_run_at`/`retry_at` 三条索引、`automation_runs` 记每次执行、`off_peak_tasks` 带排队位次与服务端 ticket），Chaos 侧对应能力为 0；见 `docs/verification/zcode-capability-gap-2026-10-06.md` 第 2.2 节 |
+| 定时自动化与闲时任务 | Deferred | M5 后 | 判定不变，但依据在 2026-10-06 复量后要分成两半写：`off_peak_tasks` 是 `v2/tasks-index.sqlite` 里**真实存在**的表（带 `queue_position`/`next_poll_at`/`claim_running` 与 `idx_off_peak_pick`、`idx_off_peak_ws`，服务端另有四个 `/api/v1/off-peak/...` 端点，本机 0 行）；而 `automations`/`automation_runs` 在本机两个库里**都不存在**，它们只是 `zcode-server.cjs` 偏移 7 025 397／7 026 955 处的 `CREATE TABLE IF NOT EXISTS` 字符串（连同 `idx_automations_due`/`_retry`/`_workspace`/`_target_task` 与 `idx_automation_runs_by_automation` 五条索引一起分发）。前一句是本行原先「已交付表与运行历史」中被证实的部分，后半句是它当时说过头的地方。Chaos 侧对应能力仍为 0；见 `docs/verification/zcode-capability-gap-2026-10-06.md` 第 2.0、2.2 节 |
 
 ### 2.1 品牌替换边界
 
@@ -124,7 +124,7 @@ GUI 新代码默认只进入：
 | 带预算的长目标任务 | `session_target(objective, status, token_budget, tokens_used, time_used_seconds)` | 无此层概念 | Unsupported | M2.5 |
 | 工作流与子代理树 | `workflow_run`/`definition`/`event`/`activity` 加 `session_task_link(role, depth, path, agent_type, model, status)`，activity 状态含 `cached`/`lost` | 无事件无数据合同 | Unsupported | M3.3 |
 | 计划清单 | `todo(session_id, content, status, priority, position)` | Web 路径上无协议无界面 | Unsupported | M1.2 |
-| 定时自动化与闲时任务 | `automations` + `automation_runs` + `off_peak_tasks` 与四个 off-peak 端点 | 无 | Deferred | 第 2 章矩阵、第 6 章 |
+| 定时自动化与闲时任务 | `off_peak_tasks` 是真表（本机 0 行）+ 四个 off-peak 端点；`automations`/`automation_runs` 与它们的五条索引只以 `CREATE TABLE IF NOT EXISTS` 字符串存在于 `zcode-server.cjs`，本机库里没有 | 无 | Deferred | 第 2 章矩阵、第 6 章 |
 
 结论是差距集中在**产品外壳**而不是安全边界：安全、审批、root confinement、附件分片、Git 子集、手机外壳这些已经交付且经真实浏览器验证；差距大的是「会话作为对象」「服务端推送」「可选择的模型与模式」「用量与授权记忆」「diff 审查粒度」这一层。因此下面的登记不按 ZCode 的表结构照抄，只按 Chaos 自己的协议与 schema 补能力，且 M-1 的许可与产品归属门禁继续挡在任何复制动作前面。
 

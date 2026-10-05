@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### 修复：今天那份 ZCode 取证文档自己错了四处，其中一处把打包产物里的迁移 SQL 说成了活表
+
+同一批差距登记提交出去之后，把 `docs/verification/zcode-capability-gap-2026-10-06.md` 里每条关于 ZCode 的
+断言在这台机器上重新读了一遍。四处不符，都在证据侧，没有一处动摇第 4 节的差距判定；文件里新加第 7 节逐条记下
+改了什么、错在哪。
+
+- 表数：`cli/db/db.sqlite` 是 19 张表，不是 21；`checkpoint` 在 `zcode-server.cjs` 里命中 86 次，不是 22
+  （22 是 `worktree` 的数）。
+- **`automations` 与 `automation_runs` 在本机两个库里都不存在**，它们只是 `zcode-server.cjs` 偏移
+  7 025 397／7 026 955 处的 `CREATE TABLE IF NOT EXISTS` 字符串；第一版写成「一张完整的调度器表」「另有一张
+  执行历史表」是过头的。真正落在库里的是 `off_peak_tasks`（`v2/tasks-index.sqlite` 里的真表，带
+  `idx_off_peak_pick`、`idx_off_peak_ws`）与四个 `/api/v1/off-peak/...` 端点。`TODO.md` 第 2 章矩阵那一行与
+  §2.2 判定表那一行都按这条改回它撑得住的范围，判定 Deferred 不变。
+- 新增一节证据强度分级：以只读方式打开两个活库逐表 `count(*)`，分成 A（有行）/B（表在、本机 0 行）/C（只在
+  打包产物里）。差距排序改按它走 —— `session_input` 16 行、`input_history` 15 行、三张 usage 表 67/56/16 行
+  是 A 级；`permission`、`todo`、`session_target`、`workflow_*` 本机零行是 B 级；automation 是 C 级。
+  「表在 DDL 里」与「这台机器真用过它」从此在文档里是两个词。
+- 第二份打包产物 `server/agents/glm/zcode.cjs`（13 MB）第一次进入取证面：`session_target`、`input_history`
+  在服务端产物里 0 次、`session_input` 只有 3 次，在 agent 侧却是 28、13、48 次 —— 插话、目标预算、输入历史的
+  主场是 agent 进程。另有二进制级证据补上第 2.5 节：随包分发的已编译 `pty.node`（75 976 字节）与
+  `bfs`/`ripgrep`/`ugrep` 三个搜索二进制。
+- 一处对己方过严的结论被证据推翻：「不能据 `electron` 命中说 ZCode 桌面端是 Electron」。那 14 次命中里 1 次是
+  MIME 表的 `application/vnd.ibm.electronic-media`，其余 13 次是 ZCode 自己的更新通道
+  （`electronReleaseChannelSchema`）、设置项（`skippedElectronUpdateVersions`）、请求头
+  （`"X-Title": "Z Code@electron"`）与运行时判断（`if (!process.versions.electron)`）。桌面端跑在 Electron 上
+  是有名字级证据的；本机拿不到的仍是客户端本体，所以界面级比较照旧不做。白板那 28 次命中的否定结论不变，这次
+  还多了一条：28 次全落在偏移 1 780 390 到 1 788 181 那一段里，而第二个打包产物里 `whiteboard` 是 0。
+- 教训写进 `docs/ci-test-debt.md`：`check-doc-path-refs.py` 按设计只认仓库内的引用，仓库外的取证路径（别的
+  机器上的库、安装目录、日志）44 条闸门一条都不会红，这类断言的验收只能是人手实测并把命令与输出留在旁边。
+
+（2026-10-06；`docs/verification/zcode-capability-gap-2026-10-06.md`、`TODO.md`、`docs/ci-test-debt.md`、`CHANGELOG.md`）
+
 ### 修复：两个 Docker 实验台在宿主上编译、在另一个发行版里运行，一句关于容器的判决量的其实是宿主
 
 计划运行 `37297270032` 里 web TLS 部署实验台只留下一句 `the backend never answered on loopback inside its
