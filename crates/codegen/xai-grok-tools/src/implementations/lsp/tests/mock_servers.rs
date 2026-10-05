@@ -1215,8 +1215,13 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 def dump(name, obj):
-    with open(os.path.join(HERE, name), "w") as f:
+    # A test polls for the file and parses whatever it finds, so a dump must appear
+    # whole: writing the real name first would let a reader see the empty file that
+    # `open(..., "w")` leaves behind, which on Windows arrives as a JSON parse error.
+    path = os.path.join(HERE, name)
+    with open(path + ".part", "w") as f:
         json.dump(obj, f)
+    os.replace(path + ".part", path)
 
 while True:
     msg = read_message()

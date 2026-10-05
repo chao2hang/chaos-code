@@ -2037,6 +2037,48 @@ run、`status=completed` 配 `conclusion=in_progress`、一份 HTTP 200 且内�
 因为它红的根本不是自己声称在量的那件事。改了被文档引用的那些位置，就得当场把引用重抄一遍，因为
 没有门禁会替你发现行号已经指向别处。**
 
+## 2026-10-06：夹具「等文件出现」的那句 `exists()`，等的是一个已经存在但还没写完的文件
+
+Windows 那条 LSP 用例 `advertises_and_accepts_file_watch_registration_without_error`
+（`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs:2528`）间歇性红在
+`parse register_reply.json: EOF while parsing a value at line 1 column 0`。测试侧的等待是
+`wait_until("registerCapability reply", || reply_path.exists())`，随后 `read_json` 直接
+`serde_json::from_str`；夹具侧是 mock LSP 服务里的 `dump()`：
+
+```python
+with open(path, "w") as f:      # 这一句就把文件建出来了，而且是空的
+    json.dump(obj, f)
+```
+
+`open(..., "w")` 在**打开**的那一刻就把文件创建（或截断）成 0 字节，写完才收手。于是
+「文件存在」与「文件完整」之间有一段时间窗，`exists()` 恰好落在窗里就读到空串。Linux 上
+`json.dump` 到这个小对象基本一次 `write` 就出去了，窗口窄到量不出来；Windows 的文件系统缓冲把它
+撑宽到足以被撞见。
+
+修法不是把 `wait_until` 的超时加长或加一次重试 —— 那只是把窗口挪窄一点。改成先写
+`<name>.json.part` 再 `os.replace` 到真名（POSIX 与 Windows 上 rename 都是原子的），让「存在」与
+「完整」变成同一瞬间。这条用例现在等的是它能真正等到的东西。
+
+值得记进测试债的是这个**形状**，不是这一次：`exists()` 表达的是「这个名字出现了」，而读方要的几乎总是
+「这份内容齐了」。同一个测试文件里其余的 `json.dump` 站点没有这个问题，因为它们写的是 LSP 的 stdout
+分帧（`Content-Length` 前缀 + 定长体），读方按长度取字节，看不见半个对象；只有「写一个文件、另一侧轮询
+这个文件」这种跨进程夹具才有这个缝。判断标准就一句：**只要写方是分两步落地（先创建、再填内容），读方的
+就绪判据就必须落在内容上，或者写方必须改成一步落地（临时名 + 原子改名）。**
+
+这个缝在 Linux 开发机上量不出来，唯一撞到它的是 CI。GitHub Actions run `37346951334`（head
+`ac19c73a`）的 `platform tests (windows-latest)`（job `111909810254`）逐字记录是：
+
+```text
+test implementations::lsp::tests::advertises_and_accepts_file_watch_registration_without_error ... FAILED
+thread '...' (7976) panicked at crates\codegen\xai-grok-tools\src\implementations\lsp\tests.rs:2519:52:
+parse C:\Users\RUNNER~1\AppData\Local\Temp\.tmpHSYGMZ\register_reply.json: EOF while parsing a value at line 1 column 0
+test result: FAILED. 3118 passed; 1 failed; 2 ignored; 0 measured; 0 filtered out; finished in 74.94s
+```
+
+同一轮里 `workflows present` 也是红的（另一个问题，见 `e49469e9`）。本地把那一条用例单独重跑多轮全绿，
+所以这条修法的证据不是「本地复现 → 修好」，而是 CI 上那份 0 字节的 `register_reply.json`：窗口宽度
+取决于对端文件系统，本机测不出来的竞态仍然可以是真实的缺陷。
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI
