@@ -55,7 +55,7 @@ describe('workspace session isolation', () => {
     expect(selected.busy).toBe(false)
   })
 
-  it('clears an archived current workspace and selects the remaining active workspace', () => {
+  it('clears an archived current workspace and leaves the landing spot to the host', () => {
     const source = {
       ...initialSessionState,
       workspaces,
@@ -66,8 +66,11 @@ describe('workspace session isolation', () => {
       busy: true,
     }
     const archived = applyServerMessage(source, { type: 'workspace_archived', workspace_id: 'a' })
-    expect(archived.activeWorkspaceId).toBe('b')
-    expect(archived.sessionId).toBe('session-b')
+    // 'b' is the only live workspace here, so guessing would have looked harmless --
+    // on a host with several, the guess is what made this tab read a conversation the
+    // host had not made active. The host names the fallback in the frame that follows.
+    expect(archived.activeWorkspaceId).toBeUndefined()
+    expect(archived.sessionId).toBeUndefined()
     expect(archived.messages).toEqual([])
     expect(archived.busy).toBe(false)
     expect(archived.workspaces.find((workspace) => workspace.id === 'a')?.archived).toBe(true)

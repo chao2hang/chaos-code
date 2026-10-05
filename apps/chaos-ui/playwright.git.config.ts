@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { ensureE2eStateDirs, gitWorkspace, holdFile, promptLog, providerKey, providerModel, providerPort, providerReply } from './e2e/support/paths'
+import { ensureE2eStateDirs, cutLog, gitWorkspace, holdFile, paceFile, promptLog, providerKey, providerModel, providerPort, providerReply } from './e2e/support/paths'
 
 // A second Playwright config, because this suite needs a host started with a real
 // provider configured, and `CHAOS_PROVIDER_*` replaces the demo responder every
@@ -12,14 +12,18 @@ import { ensureE2eStateDirs, gitWorkspace, holdFile, promptLog, providerKey, pro
 // Both commit specs share that fixture: one drives the form while it is allowed to
 // work, the other starts its own host in Safe Web Mode and drives what happens when
 // the host refuses every request the form makes.
+//
+// The streamed-answer spec is claimed here too, for the same reason as the commit
+// specs: it needs an endpoint it can make answer slowly, which the demo responder
+// on the other config cannot be.
 const backendPort = Number(process.env.CHAOS_E2E_BACKEND_PORT || 8787)
 const uiPort = Number(process.env.CHAOS_E2E_UI_PORT || 5174)
 ensureE2eStateDirs()
-const gitSpec = /commit-message(?:-safe-mode)?\.pw\.ts/
+const providerSpec = /(?:commit-message(?:-safe-mode)?|streaming-progress)\.pw\.ts/
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: gitSpec,
+  testMatch: providerSpec,
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
@@ -55,6 +59,8 @@ export default defineConfig({
         CHAOS_E2E_PROVIDER_REPLY: providerReply,
         CHAOS_E2E_PROVIDER_PROMPT_LOG: promptLog,
         CHAOS_E2E_PROVIDER_HOLD_FILE: holdFile,
+        CHAOS_E2E_PROVIDER_PACE_FILE: paceFile,
+        CHAOS_E2E_PROVIDER_CUT_LOG: cutLog,
       },
     },
     {

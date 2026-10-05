@@ -77,6 +77,10 @@ async fn main() -> anyhow::Result<()> {
         },
     };
     let assets_dir = std::env::var_os("CHAOS_WEB_ASSETS_DIR").map(std::path::PathBuf::from);
+    // A host with no provider has nothing setting the pace of an answer, and one
+    // written in a single write is indistinguishable on screen from a host that
+    // cannot stream at all. The gap only shapes the stand-in answer.
+    let engine = engine.with_demo_pacing(xai_grok_web::demo_chunk_gap_from_env());
     // The bound address is reported by the server itself once the socket exists.
     xai_grok_web::serve_loopback_with_assets_and_safe_mode(
         engine,

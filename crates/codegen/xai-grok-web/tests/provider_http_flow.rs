@@ -18,6 +18,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use uuid::Uuid;
 use xai_grok_test_support::{MockInferenceServer, MockModelEntry, ScriptedResponse};
 use xai_grok_web::router;
 
@@ -77,8 +78,9 @@ async fn receive(socket: &mut Client) -> ServerMessage {
 }
 
 /// Opens a session, submits one prompt and collects events through the terminal
-/// one, so a test asserts on the whole transcript rather than one message.
-async fn submit(address: SocketAddr, prompt: &str) -> Vec<ServerMessage> {
+/// one, so a test asserts on the whole transcript rather than one message. Also
+/// returns the session, for a test that then asks what a reconnecting tab is shown.
+async fn submit(address: SocketAddr, prompt: &str) -> (Vec<ServerMessage>, Uuid) {
     let (mut socket, _) = connect_async(format!("ws://{address}/ws"))
         .await
         .expect("websocket connect");
@@ -118,7 +120,33 @@ async fn submit(address: SocketAddr, prompt: &str) -> Vec<ServerMessage> {
         );
         events.push(event);
         if terminal {
-            return events;
+            return (events, session_id);
+        }
+    }
+}
+
+/// What a tab that opens the session now is shown: the transcript the engine kept,
+/// which is the answer to "what does a reload after a half-finished turn look like".
+async fn transcript(address: SocketAddr, session_id: Uuid) -> Vec<(String, String)> {
+    let (mut socket, _) = connect_async(format!("ws://{address}/ws"))
+        .await
+        .expect("websocket connect");
+    let _: ServerMessage = receive(&mut socket).await;
+    socket
+        .send(frame(&ClientMessage::Snapshot {
+            client_msg_id: format!("snapshot-{}", uuid::Uuid::new_v4()),
+            session_id,
+            workspace_id: None,
+        }))
+        .await
+        .unwrap();
+    loop {
+        match receive(&mut socket).await {
+            ServerMessage::SessionSnapshot { messages, .. } => {
+                return messages.into_iter().map(|m| (m.role, m.text)).collect();
+            }
+            ServerMessage::Ack { .. } => continue,
+            other => panic!("expected SessionSnapshot, got {other:?}"),
         }
     }
 }
@@ -161,7 +189,7 @@ async fn a_provider_reply_streams_over_the_websocket() {
     )))
     .await;
 
-    let events = submit(host.address, "summarise this").await;
+    let (events, _) = submit(host.address, "summarise this").await;
 
     assert_eq!(streamed_text(&events), "provider says hi");
     assert!(
@@ -212,7 +240,7 @@ async fn a_rejected_credential_surfaces_as_agent_failed() {
     )))
     .await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("a rejected key must produce an error");
     assert_eq!(code, "agent_failed");
@@ -239,7 +267,7 @@ async fn an_upstream_failure_is_reported_with_its_status() {
     );
     let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("a 500 must produce an error");
     assert_eq!(code, "agent_failed");
@@ -249,8 +277,12 @@ async fn an_upstream_failure_is_reported_with_its_status() {
     assert_eq!(streamed_text(&events), "");
 }
 
+/// A Provider that dies mid-answer leaves text the user is already reading. It
+/// cannot be un-shown, so what this holds the host to is the rest of the contract:
+/// the failure is named by code and message, the turn is not reported as an answer,
+/// and the half-answer is what a tab opened afterwards is shown.
 #[tokio::test]
-async fn a_mid_stream_provider_error_is_not_delivered_as_text() {
+async fn a_mid_stream_provider_error_ends_the_turn_as_a_failure_not_an_answer() {
     let provider = MockInferenceServer::start().await.unwrap();
     provider.enqueue_response(
         "/v1/chat/completions",
@@ -264,12 +296,30 @@ async fn a_mid_stream_provider_error_is_not_delivered_as_text() {
     );
     let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, session_id) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("an error frame must produce an error");
     assert_eq!(code, "agent_failed");
     assert!(message.contains("context overflow"), "{message}");
-    assert!(!streamed_text(&events).contains("usable prefix"));
+    assert_eq!(
+        streamed_text(&events),
+        "usable prefix",
+        "the prefix reached the browser as something other than streamed text"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, ServerMessage::Completed { .. })),
+        "a turn the Provider abandoned was settled as a finished answer: {events:?}"
+    );
+    assert!(
+        transcript(host.address, session_id)
+            .await
+            .iter()
+            .any(|(role, text)| role == "assistant" && text == "usable prefix"),
+        "a reload shows something other than what was on screen: {:?}",
+        transcript(host.address, session_id).await
+    );
 }
 
 #[tokio::test]
@@ -284,7 +334,7 @@ async fn an_unreachable_endpoint_reports_a_connection_error() {
     )))
     .await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("a dead port must produce an error");
     assert_eq!(code, "agent_failed");
@@ -306,7 +356,7 @@ async fn an_echoed_credential_never_reaches_the_browser() {
     )))
     .await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (_code, message) = error_event(&events).expect("a 401 must produce an error");
     assert!(message.contains("[redacted]"), "{message}");
@@ -376,7 +426,7 @@ async fn concurrent_sessions_do_not_serialize_on_the_provider() {
     for index in 0..4 {
         let host = Arc::clone(&host);
         tasks.push(tokio::spawn(async move {
-            let events = submit(host.address, &format!("prompt {index}")).await;
+            let (events, _) = submit(host.address, &format!("prompt {index}")).await;
             streamed_text(&events)
         }));
     }
@@ -404,7 +454,7 @@ async fn a_missing_credential_is_reported_as_an_authentication_failure() {
     provider.set_response("this must never be delivered");
     let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("a missing key must produce an error");
     assert_eq!(code, "agent_failed");
@@ -430,7 +480,7 @@ async fn a_rate_limited_endpoint_tells_the_user_to_retry() {
     );
     let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("a 429 must produce an error");
     assert_eq!(code, "agent_failed");
@@ -450,7 +500,7 @@ async fn a_malformed_stream_frame_fails_the_turn() {
     );
     let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("a bad frame must produce an error");
     assert_eq!(code, "agent_failed");
@@ -470,7 +520,7 @@ async fn a_completion_without_text_is_reported_instead_of_looking_finished() {
     );
     let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
 
-    let events = submit(host.address, "hello").await;
+    let (events, _) = submit(host.address, "hello").await;
 
     let (code, message) = error_event(&events).expect("an empty completion must produce an error");
     assert_eq!(code, "agent_failed");

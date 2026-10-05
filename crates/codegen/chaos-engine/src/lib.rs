@@ -4,9 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
 };
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub mod protocol_schema;
@@ -31,6 +35,31 @@ fn read_workspace_bytes(reader: impl std::io::Read) -> std::io::Result<Vec<u8>> 
 /// Implementations return text chunks and never receive GUI credentials.
 pub trait PromptAdapter: Send + Sync {
     fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String>;
+
+    /// Streaming form of [`Self::run_prompt`]: `emit` sees each chunk the moment
+    /// it exists and returns `false` once the caller has stopped listening, after
+    /// which the implementation must stop producing and return. Stopping is a
+    /// request to end the work, not to discard it -- the chunks already emitted
+    /// stay in the transcript -- so dropping the response mid-stream is the
+    /// correct reaction here, and an adapter that reads from a Provider must not
+    /// keep draining a reply nobody is showing.
+    ///
+    /// The default runs the whole prompt first and replays its chunks, so an
+    /// adapter that cannot produce incrementally still answers. `emit` returning
+    /// `false` is the caller's decision, never the adapter's failure, so the
+    /// default reports `Ok` for it; the caller already knows why it stopped.
+    fn run_prompt_stream(
+        &self,
+        prompt: &str,
+        emit: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<(), String> {
+        for chunk in self.run_prompt(prompt)? {
+            if !emit(&chunk) {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Boundary for tools that require an explicit approval before execution.
@@ -767,6 +796,59 @@ pub enum ClientMessage {
     },
 }
 
+impl ClientMessage {
+    /// The session a request is about, when it names one.
+    ///
+    /// This is how a connection declares that it follows a session: the engine
+    /// routes that session's events back to it (see [`Engine::follow`]). Every
+    /// request that operates on a session names it, so a client does not have to
+    /// do anything extra to keep receiving what it already asked for -- opening a
+    /// snapshot or cancelling a run is the following gesture. Requests with no
+    /// session (`ListWorkspaces`, `GetSettings`, the attachment chunk/validate
+    /// family) name none and register nothing; `ImportTuiSession`'s `session_id`
+    /// is a directory name from the terminal's on-disk sessions, not this
+    /// process's session id, so it is deliberately not counted here.
+    #[must_use]
+    pub fn session_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Resume { session_id, .. }
+            | Self::Submit { session_id, .. }
+            | Self::Cancel { session_id, .. }
+            | Self::Snapshot { session_id, .. }
+            | Self::ProposeFileWrite { session_id, .. }
+            | Self::ProposeTerminal { session_id, .. }
+            | Self::ProposeGitMutation { session_id, .. }
+            | Self::SuggestCommitMessage { session_id, .. }
+            | Self::BeginAttachment { session_id, .. }
+            | Self::AcceptDiff { session_id, .. }
+            | Self::RollbackDiff { session_id, .. }
+            | Self::PreviewDiff { session_id, .. } => Some(*session_id),
+            Self::CreateSession { .. }
+            | Self::CreateWorkspace { .. }
+            | Self::ListWorkspaces { .. }
+            | Self::ArchiveWorkspace { .. }
+            | Self::SwitchWorkspace { .. }
+            | Self::Approve { .. }
+            | Self::Reject { .. }
+            | Self::RespondQuestion { .. }
+            | Self::ListFiles { .. }
+            | Self::ReadFile { .. }
+            | Self::SearchFiles { .. }
+            | Self::GetSettings { .. }
+            | Self::GetHostInfo { .. }
+            | Self::UpdateSettings { .. }
+            | Self::GetGitStatus { .. }
+            | Self::ValidateAttachment { .. }
+            | Self::AttachmentChunk { .. }
+            | Self::CancelAttachment { .. }
+            | Self::FinalizeAttachment { .. }
+            | Self::ImportTuiSession { .. }
+            | Self::ValidateProvider { .. }
+            | Self::ScanMarketplace { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
@@ -976,6 +1058,124 @@ pub enum ServerMessage {
         code: String,
         message: String,
     },
+}
+
+impl ServerMessage {
+    /// Whether this message reports something that *happened* in a session, as
+    /// opposed to answering one client's request.
+    ///
+    /// The distinction decides who receives the message on a host with several
+    /// connections: an event goes to the connections following its session, so a
+    /// second tab that opened the same session follows a turn another tab or
+    /// another machine started, while an answer stays with the connection that
+    /// asked. Two messages look like events and are not: `session_created` and
+    /// `session_snapshot` are addressed, because a client
+    /// that did not ask would otherwise switch to a session it never chose or
+    /// replace its transcript with somebody else's.
+    #[must_use]
+    pub fn is_session_event(&self) -> bool {
+        match self {
+            Self::TextDelta { .. }
+            | Self::Completed { .. }
+            | Self::Cancelled { .. }
+            | Self::ToolApprovalRequested { .. }
+            | Self::ApprovalResolved { .. }
+            | Self::Audit { .. }
+            | Self::DiffResolved { .. }
+            | Self::QuestionRequested { .. }
+            | Self::QuestionResolved { .. }
+            | Self::ToolStarted { .. }
+            | Self::ToolProgress { .. }
+            | Self::ToolResult { .. }
+            | Self::FileChanged { .. }
+            | Self::FileWritten { .. }
+            | Self::Usage { .. }
+            | Self::Workspaces { .. }
+            | Self::WorkspaceArchived { .. } => true,
+            Self::SessionCreated { .. }
+            | Self::SessionSnapshot { .. }
+            | Self::WorkspaceSwitched { .. }
+            | Self::Handshake { .. }
+            | Self::Ack { .. }
+            | Self::Error { .. }
+            | Self::FilesListed { .. }
+            | Self::FileContents { .. }
+            | Self::SearchResults { .. }
+            | Self::Settings { .. }
+            | Self::SettingsUpdated { .. }
+            | Self::HostInfo { .. }
+            | Self::GitStatus { .. }
+            | Self::TerminalResult { .. }
+            | Self::GitMutationResult { .. }
+            | Self::CommitMessageSuggestion { .. }
+            | Self::AttachmentValidated { .. }
+            | Self::AttachmentStarted { .. }
+            | Self::AttachmentProgress { .. }
+            | Self::AttachmentCompleted { .. }
+            | Self::AttachmentCancelled { .. }
+            | Self::ProviderValidation { .. }
+            | Self::MarketplaceScan { .. }
+            | Self::TuiSessionImport { .. }
+            | Self::DiffPreview { .. } => false,
+        }
+    }
+
+    /// The session a message belongs to, when it names one.
+    ///
+    /// [`Self::is_session_event`] decides *whether* a message is broadcast; this
+    /// decides *whose* broadcast it is. The two differ because some events are
+    /// not about one session: the workspace list changes for every connection at
+    /// once, and a resolved diff names a proposal rather than a session. Those
+    /// report `None` and reach every connection, which is what makes them useful;
+    /// everything that does name a session reaches only the connections that
+    /// named it back (see [`Engine::publish`]).
+    #[must_use]
+    pub fn session_id(&self) -> Option<Uuid> {
+        match self {
+            Self::SessionCreated { session_id, .. }
+            | Self::SessionSnapshot { session_id, .. }
+            | Self::TextDelta { session_id, .. }
+            | Self::Completed { session_id, .. }
+            | Self::Cancelled { session_id, .. }
+            | Self::ToolApprovalRequested { session_id, .. }
+            | Self::ApprovalResolved { session_id, .. }
+            | Self::Audit { session_id, .. }
+            | Self::DiffPreview { session_id, .. }
+            | Self::QuestionRequested { session_id, .. }
+            | Self::QuestionResolved { session_id, .. }
+            | Self::ToolStarted { session_id, .. }
+            | Self::ToolProgress { session_id, .. }
+            | Self::ToolResult { session_id, .. }
+            | Self::FileChanged { session_id, .. }
+            | Self::Usage { session_id, .. }
+            | Self::FileWritten { session_id, .. }
+            | Self::TerminalResult { session_id, .. }
+            | Self::GitMutationResult { session_id, .. }
+            | Self::AttachmentStarted { session_id, .. }
+            | Self::AttachmentCompleted { session_id, .. }
+            | Self::CommitMessageSuggestion { session_id, .. } => Some(*session_id),
+            Self::Handshake { .. }
+            | Self::Workspaces { .. }
+            | Self::WorkspaceArchived { .. }
+            | Self::WorkspaceSwitched { .. }
+            | Self::Ack { .. }
+            | Self::DiffResolved { .. }
+            | Self::FilesListed { .. }
+            | Self::FileContents { .. }
+            | Self::SearchResults { .. }
+            | Self::Settings { .. }
+            | Self::SettingsUpdated { .. }
+            | Self::HostInfo { .. }
+            | Self::GitStatus { .. }
+            | Self::AttachmentValidated { .. }
+            | Self::AttachmentProgress { .. }
+            | Self::AttachmentCancelled { .. }
+            | Self::ProviderValidation { .. }
+            | Self::MarketplaceScan { .. }
+            | Self::TuiSessionImport { .. }
+            | Self::Error { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1869,9 +2069,141 @@ impl SqliteSessionStore {
     }
 }
 
+/// `Mutex::lock` without the second panic.
+///
+/// The rule `xai-grok-shell`'s `LockOrRecover` trait states, restated here because
+/// `chaos-engine` sits below that crate and cannot import it. A poisoned engine lock
+/// means an earlier handler died holding it; what sits behind these three locks is a
+/// `State` struct, a subscriber map and a run registry, none of whose invariants
+/// depend on that holder finishing. Panicking instead is not merely noisy:
+/// `Drop for EventStream` takes the subscriber lock, and a panic raised while the
+/// process is already unwinding aborts it. Recovery returns the data and leaves the
+/// lock poisoned, so a panicking caller elsewhere still reports that a holder died.
+fn lock_or_recover<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    lock.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// How many events one host connection may fall behind before the engine stops
+/// handing it events at all. The channel is bounded so a connection that stops
+/// reading cannot grow memory without limit, and lossless up to that bound so a
+/// transcript that arrived is never missing a piece of itself: an overflowing
+/// connection is closed instead of trimmed, and the host reconnects for a fresh
+/// snapshot rather than continuing on a stream with a hole in it.
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
+/// What a client is told when the thread producing its answer died.
+///
+/// A transcript that simply stops is what a dropped event looks like too, and a
+/// connection cannot tell the two apart from the inside; the death is therefore
+/// reported as the turn's outcome rather than left to be inferred.
+const RUN_LOST: &str = "Agent 处理线程已终止";
+
+/// How many prompt runs one engine produces at the same time.
+///
+/// A run is a thread parked on a Provider round trip or a subprocess, and turns
+/// now run off their connection, so the number of threads is no longer bounded by
+/// how fast one client can send frames. The bound therefore moves to where the
+/// threads are: past this many, a further prompt is refused by name rather than
+/// answered by a thread nobody is waiting for.
+const MAX_CONCURRENT_RUNS: usize = 32;
+
+/// What a client is told when every run slot is taken.
+const RUNS_FULL: &str = "同时生成的回复已达上限，请等待其中一些结束";
+
+/// The delivery end of one host connection's event stream.
+///
+/// Separate from [`EventStream`] and cheap to clone because a host has to address
+/// answers to a connection while also reading from it, and holding the read end
+/// borrowed across both is not expressible.
+#[derive(Clone)]
+pub struct EventSink {
+    id: u64,
+    subscribers: Arc<Mutex<HashMap<u64, mpsc::Sender<ServerMessage>>>>,
+    session_watchers: Arc<Mutex<HashMap<Uuid, HashSet<u64>>>>,
+}
+
+impl EventSink {
+    /// Whether the engine still delivers here. A sink stops being live when its
+    /// buffer overflows, which is the host's cue to close the connection.
+    pub fn is_live(&self) -> bool {
+        lock_or_recover(&self.subscribers).contains_key(&self.id)
+    }
+}
+
+/// One host connection's view of everything the engine produces.
+///
+/// Dropping it unregisters the connection, so a socket that went away stops
+/// costing the engine a send per event.
+pub struct EventStream {
+    sink: EventSink,
+    receiver: mpsc::Receiver<ServerMessage>,
+}
+
+impl EventStream {
+    /// Where answers addressed to this connection -- as opposed to events every
+    /// connection observes -- are delivered.
+    pub fn sink(&self) -> EventSink {
+        self.sink.clone()
+    }
+
+    /// The next event, or `None` once the engine has stopped delivering here:
+    /// either the engine is gone or this connection overflowed.
+    pub async fn recv(&mut self) -> Option<ServerMessage> {
+        self.receiver.recv().await
+    }
+}
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        lock_or_recover(&self.sink.subscribers).remove(&self.sink.id);
+        let mut watchers = lock_or_recover(&self.sink.session_watchers);
+        watchers.retain(|_, ids| {
+            ids.remove(&self.sink.id);
+            !ids.is_empty()
+        });
+    }
+}
+
+/// What opening a prompt turn produced: either a run to stream, or the whole
+/// answer, because the message was refused or was a command that ends the turn
+/// without calling a Prompt at all.
+enum SubmitStart {
+    Running(Arc<RunControl>),
+    Answered(Vec<ServerMessage>),
+}
+
+/// The knob a prompt run leaves where a later `cancel` can reach it. The run
+/// itself is deliberately not joinable: the point of registering it is that
+/// `cancel` no longer has to wait for the thing it is stopping.
+#[derive(Default)]
+struct RunControl {
+    cancelled: AtomicBool,
+    /// Whether this run has already been given an ending. A run that dies in a
+    /// panic is closed by whoever noticed, and a run that had already closed must
+    /// not be shown a second terminal event.
+    finished: AtomicBool,
+}
+
 #[derive(Clone)]
 pub struct Engine {
-    events: broadcast::Sender<ServerMessage>,
+    /// Live host connections, keyed by an id unique within this process.
+    subscribers: Arc<Mutex<HashMap<u64, mpsc::Sender<ServerMessage>>>>,
+    /// Which live connections follow which session, by session.
+    ///
+    /// A connection joins a set by naming that session in a request, and leaves it
+    /// when its stream is dropped or its buffer overflowed. This is what keeps two
+    /// tabs apart: without it, a session event would reach every socket on the
+    /// host, so a second tab would watch a conversation it never opened.
+    session_watchers: Arc<Mutex<HashMap<Uuid, HashSet<u64>>>>,
+    next_subscriber: Arc<AtomicU64>,
+    /// Prompt runs in flight, by session. Deliberately not part of `State`: a run
+    /// lives in this process and a restart ends it, so persisting it would
+    /// resurrect a turn that nothing is producing any more.
+    runs: Arc<Mutex<HashMap<Uuid, Arc<RunControl>>>>,
+    /// Slots a prompt run must hold to be producing. Shared by every clone of the
+    /// engine, because the thing being bounded is this process's threads.
+    run_slots: Arc<tokio::sync::Semaphore>,
     state: Arc<Mutex<State>>,
     store_path: Option<Arc<PathBuf>>,
     adapter: Option<Arc<dyn PromptAdapter>>,
@@ -1891,6 +2223,10 @@ pub struct Engine {
     marketplace_roots: Arc<Vec<PathBuf>>,
     tui_session_roots: Arc<Vec<PathBuf>>,
     host_info: Arc<HostInfo>,
+    /// How long the built-in stand-in responder waits between chunks. A real
+    /// adapter is paced by whatever produces it, so this only shapes the answer a
+    /// host without a provider gives.
+    demo_chunk_gap: Duration,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -2123,7 +2459,6 @@ impl Engine {
         sqlite_store: Option<Arc<SqliteSessionStore>>,
     ) -> Self {
         let initial_settings = state.settings.clone();
-        let (events, _) = broadcast::channel(256);
         // Derived before `path` and `sqlite_store` are moved into the struct.
         let state_backend = if sqlite_store.is_some() {
             StateBackend::Sqlite
@@ -2136,7 +2471,11 @@ impl Engine {
             .as_ref()
             .map(|adapter| adapter.root().display().to_string());
         Self {
-            events,
+            subscribers: Arc::new(Mutex::new(HashMap::new())),
+            session_watchers: Arc::new(Mutex::new(HashMap::new())),
+            next_subscriber: Arc::new(AtomicU64::new(1)),
+            runs: Arc::new(Mutex::new(HashMap::new())),
+            run_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_RUNS)),
             state: Arc::new(Mutex::new(state)),
             store_path: path.map(Arc::new),
             adapter,
@@ -2151,6 +2490,7 @@ impl Engine {
             git_adapter: None,
             marketplace_roots: Arc::new(Vec::new()),
             tui_session_roots: Arc::new(Vec::new()),
+            demo_chunk_gap: Duration::ZERO,
             host_info: Arc::new(HostInfo {
                 state_backend,
                 workspace_root,
@@ -2213,8 +2553,175 @@ impl Engine {
         Ok(self)
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
-        self.events.subscribe()
+    /// Paces the built-in stand-in responder so an answer arrives over time instead
+    /// of in one write.
+    ///
+    /// A host started without a provider has no producer to set the pace, and left
+    /// unpaced it emits a whole reply inside one turn of the socket loop, which is
+    /// indistinguishable on screen from a host that cannot stream at all. This only
+    /// shapes that stand-in: with an adapter, the producer's own timing is the pace.
+    #[must_use]
+    pub fn with_demo_pacing(mut self, gap: Duration) -> Self {
+        self.demo_chunk_gap = gap;
+        self
+    }
+
+    /// Registers a host connection as a receiver of this engine's events: the
+    /// answers to its own requests, plus the events of every session it has named
+    /// in a request (see [`Engine::follow`] and [`Engine::publish`]).
+    ///
+    /// A host that reads this stream must not also send a request's return value
+    /// to the same connection: [`Self::handle`] is for hosts with no subscription,
+    /// and a host doing both would show every event twice.
+    pub fn subscribe(&self) -> EventStream {
+        let id = self.next_subscriber.fetch_add(1, Ordering::Relaxed);
+        let (sender, receiver) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        lock_or_recover(&self.subscribers).insert(id, sender);
+        EventStream {
+            sink: EventSink {
+                id,
+                subscribers: Arc::clone(&self.subscribers),
+                session_watchers: Arc::clone(&self.session_watchers),
+            },
+            receiver,
+        }
+    }
+
+    /// Hands one event to the connection that asked for it, if any.
+    fn deliver_to(&self, sink: &EventSink, event: ServerMessage) {
+        let evicted = {
+            let mut subscribers = lock_or_recover(&self.subscribers);
+            let Some(sender) = subscribers.get(&sink.id) else {
+                return;
+            };
+            if sender.try_send(event).is_ok() {
+                return;
+            }
+            // Full means the connection stopped reading, and Closed that it
+            // is gone. Either way the only honest state is unregistered:
+            // keeping it would let the next event look delivered while this
+            // one vanished.
+            subscribers.remove(&sink.id);
+            Some(sink.id)
+        };
+        if let Some(id) = evicted {
+            self.unwatch(id);
+        }
+    }
+
+    /// Forgets a connection entirely: no more events, and no more claims on any
+    /// session's watcher set. Both locks are taken one at a time, never together.
+    fn unwatch(&self, id: u64) {
+        lock_or_recover(&self.session_watchers).retain(|_, watchers| {
+            watchers.remove(&id);
+            !watchers.is_empty()
+        });
+    }
+
+    /// Records that the connection making this request follows its session, so the
+    /// events that session goes on to produce come back to it.
+    ///
+    /// Registration happens before the request is handled, because a `submit`
+    /// produces its first delta while it is being handled: a connection registered
+    /// afterwards would miss the start of the very answer it asked for. The set
+    /// grows only as connections name sessions and shrinks back to nothing when
+    /// those connections go away, so it cannot outlive the clients that made it.
+    fn follow(&self, session_id: Uuid, sink: &EventSink) {
+        lock_or_recover(&self.session_watchers)
+            .entry(session_id)
+            .or_default()
+            .insert(sink.id);
+    }
+
+    /// Registers the connection a transcript was just handed to as a follower of
+    /// the session it now shows.
+    ///
+    /// A transcript is an answer, so it comes back addressed rather than broadcast,
+    /// but the connection that received it is looking at that conversation and
+    /// everything it goes on to produce is something that connection has to be told
+    /// about. `switch_workspace` is why this is needed at all: the session it moves
+    /// the tab to is chosen here, so the request that caused it names no session for
+    /// [`Self::follow`] to register, and a tab that had just been given a
+    /// conversation would otherwise watch it freeze.
+    fn adopt(&self, event: &ServerMessage, sink: &EventSink) {
+        if !matches!(
+            event,
+            ServerMessage::SessionSnapshot { .. } | ServerMessage::SessionCreated { .. }
+        ) {
+            return;
+        }
+        if let Some(session_id) = event.session_id() {
+            self.follow(session_id, sink);
+        }
+    }
+
+    /// Hands one event to the connections entitled to see it, evicting any whose
+    /// buffer is full rather than dropping an event from a transcript that keeps
+    /// reading.
+    ///
+    /// An event that names a session goes only to the connections that named that
+    /// session themselves; one that names none -- the workspace list, a resolved
+    /// diff -- is a fact about the host rather than a conversation, and reaches
+    /// every connection. Scoping the rest is what keeps a second tab from watching
+    /// a session it never opened. The watcher set is copied out before the
+    /// subscriber lock is taken, so the two locks are never held at once.
+    fn publish(&self, event: &ServerMessage) {
+        let followers = event.session_id().map(|session_id| {
+            lock_or_recover(&self.session_watchers)
+                .get(&session_id)
+                .cloned()
+                .unwrap_or_default()
+        });
+        let mut evicted: Vec<u64> = Vec::new();
+        lock_or_recover(&self.subscribers).retain(|id, sender| {
+            if followers.as_ref().is_some_and(|set| !set.contains(id)) {
+                return true;
+            }
+            if sender.try_send(event.clone()).is_err() {
+                evicted.push(*id);
+                return false;
+            }
+            true
+        });
+        for id in evicted {
+            self.unwatch(id);
+        }
+    }
+
+    /// Puts one produced event in front of the clients that should see it.
+    ///
+    /// Session events are what happened, so they go through [`Self::publish`],
+    /// which hands them to the connections following that session; anything else
+    /// answers one request and goes only to the connection that made it. A
+    /// broadcast `file_contents` would put one tab's file into another tab's
+    /// viewer, which is neither what the other tab asked for nor its data to show.
+    fn broadcast_or_emit(
+        &self,
+        event: ServerMessage,
+        sink: Option<&EventSink>,
+        emit: &mut dyn FnMut(ServerMessage),
+    ) {
+        if !event.is_session_event() {
+            match sink {
+                Some(sink) => {
+                    self.adopt(&event, sink);
+                    self.deliver_to(sink, event);
+                }
+                None => emit(event),
+            }
+            return;
+        }
+        match sink {
+            Some(_) => {
+                // The asking connection is registered like any other, so one
+                // publish reaches it too; emitting here as well would double it.
+                self.publish(&event);
+            }
+            None => {
+                self.publish(&event);
+                emit(event);
+            }
+        }
     }
 
     fn persist(&self, state: &State) -> Result<(), ServerMessage> {
@@ -2251,7 +2758,400 @@ impl Engine {
         Ok(())
     }
 
+    /// Handles one client message and returns every event it produced.
+    ///
+    /// This is the entry point for a host with no subscription. A host that reads
+    /// [`Self::subscribe`] uses [`Self::dispatch_to`] instead, so a prompt's chunks
+    /// reach the socket as the Provider produces them rather than in one burst
+    /// after the last one, and so no event is delivered twice.
     pub fn handle(&self, message: ClientMessage) -> Vec<ServerMessage> {
+        let mut events = Vec::new();
+        self.dispatch_to(message, None, &mut |event| events.push(event));
+        events
+    }
+
+    /// Handles one client message, routing each event the moment it is produced:
+    /// session events to the connections following that session, answers to `sink`.
+    /// `sink` is `None` for a host that takes events from the return path of
+    /// [`Self::handle`] rather than from a subscription.
+    ///
+    /// The call itself never blocks on a prompt: submitting one is routed before the
+    /// state lock, onto no lock at all. Holding that lock across the adapter call is
+    /// what left `cancel` unable to reach the run it was asked to stop, and every
+    /// other client message queued behind it.
+    pub fn dispatch_to(
+        &self,
+        message: ClientMessage,
+        sink: Option<&EventSink>,
+        emit: &mut dyn FnMut(ServerMessage),
+    ) {
+        // Before handling, not after: the events this request causes are produced
+        // during handling, and the connection that asked has to be listening for
+        // them already.
+        if let (Some(session_id), Some(sink)) = (message.session_id(), &sink) {
+            self.follow(session_id, sink);
+        }
+        if let ClientMessage::Submit {
+            client_msg_id,
+            session_id,
+            prompt,
+        } = message
+        {
+            if !self.remember_client_message(&client_msg_id) {
+                self.broadcast_or_emit(ServerMessage::Ack { client_msg_id }, sink, emit);
+                return;
+            }
+            self.run_submit(client_msg_id, session_id, prompt, sink, emit);
+            return;
+        }
+        for event in self.run_message(message) {
+            self.broadcast_or_emit(event, sink, emit);
+        }
+    }
+
+    /// Whether this request is being seen for the first time. Deduplicated here
+    /// rather than inside the big match, because the prompt path decides what to do
+    /// before it takes the lock at all.
+    fn remember_client_message(&self, client_msg_id: &str) -> bool {
+        lock_or_recover(&self.state)
+            .seen_client_messages
+            .insert(client_msg_id.to_string())
+    }
+
+    /// Runs one prompt: opens the turn, streams the answer as the adapter produces
+    /// it, then closes the turn with the outcome the client actually saw.
+    ///
+    /// Three lock scopes, none of them spanning the adapter. The first validates and
+    /// registers the run, so a `cancel` cannot land between "this session is
+    /// producing" and "there is something to stop". The adapter then runs with no
+    /// lock held, and each chunk takes one only long enough to record and hand out.
+    /// The last closes the turn and unregisters the run; because it takes the same
+    /// lock `cancel` needs, a stop is either seen by the run or answered on the
+    /// spot, never dropped and never counted twice.
+    /// Opens a prompt turn: refuses what must not run, answers what needs no
+    /// Prompt, and otherwise records the turn and registers the run.
+    ///
+    /// The registration happens here, under the same lock that decided the session
+    /// is free, so a `cancel` cannot slip between "this session is producing" and
+    /// "there is a knob to stop it".
+    fn begin_submit(&self, session_id: Uuid, client_msg_id: &str, prompt: &str) -> SubmitStart {
+        let mut state = lock_or_recover(&self.state);
+        let refusal = |code: &str, message: &str| {
+            vec![ServerMessage::Error {
+                code: code.into(),
+                message: message.into(),
+            }]
+        };
+        let Some(workspace_id) = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.workspace_id)
+        else {
+            return SubmitStart::Answered(refusal("session_not_found", "会话不存在"));
+        };
+        if state
+            .workspaces
+            .get(&workspace_id)
+            .is_some_and(|workspace| workspace.archived)
+        {
+            return SubmitStart::Answered(refusal("workspace_unavailable", "会话工作区已归档"));
+        }
+        let Some(session) = state.sessions.get_mut(&session_id) else {
+            return SubmitStart::Answered(refusal("session_not_found", "会话不存在"));
+        };
+        if session.pending_approval.is_some() {
+            return SubmitStart::Answered(refusal("approval_pending", "请先处理待审批操作"));
+        }
+        if session.pending_question.is_some() {
+            return SubmitStart::Answered(refusal("question_pending", "请先回答待处理问题"));
+        }
+        if lock_or_recover(&self.runs).contains_key(&session_id) {
+            // Two answers into one transcript would interleave their chunks, and the
+            // second would settle the first turn as finished. Steering a run that is
+            // already going is its own contract, not a second submit.
+            return SubmitStart::Answered(refusal(
+                "session_busy",
+                "上一轮仍在进行，请等待它结束或先取消",
+            ));
+        }
+        if let Some(question) = prompt.strip_prefix("/ask ") {
+            let question_id = Uuid::new_v4();
+            session.pending_question = Some(question_id);
+            session.pending_question_prompt = Some(question.to_owned());
+            session.sequence += 1;
+            let sequence = session.sequence;
+            let question = question.to_owned();
+            let persisted = self.persist(&state);
+            drop(state);
+            if let Err(error) = persisted {
+                return SubmitStart::Answered(vec![error]);
+            }
+            return SubmitStart::Answered(vec![
+                ServerMessage::Ack {
+                    client_msg_id: client_msg_id.to_string(),
+                },
+                ServerMessage::QuestionRequested {
+                    session_id,
+                    question_id,
+                    prompt: question,
+                    sequence,
+                },
+            ]);
+        }
+        if let Some(summary) = prompt.strip_prefix("/approve-tool ") {
+            let request_id = Uuid::new_v4();
+            let summary = summary.to_owned();
+            session.pending_approval = Some(PendingApproval {
+                request_id,
+                tool: "demo.tool".into(),
+                summary: summary.clone(),
+                confirmations_required: 1,
+                confirmations: 0,
+            });
+            session.sequence += 1;
+            let sequence = session.sequence;
+            let persisted = self.persist(&state);
+            drop(state);
+            if let Err(error) = persisted {
+                return SubmitStart::Answered(vec![error]);
+            }
+            return SubmitStart::Answered(vec![
+                ServerMessage::Ack {
+                    client_msg_id: client_msg_id.to_string(),
+                },
+                ServerMessage::ToolApprovalRequested {
+                    session_id,
+                    request_id,
+                    tool: "demo.tool".into(),
+                    summary,
+                    sequence,
+                },
+            ]);
+        }
+        // The assistant message opens empty and grows with the chunks, so the
+        // transcript a client watched arrive is the one that gets stored.
+        session.messages.push(TimelineMessage {
+            role: "user".into(),
+            text: prompt.to_owned(),
+        });
+        session.messages.push(TimelineMessage {
+            role: "assistant".into(),
+            text: String::new(),
+        });
+        let control = Arc::<RunControl>::default();
+        lock_or_recover(&self.runs).insert(session_id, Arc::clone(&control));
+        if let Err(error) = self.persist(&state) {
+            lock_or_recover(&self.runs).remove(&session_id);
+            return SubmitStart::Answered(vec![error]);
+        }
+        SubmitStart::Running(control)
+    }
+
+    /// Starts a prompt turn, then decides who waits for it.
+    ///
+    /// A host with no subscription reads events out of the return path of
+    /// [`Self::handle`], and a return path cannot be handed to another thread, so
+    /// that host waits for its turn to end. A host that did subscribe is a
+    /// connection: the answer continues on a thread of its own and the request that
+    /// started it is answered at once, so the stop button, the file panel and the
+    /// next frame on that same socket keep moving while the Provider is still
+    /// writing. Without this, one connection could not cancel its own turn, because
+    /// the only thread able to read the `cancel` frame was busy producing it.
+    fn run_submit(
+        &self,
+        client_msg_id: String,
+        session_id: Uuid,
+        prompt: String,
+        sink: Option<&EventSink>,
+        emit: &mut dyn FnMut(ServerMessage),
+    ) {
+        // Taken before the turn is opened, so a prompt that cannot be produced is
+        // refused without having written anything into the transcript.
+        let Ok(slot) = self.run_slots.clone().try_acquire_owned() else {
+            self.broadcast_or_emit(
+                ServerMessage::Error {
+                    code: "too_many_runs".into(),
+                    message: RUNS_FULL.into(),
+                },
+                sink,
+                emit,
+            );
+            return;
+        };
+        let control = match self.begin_submit(session_id, &client_msg_id, &prompt) {
+            SubmitStart::Answered(events) => {
+                for event in events {
+                    self.broadcast_or_emit(event, sink, emit);
+                }
+                return;
+            }
+            SubmitStart::Running(control) => control,
+        };
+        self.broadcast_or_emit(ServerMessage::Ack { client_msg_id }, sink, emit);
+        let Some(sink) = sink else {
+            let _slot = slot;
+            self.produce_run(session_id, &control, &prompt, None, emit);
+            return;
+        };
+        let engine = self.clone();
+        let control = Arc::clone(&control);
+        let answer_to = sink.clone();
+        std::thread::spawn(move || {
+            // The slot is the run: it goes back when the answer is over, not when
+            // the request that started it was answered.
+            let _slot = slot;
+            // A Provider that panics has to leave the session free rather than busy
+            // forever with nothing producing, and the clients have to be told: a
+            // transcript that stops mid-sentence with no ending at all is
+            // indistinguishable from a network that dropped one event.
+            let produced = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.produce_run(
+                    session_id,
+                    &control,
+                    &prompt,
+                    Some(&answer_to),
+                    &mut |_event| {},
+                )
+            }));
+            if produced.is_err() {
+                engine.finish_run(
+                    session_id,
+                    &control,
+                    Some(&answer_to),
+                    &mut |_event| {},
+                    Some(RUN_LOST.to_string()),
+                );
+            }
+        });
+    }
+
+    /// Produces one answer and closes the run it belongs to.
+    ///
+    /// The adapter, or with no adapter the stand-in, drives `responder`; every chunk
+    /// is recorded before it is handed out, so a transcript a connection saw is a
+    /// transcript the store can answer for. Runs on whichever thread owns the turn:
+    /// the connection's for [`Self::handle`], the run thread for a subscriber.
+    fn produce_run(
+        &self,
+        session_id: Uuid,
+        control: &RunControl,
+        prompt: &str,
+        sink: Option<&EventSink>,
+        emit: &mut dyn FnMut(ServerMessage),
+    ) {
+        // One chunk in, one chunk out: recorded before it is handed to the clients,
+        // so a transcript a connection saw is a transcript the store can answer for.
+        let mut responder = |text: &str| -> bool {
+            if control.cancelled.load(Ordering::SeqCst) {
+                return false;
+            }
+            let event = {
+                let mut state = lock_or_recover(&self.state);
+                let Some(session) = state.sessions.get_mut(&session_id) else {
+                    return false;
+                };
+                session.sequence += 1;
+                match session.messages.last_mut() {
+                    Some(last) if last.role == "assistant" => last.text.push_str(text),
+                    _ => session.messages.push(TimelineMessage {
+                        role: "assistant".into(),
+                        text: text.to_string(),
+                    }),
+                }
+                ServerMessage::TextDelta {
+                    session_id,
+                    text: text.to_string(),
+                    sequence: session.sequence,
+                }
+            };
+            self.broadcast_or_emit(event, sink, emit);
+            true
+        };
+        match self.adapter.as_ref() {
+            Some(adapter) => {
+                if let Err(message) = adapter.run_prompt_stream(prompt, &mut responder) {
+                    self.finish_run(session_id, control, sink, emit, Some(message));
+                    return;
+                }
+            }
+            None => {
+                for (index, chunk) in
+                    bounded_text_chunks(&format!("演示响应：{prompt}"), DELTA_SIZE)
+                        .into_iter()
+                        .enumerate()
+                {
+                    // Waiting between chunks, and after the wait asking again, is
+                    // what a real producer does; the run thread is off the socket
+                    // loop, so this waits out its own turn and nothing else.
+                    if index > 0 && !self.demo_chunk_gap.is_zero() {
+                        std::thread::sleep(self.demo_chunk_gap);
+                    }
+                    if !responder(&chunk) {
+                        break;
+                    }
+                }
+            }
+        }
+        self.finish_run(session_id, control, sink, emit, None);
+    }
+
+    /// Closes a prompt run: unregisters it, then reports the terminal event that
+    /// matches why it ended. `failure` is an adapter that gave up, which is neither
+    /// a completion nor a cancellation, and the text produced before it gave up stays
+    /// in the transcript because the client was shown that text.
+    fn finish_run(
+        &self,
+        session_id: Uuid,
+        control: &RunControl,
+        sink: Option<&EventSink>,
+        emit: &mut dyn FnMut(ServerMessage),
+        failure: Option<String>,
+    ) {
+        if control.finished.swap(true, Ordering::SeqCst) {
+            // The run already has an ending: a panic noticed after the producer
+            // closed the turn must not put a second one in front of the client.
+            return;
+        }
+        let mut state = lock_or_recover(&self.state);
+        lock_or_recover(&self.runs).remove(&session_id);
+        let Some(session) = state.sessions.get_mut(&session_id) else {
+            return;
+        };
+        let events = match failure {
+            Some(message) => vec![ServerMessage::Error {
+                code: "agent_failed".into(),
+                message,
+            }],
+            None => {
+                session.sequence += 1;
+                let sequence = session.sequence;
+                if control.cancelled.load(Ordering::SeqCst) {
+                    vec![ServerMessage::Cancelled {
+                        session_id,
+                        sequence,
+                    }]
+                } else {
+                    vec![ServerMessage::Completed {
+                        session_id,
+                        sequence,
+                    }]
+                }
+            }
+        };
+        if let Err(error) = self.persist(&state) {
+            // The chunks are already on screen. Reporting only the failed write would
+            // leave a transcript nothing wrote down, with no indication that a reload
+            // will not reproduce it, so both are said.
+            drop(state);
+            self.broadcast_or_emit(error, sink, emit);
+            return;
+        }
+        drop(state);
+        for event in events {
+            self.broadcast_or_emit(event, sink, emit);
+        }
+    }
+    fn run_message(&self, message: ClientMessage) -> Vec<ServerMessage> {
         let client_msg_id = match &message {
             ClientMessage::CreateSession { client_msg_id, .. }
             | ClientMessage::CreateWorkspace { client_msg_id, .. }
@@ -2548,111 +3448,12 @@ impl Engine {
                 )],
                 None => vec![Self::error("session_not_found", "会话不存在")],
             },
-            ClientMessage::Submit {
-                client_msg_id,
-                session_id,
-                prompt,
-            } => {
-                let Some(workspace_id) = state
-                    .sessions
-                    .get(&session_id)
-                    .and_then(|session| session.workspace_id)
-                else {
-                    return vec![Self::error("session_not_found", "会话不存在")];
-                };
-                if state
-                    .workspaces
-                    .get(&workspace_id)
-                    .is_some_and(|workspace| workspace.archived)
-                {
-                    return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
-                }
-                let Some(session) = state.sessions.get_mut(&session_id) else {
-                    return vec![Self::error("session_not_found", "会话不存在")];
-                };
-                if session.pending_approval.is_some() {
-                    return vec![Self::error("approval_pending", "请先处理待审批操作")];
-                }
-                if session.pending_question.is_some() {
-                    return vec![Self::error("question_pending", "请先回答待处理问题")];
-                }
-                if let Some(question) = prompt.strip_prefix("/ask ") {
-                    let question_id = Uuid::new_v4();
-                    session.pending_question = Some(question_id);
-                    session.pending_question_prompt = Some(question.to_owned());
-                    session.sequence += 1;
-                    vec![
-                        ServerMessage::Ack { client_msg_id },
-                        ServerMessage::QuestionRequested {
-                            session_id,
-                            question_id,
-                            prompt: question.into(),
-                            sequence: session.sequence,
-                        },
-                    ]
-                } else if let Some(summary) = prompt.strip_prefix("/approve-tool ") {
-                    let request_id = Uuid::new_v4();
-                    session.pending_approval = Some(PendingApproval {
-                        request_id,
-                        tool: "demo.tool".into(),
-                        summary: summary.to_string(),
-                        confirmations_required: 1,
-                        confirmations: 0,
-                    });
-                    session.sequence += 1;
-                    vec![
-                        ServerMessage::Ack { client_msg_id },
-                        ServerMessage::ToolApprovalRequested {
-                            session_id,
-                            request_id,
-                            tool: "demo.tool".into(),
-                            summary: summary.into(),
-                            sequence: session.sequence,
-                        },
-                    ]
-                } else {
-                    let response_chunks =
-                        match self.adapter.as_ref() {
-                            Some(adapter) => adapter.run_prompt(&prompt).map_err(|message| {
-                                ServerMessage::Error {
-                                    code: "agent_failed".into(),
-                                    message,
-                                }
-                            }),
-                            None => Ok(bounded_text_chunks(
-                                &format!("演示响应：{prompt}"),
-                                DELTA_SIZE,
-                            )),
-                        };
-                    let response_chunks = match response_chunks {
-                        Ok(chunks) => chunks,
-                        Err(error) => return vec![error],
-                    };
-                    let response = response_chunks.concat();
-                    session.messages.push(TimelineMessage {
-                        role: "user".into(),
-                        text: prompt.clone(),
-                    });
-                    session.messages.push(TimelineMessage {
-                        role: "assistant".into(),
-                        text: response,
-                    });
-                    let mut events = vec![ServerMessage::Ack { client_msg_id }];
-                    for text in response_chunks {
-                        session.sequence += 1;
-                        events.push(ServerMessage::TextDelta {
-                            session_id,
-                            text,
-                            sequence: session.sequence,
-                        });
-                    }
-                    session.sequence += 1;
-                    events.push(ServerMessage::Completed {
-                        session_id,
-                        sequence: session.sequence,
-                    });
-                    events
-                }
+            // A prompt is routed by `dispatch_to` before the state lock is taken,
+            // because the adapter has to be able to run while `cancel` and every
+            // other message stay answerable. Reaching this arm means that routing
+            // was dropped, which would put a blocking call back inside the lock.
+            ClientMessage::Submit { .. } => {
+                vec![Self::error("internal_error", "submit 未经流式路径进入引擎")]
             }
             ClientMessage::Cancel {
                 client_msg_id,
@@ -2661,25 +3462,44 @@ impl Engine {
                 let Some(session) = state.sessions.get_mut(&session_id) else {
                     return vec![Self::error("session_not_found", "会话不存在")];
                 };
+                // A run still in flight takes the stop signal here and reports its
+                // own terminal event once the adapter stops, so the transcript can
+                // never read as over while chunks were still on their way. Nothing is
+                // producing anything to stop -- the usual case for this synchronous
+                // entry point -- then the stop is its own answer.
+                let live = lock_or_recover(&self.runs).get(&session_id).cloned();
+                if let Some(control) = &live {
+                    // The only thing that actually stops a run. The adapter's next
+                    // chunk is refused, it returns, and `finish_run` reports the
+                    // terminal event -- so the stop is felt at the producer, not just
+                    // written down beside it.
+                    control.cancelled.store(true, Ordering::SeqCst);
+                }
+                let outcome = if live.is_some() {
+                    "interrupted"
+                } else {
+                    "accepted"
+                };
                 session.sequence += 1;
                 session.audit.push(AuditEntry {
                     action: "cancel".into(),
-                    outcome: "accepted".into(),
+                    outcome: outcome.into(),
                     sequence: session.sequence,
                 });
-                vec![
-                    ServerMessage::Ack { client_msg_id },
-                    ServerMessage::Cancelled {
+                let mut events = vec![ServerMessage::Ack { client_msg_id }];
+                if live.is_none() {
+                    events.push(ServerMessage::Cancelled {
                         session_id,
                         sequence: session.sequence,
-                    },
-                    ServerMessage::Audit {
-                        session_id,
-                        action: "cancel".into(),
-                        outcome: "accepted".into(),
-                        sequence: session.sequence,
-                    },
-                ]
+                    });
+                }
+                events.push(ServerMessage::Audit {
+                    session_id,
+                    action: "cancel".into(),
+                    outcome: outcome.into(),
+                    sequence: session.sequence,
+                });
+                events
             }
             ClientMessage::Approve {
                 client_msg_id,
@@ -3242,10 +4062,6 @@ impl Engine {
         };
         if let Err(error) = self.persist(&state) {
             return vec![error];
-        }
-        drop(state);
-        for event in &result {
-            let _ = self.events.send(event.clone());
         }
         result
     }

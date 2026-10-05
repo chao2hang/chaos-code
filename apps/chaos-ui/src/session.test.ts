@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, liveTurnKey, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
+import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, liveTurnKey, revertRefusedPrompt, sessionLossRecoveryMessage, sessionOpenMessage, workspaceReconnectMessage } from './session'
 import { NIL_WORKSPACE_ID, selectWorkspaceSession } from './workspace-ui'
-import type { HostInfo } from './generated/protocol'
+import type { HostInfo, ServerMessage } from './generated/protocol'
 
 describe('session event projection', () => {
   it('ignores late session-scoped events from a previous workspace session', () => {
@@ -64,6 +64,69 @@ describe('session event projection', () => {
     expect(state.messages).toEqual([])
     state = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'w1' })
     expect(state.workspaces.find((workspace) => workspace.id === 'w1')?.archived).toBe(true)
+  })
+
+  it('lets the host choose where an archived active workspace lands', () => {
+    // Three live workspaces, the middle one active. The host's own fallback rule is
+    // `(last_used_sequence, id)`; this list is ordered so that a client picking the
+    // first live entry would land somewhere the host does not.
+    const source = applyServerMessage(initialSessionState, { type: 'workspaces', active_workspace_id: 'w-mid', workspaces: [
+      { id: 'w-first', name: 'First', archived: false, last_used_sequence: 1, last_session_id: 'session-first' },
+      { id: 'w-mid', name: 'Mid', archived: false, last_used_sequence: 1, last_session_id: 'session-mid' },
+      { id: 'w-last', name: 'Last', archived: false, last_used_sequence: 1, last_session_id: 'session-last' },
+    ] })
+    const archived = applyServerMessage(source, { type: 'workspace_archived', workspace_id: 'w-mid' })
+    // Nothing was invented: no landing workspace, no conversation, and therefore no
+    // resume for a session in a workspace the host has not made active.
+    expect(archived.activeWorkspaceId).toBeUndefined()
+    expect(archived.sessionId).toBeUndefined()
+    expect(archived.messages).toEqual([])
+    expect(sessionOpenMessage(source, archived, { type: 'workspace_archived', workspace_id: 'w-mid' })).toBeNull()
+
+    // The host's follow-up names the landing spot, and that is the one request made.
+    const landedBy: ServerMessage = { type: 'workspace_switched', workspace_id: 'w-last' }
+    const landed = applyServerMessage(archived, landedBy)
+    expect(landed.sessionId).toBe('session-last')
+    expect(sessionOpenMessage(archived, landed, landedBy)).toMatchObject({ type: 'resume', session_id: 'session-last', workspace_id: 'w-last' })
+  })
+
+  it('asks to open the conversation it was moved into, rather than watching it silently', () => {
+    const opened = applyServerMessage(initialSessionState, { type: 'workspaces', active_workspace_id: 'workspace-a', workspaces: [
+      { id: 'workspace-a', name: 'A', archived: false, last_used_sequence: 1, last_session_id: 'session-a' },
+      { id: 'workspace-b', name: 'B', archived: false, last_used_sequence: 2, last_session_id: 'session-b' },
+    ] })
+    const state = applyServerMessage(opened, { type: 'session_snapshot', session_id: 'session-a', workspace_id: 'workspace-a', sequence: 1, pending_approval: null, pending_question: null, messages: [{ role: 'assistant', text: 'A transcript' }] })
+    const switchToB = { type: 'workspace_switched', workspace_id: 'workspace-b' } as const
+    const after = applyServerMessage(state, switchToB)
+    expect(after.sessionId).toBe('session-b')
+    // The host delivers a session's events to the connections that named that
+    // session, and this tab has only ever named session-a.
+    expect(sessionOpenMessage(state, after, switchToB)).toMatchObject({ type: 'resume', session_id: 'session-b', workspace_id: 'workspace-b' })
+
+    // The cross-tab case: another tab created a workspace, and the announced list
+    // moved this one along. No `workspace_switched` is ever sent to this connection.
+    const moved: ServerMessage = { type: 'workspaces', active_workspace_id: 'workspace-a', workspaces: [
+      { id: 'workspace-a', name: 'A', archived: false, last_used_sequence: 3, last_session_id: 'session-a' },
+      { id: 'workspace-b', name: 'B', archived: false, last_used_sequence: 2, last_session_id: 'session-b' },
+      { id: 'workspace-c', name: 'C', archived: false, last_used_sequence: 1, last_session_id: 'session-c' },
+    ] }
+    const landed = applyServerMessage(after, moved)
+    expect(landed.sessionId).toBe('session-a')
+    expect(sessionOpenMessage(after, landed, moved)).toMatchObject({ type: 'resume', session_id: 'session-a', workspace_id: 'workspace-a' })
+
+    // A message that moved this tab nowhere asks for nothing.
+    expect(sessionOpenMessage(landed, landed, { type: 'text_delta', session_id: 'session-a', text: 'A transcript', sequence: 3 })).toBeNull()
+    expect(sessionOpenMessage(landed, landed, moved)).toBeNull()
+    // A transcript handed over directly already named this connection for itself.
+    const snapshot: ServerMessage = { type: 'session_snapshot', session_id: 'session-b', workspace_id: 'workspace-b', sequence: 4, pending_approval: null, pending_question: null, messages: [] }
+    expect(sessionOpenMessage(landed, applyServerMessage(landed, snapshot), snapshot)).toBeNull()
+    // Archiving the last workspace leaves no conversation to open.
+    const onlyOne = applyServerMessage(initialSessionState, { type: 'workspaces', active_workspace_id: 'workspace-a', workspaces: [
+      { id: 'workspace-a', name: 'A', archived: false, last_used_sequence: 1, last_session_id: 'session-a' },
+    ] })
+    const archived = applyServerMessage(onlyOne, { type: 'workspace_archived', workspace_id: 'workspace-a' })
+    expect(archived.sessionId).toBeUndefined()
+    expect(sessionOpenMessage(onlyOne, archived, { type: 'workspace_archived', workspace_id: 'workspace-a' })).toBeNull()
   })
 
   it('isolates transcript and session selection when switching workspaces', () => {
@@ -725,6 +788,125 @@ describe('Safe Web Mode refusal', () => {
     expect(next.gitError).toBeUndefined()
     expect(next.terminalLoading).toBe(false)
     expect(next.terminalError).toBe('终端自己失败了')
+  })
+})
+
+describe('a prompt the engine refused before starting a turn', () => {
+  // `appendLocalPrompt` draws both bubbles before anything has answered, so a
+  // refusal that began no turn has to take them back: a question the session was
+  // never given, plus an empty answer nobody is writing, would sit in the
+  // transcript for the rest of the session. Each code here is one the engine or the
+  // socket sends instead of accepting the prompt.
+  const stillRunning = { type: 'error', code: 'session_busy', message: '上一轮仍在进行，请等待它结束或先取消' } as const
+  const queueFull = { type: 'error', code: 'too_many_in_flight', message: '此连接待处理请求已达上限，请等待已有请求结束' } as const
+  const runsFull = { type: 'error', code: 'too_many_runs', message: '同时生成的回复已达上限，请等待其中一些结束' } as const
+  const notSaved = { type: 'error', code: 'persistence_failed', message: '回复未能保存' } as const
+
+  it('takes back the second prompt while the first one keeps its 生成中', () => {
+    const first = appendLocalPrompt({ ...initialSessionState, sessionId: 's1' }, '先问的这个')
+    const streaming = applyServerMessage(first, { type: 'text_delta', session_id: 's1', sequence: 1, text: '正在回答第一个' })
+    const twice = appendLocalPrompt(streaming, '又想问第二个')
+    expect(twice.messages.length).toBe(4)
+    const next = applyServerMessage(twice, stillRunning)
+    expect(next.messages).toEqual([
+      { role: 'user', text: '先问的这个' },
+      { role: 'assistant', text: '正在回答第一个' },
+    ])
+    // The refusal was about the second prompt. Clearing busy here would tell the
+    // user the first answer had stopped arriving, which is the opposite of why the
+    // engine refused.
+    expect(next.busy).toBe(true)
+    expect(next.turnOutcomes).toEqual({})
+    expect(next.status).toBe('上一轮仍在进行')
+  })
+
+  it('keeps an answer that already has text instead of throwing it away', () => {
+    // The pair is only ours to take back while the answer bubble is still empty.
+    // Text in it was streamed by the host, so dropping it would lose content the
+    // user can read on screen and a reload would not bring back.
+    const partial = {
+      ...initialSessionState,
+      sessionId: 's1',
+      busy: true,
+      messages: [{ role: 'user', text: '问' }, { role: 'assistant', text: '只说了一半' }],
+    }
+    const next = applyServerMessage(partial, stillRunning)
+    expect(next.messages).toBe(partial.messages)
+    expect(next.status).toBe('上一轮仍在进行')
+  })
+
+  it('releases every waiting panel when the socket would not queue the frame', () => {
+    const inFlight = {
+      ...initialSessionState,
+      sessionId: 's1',
+      busy: true,
+      filesLoading: true,
+      gitLoading: true,
+      messages: [{ role: 'user', text: '提交前先看目录' }, { role: 'assistant', text: '' }],
+    }
+    const next = applyServerMessage(inFlight, queueFull)
+    expect(next.busy).toBe(false)
+    expect(next.filesLoading).toBe(false)
+    expect(next.gitLoading).toBe(false)
+    expect(next.messages).toEqual([])
+    expect(next.turnOutcomes).toEqual({})
+    expect(next.status).toBe('此连接待处理请求已达上限')
+    // The refusal names the connection, not a request: it is the ninth frame, of
+    // whatever type. Blaming the Git panel for it would invent an answer that panel
+    // was never given, so only the spinner comes down.
+    expect(next.gitError).toBeUndefined()
+    expect(next.filesError).toBeUndefined()
+  })
+
+  it('takes back a prompt the host would not start because it is full', () => {
+    const asked = appendLocalPrompt({ ...initialSessionState, sessionId: 's1' }, '再问一个')
+    const next = applyServerMessage(asked, runsFull)
+    expect(next.messages).toEqual([])
+    // The refusal is about the other sessions this host is answering, not about
+    // this one, so this session's 生成中 is not this refusal's to clear.
+    expect(next.busy).toBe(false)
+    expect(next.turnOutcomes).toEqual({})
+    expect(next.status).toBe('同时生成的回复已达上限')
+    const whileStreaming = {
+      ...initialSessionState,
+      sessionId: 's1',
+      busy: true,
+      messages: [{ role: 'user', text: '先问的这个' }, { role: 'assistant', text: '正在回答' }],
+    }
+    const kept = applyServerMessage(whileStreaming, runsFull)
+    expect(kept.messages).toBe(whileStreaming.messages)
+    expect(kept.busy).toBe(true)
+  })
+
+  it('ends the turn as failed when only the save after the chunks failed', () => {
+    const streamed = {
+      ...initialSessionState,
+      sessionId: 's1',
+      busy: true,
+      messages: [{ role: 'user', text: '讲个长故事' }, { role: 'assistant', text: '从前有座山' }],
+      toolActivities: [{ id: 's1:1', tool: 'fs.read', status: 'running' as const, turnAnchor: 2 }],
+    }
+    const next = applyServerMessage(streamed, notSaved)
+    expect(next.busy).toBe(false)
+    expect(next.status).toBe('回复未能保存')
+    // The engine sends this in place of 完成, so the streamed text stays: it really
+    // was shown. Only the outcome says a reload will not reproduce it.
+    expect(next.messages[1]?.text).toBe('从前有座山')
+    expect(next.toolActivities[0]?.status).toBe('unresolved')
+    expect(next.turnOutcomes).toEqual({ '0': 'failed' })
+  })
+
+  it('only takes back a pair that nothing has written into', () => {
+    const untouched = { ...initialSessionState, messages: [{ role: 'user', text: '问' }, { role: 'assistant', text: '' }] }
+    expect(revertRefusedPrompt(untouched).messages).toEqual([])
+    const withText = { ...initialSessionState, messages: [{ role: 'user', text: '问' }, { role: 'assistant', text: '答' }] }
+    expect(revertRefusedPrompt(withText)).toBe(withText)
+    const lone = { ...initialSessionState, messages: [{ role: 'assistant', text: '' }] }
+    expect(revertRefusedPrompt(lone)).toBe(lone)
+    const restored = { ...initialSessionState, messages: [] as never[] }
+    expect(revertRefusedPrompt(restored)).toBe(restored)
+    const wrongOrder = { ...initialSessionState, messages: [{ role: 'assistant', text: '' }, { role: 'user', text: '问' }] }
+    expect(revertRefusedPrompt(wrongOrder)).toBe(wrongOrder)
   })
 })
 

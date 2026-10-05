@@ -2,13 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
+import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, sessionOpenMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { dropReasonFor, newMessageId, webSocketUrl } from './transport'
 import type { ClientMessage } from './generated/protocol'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
 import { COMPACT_VIEWPORT_QUERY, defaultLayoutState, loadLayoutState, resolveFocusWrap, resolveSidebarVisibility, saveLayoutState, type LayoutState } from './layout'
-import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, uploadIsInFlight, validateAttachmentMessage, type AttachmentSource } from './attachments'
+import { attachmentChunkMessages, ATTACHMENT_ERROR_CODES, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, slicesStaged, uploadIsInFlight, uploadWindowSlices, validateAttachmentMessage, type AttachmentSource } from './attachments'
 import { buildSettingsCategories, nextTheme, refusalSummary, THEME_ORDER, themeLabel } from './settings'
 import { ariaShortcut, formatShortcut, matchShortcut, SHORTCUTS, tabForShortcut, type ShortcutTab } from './shortcuts'
 import './style.css'
@@ -142,6 +142,11 @@ function App() {
   // reducer step would dominate the timeline's update cost. It is dropped once
   // the slices are on the wire.
   const uploadSourceRef = useRef<(AttachmentSource & { targetPath: string }) | null>(null)
+
+  // The slices that are built but not on the wire yet. The host acknowledges the
+  // bytes it has staged, and each acknowledgement releases the next window, so this
+  // is the only place the transfer's own pace lives.
+  const uploadQueueRef = useRef<{ uploadId: string; messages: ClientMessage[]; byteLen: number; finalize: ClientMessage; sent: number } | null>(null)
 
   // The message handler reads `sessionStateRef`, and a functional `setSession`
   // only reaches that ref after the next render. A host reply that arrives in
@@ -314,6 +319,14 @@ function App() {
         if (sessionId) send(beginAttachmentMessage(newMessageId(), sessionId, uploadSourceRef.current))
       }
       if (message.type === 'attachment_started' && uploadSourceRef.current) pumpUpload(message.upload_id)
+      // The host's own count of staged bytes is what releases the next window; a
+      // progress for another upload is not this one's to answer to.
+      if (message.type === 'attachment_progress' && message.upload_id === uploadQueueRef.current?.uploadId) {
+        sendUploadWindow(message.received)
+      }
+      if (message.type === 'attachment_cancelled' || (message.type === 'error' && ATTACHMENT_ERROR_CODES.includes(message.code))) {
+        uploadQueueRef.current = null
+      }
       if (fileChangeAffectsVisibleDirectory(sessionStateRef.current, message)) {
         refreshFiles(sessionStateRef.current.files?.path ?? '.')
       }
@@ -334,6 +347,8 @@ function App() {
       }
       const recovery = sessionLossRecoveryMessage(sessionStateRef.current, message)
       if (recovery) send(recovery)
+      const openAdopted = sessionOpenMessage(previous, next, message)
+      if (openAdopted) send(openAdopted)
       if (message.type === 'approval_resolved' && message.request_id === workspaceWriteApprovalIdRef.current) {
         workspaceWriteApprovalIdRef.current = undefined
         setWorkspaceWriteApprovalId(undefined)
@@ -538,14 +553,41 @@ function App() {
   function pumpUpload(uploadId: string) {
     const source = uploadSourceRef.current
     if (!source) return
-    for (const message of attachmentChunkMessages(uploadId, source.bytes, () => newMessageId())) send(message)
-    send(finalizeAttachmentMessage(newMessageId(), uploadId, source.targetPath))
     uploadSourceRef.current = null
+    uploadQueueRef.current = {
+      uploadId,
+      messages: attachmentChunkMessages(uploadId, source.bytes, () => newMessageId()),
+      byteLen: source.bytes.length,
+      finalize: finalizeAttachmentMessage(newMessageId(), uploadId, source.targetPath),
+      sent: 0,
+    }
+    sendUploadWindow(0)
+  }
+
+  /**
+   * Puts the next window of slices on the wire.
+   *
+   * `receivedBytes` is what the host has staged so far, taken from its own
+   * `attachment_progress`; the finalize goes out only once every slice is acknowledged,
+   * because a host that finalises a short transfer says so rather than guessing.
+   */
+  function sendUploadWindow(receivedBytes: number) {
+    const queue = uploadQueueRef.current
+    if (!queue) return
+    for (let left = uploadWindowSlices(queue.byteLen, receivedBytes, queue.sent); left > 0; left -= 1) {
+      send(queue.messages[queue.sent])
+      queue.sent += 1
+    }
+    if (slicesStaged(queue.byteLen, receivedBytes) === queue.messages.length) {
+      send(queue.finalize)
+      uploadQueueRef.current = null
+    }
   }
 
   function cancelUpload() {
     const uploadId = sessionStateRef.current.upload?.uploadId
     uploadSourceRef.current = null
+    uploadQueueRef.current = null
     if (uploadId) { send(cancelAttachmentMessage(newMessageId(), uploadId)); return }
     updateSession((current) => ({ ...current, upload: undefined, status: '上传已取消' }))
   }
@@ -1133,7 +1175,7 @@ function App() {
                     ↑
                   </button>
                   {session.busy && (
-                    <button type="button" className="btn-stop-square" onClick={cancel}>
+                    <button type="button" data-testid="composer-stop" className="btn-stop-square" onClick={cancel}>
                       停止
                     </button>
                   )}

@@ -14,6 +14,7 @@ use std::{
     net::SocketAddr,
     path::{Component, Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer};
@@ -700,6 +701,52 @@ fn safe_mode_allows(message: &ClientMessage) -> bool {
     chaos_engine::safe_mode_allows(message)
 }
 
+/// The gap a host without a provider should leave between the chunks of its
+/// stand-in answer, in `CHAOS_DEMO_CHUNK_GAP_MS`.
+///
+/// A real producer sets its own pace. The stand-in has none, and an answer written
+/// out in one go is indistinguishable on screen from a host that cannot stream at
+/// all, so a host that is meant to be looked at can ask for one. The value is
+/// capped because the wait is repeated once per chunk in front of a reader.
+pub fn demo_chunk_gap_from_env() -> Duration {
+    let Some(raw) = std::env::var("CHAOS_DEMO_CHUNK_GAP_MS").ok() else {
+        return Duration::ZERO;
+    };
+    match raw.trim().parse::<u64>() {
+        Ok(ms) => Duration::from_millis(ms.min(MAX_DEMO_CHUNK_GAP_MS)),
+        Err(_) => {
+            eprintln!("CHAOS_DEMO_CHUNK_GAP_MS={raw:?} 不是毫秒数，演示应答将不自定节奏");
+            Duration::ZERO
+        }
+    }
+}
+
+/// See [`demo_chunk_gap_from_env`].
+const MAX_DEMO_CHUNK_GAP_MS: u64 = 1_000;
+
+/// What the socket answers to a message Safe Web Mode withholds.
+///
+/// The words are what the settings panel promises, and
+/// `the_refusal_list_matches_what_the_socket_actually_refuses` in
+/// `tests/host_info_flow.rs` fails if the two stop matching.
+const SAFE_MODE_REFUSAL: &str = "Safe Web Mode 禁止此操作";
+
+/// How many client messages one connection may have waiting or being processed.
+///
+/// A prompt hands its answer to the engine's own run thread and is answered at
+/// once, but an approved command or a Provider round trip still occupies the
+/// connection until it returns. Without a bound a socket that sent frames as fast
+/// as it could would queue them without limit, so the refusal is named rather than
+/// paid for. The shipped browser never reaches it: it uploads a file in windows of
+/// four slices (`UPLOAD_WINDOW` in `apps/chaos-ui/src/attachments.ts`) rather than
+/// putting a whole 10 MiB attachment in front of the connection at once.
+/// `apps/chaos-ui/src/attachments.test.ts` compares that window with this number,
+/// and `tests/streaming_flow.rs` sizes the burst that provokes the refusal from it.
+pub const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;
+
+/// What a connection is told when the thread handling its frames died.
+const CONNECTION_LOST: &str = "Agent 处理线程已终止";
+
 async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode: bool) {
     let _ = socket
         .send(Message::Text(
@@ -710,68 +757,166 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode:
             .into(),
         ))
         .await;
-    while let Some(Ok(message)) = socket.recv().await {
-        let Message::Text(text) = message else {
-            continue;
+    // Everything the engine produces goes out through this socket, including what
+    // another tab or another client caused. That is what makes a second tab follow
+    // a turn instead of showing a transcript that quietly stopped updating. The
+    // socket's own requests come back over the same channel, which is why the
+    // worker below is given no return path: one event, one send.
+    let mut events = engine.subscribe();
+    let sink = events.sink();
+    let permits = Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT_PER_CONNECTION));
+    // Frames from one connection are handled one at a time, in the order they
+    // arrived. An attachment whose slices are written out of order is a file whose
+    // bytes are a permutation of what was uploaded and nothing on either side can
+    // see it, and an approval is only meaningful after the request it approves.
+    // Serialising the requests costs nothing a stream needs: the answer goes out
+    // over the subscription above, so waiting for one request cannot hold back the
+    // events of the request before it.
+    let (frames_tx, frames_rx) =
+        std::sync::mpsc::channel::<(ClientMessage, tokio::sync::OwnedSemaphorePermit)>();
+    // Only the async side can write to the socket, so a frame whose handler died
+    // comes back here to be reported rather than left unacknowledged.
+    let (notices_tx, mut notices) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+    {
+        let worker_engine = engine.clone();
+        let worker_sink = sink.clone();
+        let worker_notices = notices_tx.clone();
+        std::thread::spawn(move || {
+            while let Ok((client, permit)) = frames_rx.recv() {
+                // A poisoned engine lock or a handler that panics would otherwise
+                // take this worker quietly with it and leave the connection waiting
+                // for an answer that is never coming.
+                let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker_engine.dispatch_to(client, Some(&worker_sink), &mut |_event| {});
+                }));
+                if handled.is_err() {
+                    let _ = worker_notices.send(ServerMessage::Error {
+                        code: "agent_failed".into(),
+                        message: CONNECTION_LOST.into(),
+                    });
+                }
+                // The slot is held for the request, not for the worker's start-up.
+                drop(permit);
+            }
+        });
+    }
+    enum Input {
+        Event(ServerMessage),
+        Frame(Message),
+        Closed,
+    }
+    loop {
+        // Whichever side has something ready first is handled first, and the engine
+        // side wins a tie: a chunk that is ready to leave should not queue behind a
+        // request that just arrived on the same socket.
+        let input = {
+            let produced = events.recv();
+            let received = socket.recv();
+            let notice = notices.recv();
+            tokio::select! {
+                biased;
+                maybe_event = produced => match maybe_event {
+                    Some(event) => Input::Event(event),
+                    // The engine stopped delivering here: either it is gone or this
+                    // connection could not keep up. A transcript with a hole in it is
+                    // worse than a closed socket, because the hole is invisible, so the
+                    // socket closes and the client resumes from a fresh snapshot.
+                    None => Input::Closed,
+                },
+                maybe_notice = notice => match maybe_notice {
+                    // Nothing will ever answer a frame on this connection again,
+                    // which is a worse version of the hole above.
+                    None => Input::Closed,
+                    Some(message) => Input::Event(message),
+                },
+                maybe_frame = received => match maybe_frame {
+                    Some(Ok(frame)) => Input::Frame(frame),
+                    _ => Input::Closed,
+                },
+            }
         };
-        if text.len() > MAX_REQUEST_BYTES {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::to_string(&ServerMessage::Error {
-                        code: "message_too_large".into(),
-                        message: "消息超过 64 KiB 限制".into(),
-                    })
-                    .unwrap()
-                    .into(),
-                ))
-                .await;
-            continue;
-        }
-        match serde_json::from_str::<ClientMessage>(&text) {
-            Ok(message) => {
-                if safe_web_mode && !safe_mode_allows(&message) {
-                    let event = ServerMessage::Error {
-                        code: "safe_web_mode_blocked".into(),
-                        message: "Safe Web Mode 禁止此操作".into(),
-                    };
-                    let _ = socket
-                        .send(Message::Text(serde_json::to_string(&event).unwrap().into()))
-                        .await;
+        match input {
+            Input::Closed => break,
+            Input::Event(event) => {
+                let text = serde_json::to_string(&event).unwrap().into();
+                if socket.send(Message::Text(text)).await.is_err() {
+                    break;
+                }
+            }
+            Input::Frame(Message::Text(text)) => {
+                if text.len() > MAX_REQUEST_BYTES {
+                    if refuse(&mut socket, "message_too_large", "消息超过 64 KiB 限制")
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                     continue;
                 }
-                // Prompt adapters block on a subprocess or an HTTPS round trip,
-                // so they run on their own OS thread: a dedicated thread keeps
-                // the shared async worker free and, unlike a blocking-pool
-                // thread, carries no ambient runtime for the adapter to trip
-                // over. Ordering within a connection is preserved by awaiting.
-                let blocking_engine = engine.clone();
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                std::thread::spawn(move || {
-                    let _ = tx.send(blocking_engine.handle(message));
-                });
-                let events = rx.await.unwrap_or_else(|_| {
-                    vec![ServerMessage::Error {
-                        code: "agent_failed".into(),
-                        message: "Agent 处理线程已终止".into(),
-                    }]
-                });
-                for event in events {
-                    let _ = socket
-                        .send(Message::Text(serde_json::to_string(&event).unwrap().into()))
-                        .await;
+                let client = match serde_json::from_str::<ClientMessage>(&text) {
+                    Ok(client) => client,
+                    Err(error) => {
+                        if refuse(&mut socket, "invalid_message", &error.to_string())
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                if safe_web_mode && !safe_mode_allows(&client) {
+                    if refuse(&mut socket, "safe_web_mode_blocked", SAFE_MODE_REFUSAL)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                }
+                let Ok(permit) = permits.clone().try_acquire_owned() else {
+                    if refuse(
+                        &mut socket,
+                        "too_many_in_flight",
+                        "此连接待处理请求已达上限，请等待已有请求结束",
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                };
+                if let Err(std::sync::mpsc::SendError((_, permit))) =
+                    frames_tx.send((client, permit))
+                {
+                    // The worker is gone, so this frame has nobody left to run it.
+                    drop(permit);
+                    if refuse(&mut socket, "agent_failed", CONNECTION_LOST)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             }
-            Err(error) => {
-                let event = ServerMessage::Error {
-                    code: "invalid_message".into(),
-                    message: error.to_string(),
-                };
-                let _ = socket
-                    .send(Message::Text(serde_json::to_string(&event).unwrap().into()))
-                    .await;
-            }
+            Input::Frame(_) => {}
         }
     }
+}
+
+/// Answers a connection with the one message saying its frame was not accepted.
+async fn refuse(socket: &mut WebSocket, code: &str, message: &str) -> Result<(), axum::Error> {
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ServerMessage::Error {
+                code: code.into(),
+                message: message.into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
 }
 
 pub async fn serve_loopback(engine: Engine, port: u16) -> anyhow::Result<std::net::SocketAddr> {
@@ -899,6 +1044,34 @@ mod tests {
     };
     use std::{fs, io::Write};
     use tower::ServiceExt;
+
+    #[test]
+    fn the_stand_in_pace_comes_from_the_environment_and_is_capped() {
+        // Edition 2024 makes these unsafe because another thread may be reading the
+        // environment at the same time; this test does not start such a thread.
+        unsafe { std::env::remove_var("CHAOS_DEMO_CHUNK_GAP_MS") };
+        assert_eq!(
+            demo_chunk_gap_from_env(),
+            Duration::ZERO,
+            "no value, no pacing"
+        );
+        unsafe { std::env::set_var("CHAOS_DEMO_CHUNK_GAP_MS", "40") };
+        assert_eq!(demo_chunk_gap_from_env(), Duration::from_millis(40));
+        unsafe { std::env::set_var("CHAOS_DEMO_CHUNK_GAP_MS", "900000") };
+        assert_eq!(
+            demo_chunk_gap_from_env(),
+            Duration::from_millis(MAX_DEMO_CHUNK_GAP_MS),
+            "the gap is paid once per chunk by whoever is reading the answer"
+        );
+        unsafe { std::env::set_var("CHAOS_DEMO_CHUNK_GAP_MS", "很快") };
+        assert_eq!(
+            demo_chunk_gap_from_env(),
+            Duration::ZERO,
+            "a bad value must not stop the host"
+        );
+        unsafe { std::env::remove_var("CHAOS_DEMO_CHUNK_GAP_MS") };
+    }
+
     #[tokio::test]
     async fn protected_handshake_rejects_without_bearer() {
         let response = router(Engine::new(), "secret")

@@ -134,6 +134,22 @@ export function appendLocalPrompt(state: SessionState, text: string): SessionSta
   return { ...state, messages: [...state.messages, { role: 'user', text }, { role: 'assistant', text: '' }], busy: true }
 }
 
+/** Takes back a prompt the host or engine never turned into a turn.
+ *
+ * Both bubbles are ours: `appendLocalPrompt` drew them before anything answered. A
+ * refusal means no turn began, so leaving them up shows a question the session was
+ * never given and an empty answer nobody is writing. Only an untouched pair is
+ * dropped -- if the assistant bubble already holds text, that text was streamed into
+ * it and throwing it away would lose the answer the user can see. */
+export function revertRefusedPrompt(state: SessionState): SessionState {
+  const last = state.messages[state.messages.length - 1]
+  const before = state.messages[state.messages.length - 2]
+  if (!last || last.role !== 'assistant' || last.text !== '' || !before || before.role !== 'user') {
+    return state
+  }
+  return { ...state, messages: state.messages.slice(0, -2) }
+}
+
 export function groupIntoTurns(state: SessionState): Turn[] {
   const turns: Turn[] = [{ key: -1, prompt: null, replies: [], tools: [], outcome: state.turnOutcomes['-1'] }]
   const byKey = new Map<number, Turn>([[turns[0].key, turns[0]]])
@@ -206,11 +222,28 @@ export function sessionLossRecoveryMessage(state: SessionState, message: ServerM
   return { type: 'create_session', client_msg_id: newMessageId(), workspace_id: activeWorkspaceIdOrNull(state.activeWorkspaceId) }
 }
 
-export function workspaceReconnectMessage(state: SessionState): ClientMessage {  const workspaceId = activeWorkspaceIdOrNull(state.activeWorkspaceId)
+export function workspaceReconnectMessage(state: SessionState): ClientMessage {
+  const workspaceId = activeWorkspaceIdOrNull(state.activeWorkspaceId)
   if (state.sessionId && workspaceId) {
     return { type: 'resume', client_msg_id: newMessageId(), session_id: state.sessionId, workspace_id: workspaceId }
   }
   return { type: 'create_session', client_msg_id: newMessageId(), workspace_id: workspaceId }
+}
+
+// A host sends a session's events to the connections that named that session, so having
+// a conversation on screen is not yet being told about it. The engine keeps one active
+// workspace and announces workspace creation and archival to every connection, which
+// lands a tab on a conversation it never asked for and never named; switching workspace
+// chooses a conversation the same way. None of those requests carried a session id, and
+// only `session_created` and `session_snapshot` hand over a transcript -- and those two
+// are addressed to the connection that asked, so nothing is being adopted by them. When
+// the conversation changed without one, this tab has to go and open it, or the timeline
+// is the one part of the page that stops updating.
+export function sessionOpenMessage(previous: SessionState, next: SessionState, message: ServerMessage): ClientMessage | null {
+  if (message.type === 'session_created' || message.type === 'session_snapshot') return null
+  const workspaceId = activeWorkspaceIdOrNull(next.activeWorkspaceId)
+  if (!next.sessionId || next.sessionId === previous.sessionId || !workspaceId) return null
+  return { type: 'resume', client_msg_id: newMessageId(), session_id: next.sessionId, workspace_id: workspaceId }
 }
 
 export function applyServerMessage(state: SessionState, message: ServerMessage): SessionState {
@@ -231,13 +264,13 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   if (message.type === 'workspace_switched') return workspaceChanged(state, message.workspace_id)
   if (message.type === 'workspace_archived') {
     const nextState = { ...state, workspaces: state.workspaces.map((workspace) => workspace.id === message.workspace_id ? { ...workspace, archived: true } : workspace) }
-    const candidates = nextState.workspaces.filter((workspace) => !workspace.archived && workspace.id !== message.workspace_id)
-    const active = candidates.find((workspace) => workspace.id === state.activeWorkspaceId) ?? candidates[0]
-    return state.activeWorkspaceId === message.workspace_id
-      ? active
-        ? workspaceChanged(nextState, active.id)
-        : { ...nextState, activeWorkspaceId: undefined, sessionId: undefined, messages: [], approval: undefined, question: undefined, busy: false, toolActivities: [], turnOutcomes: {} }
-      : nextState
+    // Which live workspace takes over is the host's call, and the host says so: archiving
+    // the active one is always followed by a `workspace_switched` naming the fallback.
+    // Choosing one here was a guess the host then overruled -- measured against the
+    // shipped host, this tab resumed a conversation in a workspace the host had not made
+    // active, the host answered it, and that wrong conversation was on screen until the
+    // host's own frame arrived.
+    return state.activeWorkspaceId === message.workspace_id ? workspaceChanged(nextState) : nextState
   }
   if (message.type === 'session_snapshot' && message.messages) return {
     ...state,
@@ -352,6 +385,33 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
     // with these same words, so the panel waiting on one has to be told: a control
     // left showing 处理中 is waiting for a reply that will never arrive.
     const refusedBySafeMode = code === safeWebModeRefusalCode
+    // The engine refusing a second prompt in a session that is still answering the
+    // first. Nothing reached the transcript on the engine's side, so the two bubbles
+    // we drew for it go back, and the turn that really is running keeps its 生成中 --
+    // that part is the truth, and clearing it would say the answer had stopped.
+    if (code === 'session_busy') return { ...revertRefusedPrompt(state), status: '上一轮仍在进行' }
+    // This host is producing as many answers as it will produce at once, and none
+    // of them is this one. Taken back, the pair says the turn never opened and its
+    // 生成中 goes with it, or the spinner would never stop. A refusal that lands on
+    // a session whose answer has already begun is about some other frame, so that
+    // answer keeps its spinner: it really is running.
+    if (code === 'too_many_runs') {
+      const taken = revertRefusedPrompt(state)
+      return taken.messages.length < state.messages.length
+        ? { ...taken, busy: false, status: '同时生成的回复已达上限' }
+        : { ...state, status: '同时生成的回复已达上限' }
+    }
+    // The socket's own queue was full, so this frame never reached the engine at all.
+    // Which request that was is not knowable from here -- it is the ninth message on
+    // the connection, whatever its type -- so every panel that was waiting on an
+    // answer is released and the prompt bubbles are taken back if they are still
+    // untouched. A spinner that never stops is the worse mistake of the two.
+    if (code === 'too_many_in_flight') return { ...revertRefusedPrompt(state), busy: false, filesLoading: false, fileLoading: false, searchLoading: false, gitLoading: false, terminalLoading: false, commitSuggesting: false, status: '此连接待处理请求已达上限' }
+    // The chunks arrived and went on screen; only the write afterwards failed. The
+    // engine sends this instead of 完成, so treating it as any other error would
+    // leave 生成中 on screen forever, and treating it as a success would promise a
+    // transcript that a reload will not reproduce.
+    if (code === 'persistence_failed') return { ...state, busy: false, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: '回复未能保存' }
     if (state.upload && isUploadFailure(code, state.upload.status)) return { ...state, busy: false, upload: { ...state.upload, status: 'failed', error: message.message }, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: '上传失败' }
     // A refused commit-message suggestion is about the commit form, not about the
     // turn: it must not settle the turn as failed, nor clear a pending approval

@@ -1,0 +1,585 @@
+一轮回答第一次不再占住它自己的请求：engine 在自己的线程上产出事件、Web 宿主订阅并转发、cancel 真的中断，
+顺带被这条改动逼出两处真缺陷（附件分片乱序、上传把主机压垮）
+================================================================================================================================
+
+日期：2026-10-06
+提交：feat(engine,web): 一轮回答跑到自己的线程上，Web 宿主订阅并转发事件，cancel 真的中断（并修掉附件分片乱序与上传压垮连接）
+被记录的对象：
+  crates/codegen/chaos-engine/src/lib.rs              `EventStream`/`dispatch_to`/`produce_run`/`RunControl.finished`/`run_slots`
+  crates/codegen/chaos-engine/tests/streaming_flow.rs 新增 9 例
+  crates/codegen/chaos-engine/src/provider.rs         `PacedProvider`（按节奏产出，供两侧测流式用）
+  crates/codegen/xai-grok-web/src/lib.rs              `websocket_session` 的订阅循环 + 每条连接一个 FIFO 帧工作线程
+  crates/codegen/xai-grok-web/tests/streaming_flow.rs 新增 6 例
+  crates/codegen/xai-grok-web/tests/attachment_flow.rs 新增 1 例（24 片背靠背写入顺序）
+  apps/chaos-ui/src/attachments.ts                    `UPLOAD_WINDOW`/`slicesStaged`/`uploadWindowSlices`
+  apps/chaos-ui/src/attachments.test.ts               新增 3 条（含跨语言常量对照）
+  apps/chaos-ui/src/main.tsx                          按窗口发片、按 `attachment_progress` 续窗、停止按钮
+  apps/chaos-ui/src/session.ts                        `too_many_runs`/`too_many_in_flight`/`agent_failed` 投影、`sessionOpenMessage`、归档落点交回主机
+  apps/chaos-ui/src/session.test.ts                   新增投影与落点用例
+  apps/chaos-ui/src/workspace-ui.test.ts              归档落点那条改口径（旧的断言正是被换掉的契约）
+  apps/chaos-ui/e2e/attachment-upload.pw.ts           9 片负载 + 线序记录（窗口在真实浏览器里被量出来）
+  apps/chaos-ui/e2e/streaming-progress.pw.ts          新增 2 例（产出中就能看到字、停止能中断）
+  apps/chaos-ui/e2e/workspace-flow.pw.ts              新增 3 例（切回工作区取回转录本、被别的标签页带走、归档后只开主机选的那段）
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  之前是什么状态
+-----------------------
+
+`Engine::handle` 是一个返回 `Vec<ServerMessage>` 的同步函数，Web 宿主等它返回之后才往 socket 写。因此
+「流式输出」在前端是把一个已经算完的字符串切开画，运行中那条连接也答不了任何东西：一条连接的一帧在处理期间
+不再读下一帧。`Engine::subscribe` 当时已定义但 Web 宿主从不调用。`cancel` 只是把已经跑完的一轮标成
+「本轮已取消」。这三件事在 `TODO.md` 第 2 章是同一行（M1.1），也是 §2 判定表里「服务端推送与真流式」那行
+写 Degraded 的原因。
+
+一个具体的连带后果：协议里 `attachment_chunk` 是按到达顺序追加字节的（`upload.chunks.push(bytes)`），
+所以只要同一连接的分片被并发处理，落盘的就是**字节数正确、内容错**。这条不变量当时只写在客户端注释里
+（`attachmentChunkMessages` 的文档：主机按到达顺序处理一条连接的消息），没有任何测试守着。
+
+
+第 2 节  现在是什么形状
+-----------------------
+
+engine 侧：
+
+- `Engine::subscribe()` 返回一条 `EventStream`，底层是 `tokio::sync::mpsc`，容量 `EVENT_CHANNEL_CAPACITY = 256`；
+  读端跟不上时先逐出慢订阅者再关闭它的 socket，而不是无声丢事件。
+- `dispatch_to(msg, sink, emit)` 是所有帧的入口：`is_session_event()` 决定一条事件是广播给全部订阅者还是
+  只回给提问的那条连接；`handle()` 保留为「没有订阅者」的那条返回路径（返回 `Vec`）。
+- `run_submit` 拆成派发器与 `produce_run`：派发器先取一个 run 名额（`run_slots`，`MAX_CONCURRENT_RUNS = 32`，
+  满了回答 `too_many_runs`），发 `Ack`，然后把这一轮交给**自己的 OS 线程**（`sink` 存在时）；`handle()` 那条路
+  仍就地产出。因此提问那一帧立刻返回，连接继续读下一帧。
+- `RunControl` 有两个标志：`cancelled`（`cancel` 让产出线程在下一次 yield 处停止）与 `finished`
+  （一个幂等闸门，保证 `finish_run` 不会给出两个终态——产出线程正常收尾与 panic 兜底可能同时到）。
+- 产出线程外面套 `catch_unwind`：Provider 在 panic 时这一轮以 `agent_failed` 结束（文案含「终止」），
+  会话与 run 名额都还回去，屏幕上已有的文字保留。
+
+宿主侧（`websocket_session`）：
+
+- 一条订阅循环把 `EventStream` 的事件写成 WebSocket 帧。
+- 读到的帧交给**每条连接一个** FIFO 工作线程，仍受 `MAX_IN_FLIGHT_PER_CONNECTION = 16` 的许可约束；
+  工作线程里的 panic 通过 `notices` 通道回到 async 侧写成 `agent_failed`，不会让连接静默等一个永不到来的回答。
+  顺序是被这条设计保住的：一帧接一帧地处理，因此 24 片背靠背写进去仍是到达顺序。
+
+UI 侧：
+
+- 运行中出现 `composer-stop` 按钮，点它发 `cancel`；已上屏的文字保留。
+- `too_many_runs` 只在那对乐观气泡仍是「未写入」的原样时撤回并把 `busy` 落下（撤回不了说明回答已经在跑，
+  那条 spinner 属于它）；`too_many_in_flight` 说的整条连接，所有等待中的面板一并放行。
+- 上传改为按窗口发片：`UPLOAD_WINDOW = 4`，`uploadWindowSlices` 用主机 `attachment_progress` 报告的
+  已收字节决定还能发几片；`finalize_attachment` 只在最后一片被确认之后发出。
+
+
+第 3 节  实跑
+-------------
+
+### 3.1 engine 侧（9 条）
+
+    $ cargo test -p chaos-engine --test streaming_flow
+    running 9 tests
+    test a_cancel_with_nothing_running_is_its_own_answer ... ok
+    test chunks_reach_the_subscriber_while_the_adapter_is_still_producing ... ok
+    test an_adapter_that_panics_ends_the_turn_and_frees_the_session ... ok
+    test a_connection_that_stops_reading_is_cut_off_without_losing_a_chunk_it_was_owed ... ok
+    test cancel_stops_the_producer_instead_of_only_booking_keeping ... ok
+    test a_host_refuses_more_answers_than_it_will_produce_at_once ... ok
+    test a_paced_stand_in_answer_arrives_over_time ... ok
+    test an_answer_reaches_only_the_connection_that_asked_for_it ... ok
+    test a_second_prompt_is_refused_while_the_first_is_running_and_after_it_is_not ... ok
+
+    test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.00s
+
+`cancel_stops_the_producer_instead_of_only_booking_keeping` 断言的是**反过来的**性质：第一个 chunk 到达订阅者
+之后，提交那一帧必须已经返回（≤2s 内轮询到派发完成），且此时 adapter 产出的 chunk 数仍远小于它被要求的数量
+（`SELF_LIMIT`）。旧写法「等 `dispatch()` 返回再看计数」在改动之后必然假红，因为 `dispatch` 不再代表整轮。
+
+`a_host_refuses_more_answers_than_it_will_produce_at_once` 发 64 条 prompt（> `MAX_CONCURRENT_RUNS`），
+统计 `Ack` 与 `too_many_runs`，再放开全部挂住的轮，证明名额还得回来、后续 prompt 正常答完。
+
+### 3.2 宿主侧（6 + 2 + 4 条）
+
+    $ cargo test -p xai-grok-web --test streaming_flow --test attachment_flow --test host_info_flow
+    running 4 tests            (host_info_flow)
+    test the_refusal_list_matches_what_the_socket_actually_refuses ... ok
+    test result: ok. 4 passed; 0 failed
+
+    running 2 tests            (attachment_flow)
+    test slices_sent_back_to_back_are_written_in_the_order_they_arrived ... ok
+    test websocket_upload_requires_approval_before_staging_into_workspace ... ok
+    test result: ok. 2 passed; 0 failed
+
+    running 6 tests            (streaming_flow)
+    test a_prompt_while_a_question_is_pending_is_refused_over_the_socket ... ok
+    test the_connection_that_started_a_turn_still_answers_everything_else ... ok
+    test another_connection_follows_the_same_turn_without_asking_for_it ... ok
+    test deltas_reach_the_socket_before_the_producer_finishes ... ok
+    test cancel_reaches_a_turn_that_is_still_streaming ... ok
+    test a_connection_holding_too_many_requests_is_told_so_by_name ... ok
+
+    test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.06s
+
+`the_connection_that_started_a_turn_still_answers_everything_else` 是这条改动的正面命题：provider 按
+`CHUNK_GAP` 节奏产出，测试读到 2 个 chunk 后发一条 `get_host_info`，要求 `HostInfo` 出现在 `Completed` **之前**，
+且等待时间小于「整轮剩余时间的一半」。
+
+`slices_sent_back_to_back_are_written_in_the_order_they_arrived` 用 24 片、每片 4096 字节、第 i 片内容是
+`'a' + i`，24 帧写完**一次都不读**，再 `finalize_attachment` → 审批 → 等 `AttachmentCompleted`，最后逐字节比对，
+失败信息把第一个不符点的偏移与两侧字节都打出来。
+
+### 3.3 前端单元与类型
+
+    $ (cd apps/chaos-ui && npm run test)
+    Test Files  9 passed (9)
+          Tests  141 passed (141)
+
+    $ (cd apps/chaos-ui && npm run typecheck)     # 0 error（tsconfig 的 include 覆盖 e2e/）
+
+新增三条 `attachments.test.ts`：`slicesStaged` 只把整片算作已落（差一字节都不开窗口）；
+`uploadWindowSlices` 的三个边界（空文件 0、短文件按总片数截断、发完为 0）；以及一条把 `main.tsx` 的泵
+原样重放的用例——它断言在飞不超窗、不越过最后一片、峰值恰为 `UPLOAD_WINDOW`，并把窗口与主机那条
+常量对上：
+
+    const inFlightBound = Number(/const MAX_IN_FLIGHT_PER_CONNECTION: usize = (\d+);/.exec(WEB_SOURCE)?.[1])
+    expect(UPLOAD_WINDOW).toBeLessThan(inFlightBound)
+
+### 3.4 浏览器（两个视口）
+
+    $ CHAOS_E2E_BACKEND_PORT=18797 CHAOS_E2E_UI_PORT=15184 CHAOS_E2E_ORIGIN=http://127.0.0.1:15184 \
+      CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN=1 CHAOS_E2E_PAGE_PORT=15184 \
+      node node_modules/@playwright/test/cli.js test --config playwright.config.ts attachment-upload --reporter=line
+      （在 apps/chaos-ui 下执行）
+    6 passed (7.7s)
+
+    $ CHAOS_E2E_BACKEND_PORT=18798 CHAOS_E2E_UI_PORT=15185 CHAOS_E2E_ORIGIN=http://127.0.0.1:15185 \
+      CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN=1 CHAOS_E2E_PAGE_PORT=15185 CHAOS_E2E_PROVIDER_PORT=18791 \
+      node node_modules/@playwright/test/cli.js test --config playwright.git.config.ts streaming-progress --reporter=line
+      （在 apps/chaos-ui 下执行）
+    4 passed (12.0s)
+
+`attachment-upload` 这一轮的负载从 120 KiB（3 片，落在窗口之内，等于什么都没测）抬到 9 × 47 KiB，
+并在页面里包住 `WebSocket.prototype.send` 与 `onmessage`，把「发出去一片」记成 `c`、「收到一条
+`attachment_progress`」记成 `p`，然后要求：`c` 的条数等于片数、`p` 的条数也等于片数、任一前缀里
+`c - p` 既不为负也不超过 4、且峰值正好是 4。峰值这条是必要的——一个「一片一回合同步等」的客户端
+同样不越窗，但它不是发出去的东西。
+
+`CHAOS_E2E_ORIGIN` 与 `CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN` 两个变量必须同时给：`approved_dynamic_dev_origin`
+在 `explicitly_enabled` 为假时直接返回 `None`，只给前者的那次跑出来是 6 条全红、徽标停在
+`连接断开，正在重连`，那是跑错环境而不是代码回退。
+
+
+第 4 节  变异矩阵
+-----------------
+
+改动方向是从「一帧一条线程」变成「一条连接一条 FIFO 线程 + 一轮一条线程」，两条都要有用反证。
+
+### 4.1 把帧处理改回每帧一条线程（只改顺序，不动其它）
+
+`crates/codegen/xai-grok-web/src/lib.rs` 里把工作线程的循环体包进 `std::thread::spawn`，`recv` 仍在
+工作线程里（第一版变异误把 `recv` 挪回 async 任务体，那条变异把 tokio 工作线程堵死、测试挂住而不是变红，
+不算反证，已丢弃重做）。
+
+    $ cargo test -p xai-grok-web --test attachment_flow
+    test slices_sent_back_to_back_are_written_in_the_order_they_arrived ... FAILED
+    thread '…' panicked at crates/codegen/xai-grok-web/tests/attachment_flow.rs:402:22:
+    unexpected AttachmentProgress { upload_id: 43032bff-b83a-4576-b7bf-92a70902eb63, received: 98304 }
+    test result: FAILED. 1 passed; 1 failed
+
+主机对每一片都回一条 `attachment_progress{received}`，收到的第一个 `received` 是 98304（=2 片）而不是 4096，
+说明分片确实被并发处理了。还原后 `sha256sum` 与变异前记录逐字符一致，复跑 2 条全绿。
+
+### 4.2 把这一轮放回到提问那一帧上（engine 侧就地产出）
+
+`run_submit` 里在 `Ack` 之后插入一条 `if sink.is_some() { self.produce_run(…); return; }`。
+
+    $ cargo test -p xai-grok-web --test streaming_flow
+    ---- cancel_reaches_a_turn_that_is_still_streaming ----
+    the audit did not say a live run was interrupted
+    ---- a_connection_holding_too_many_requests_is_told_so_by_name ----
+    one socket queued 12 further requests on top of a running command with no refusal
+    ---- the_connection_that_started_a_turn_still_answers_everything_else ----
+    test result: FAILED. 3 passed; 3 failed
+
+三条红正是这条改动要保的三件事：cancel 打断的是**还活着**的一轮、一条连接能同时挂住多个请求、
+起了一轮的连接照样答别的问题。还原后 `sha256sum` 一致（`4f9b1b60…18aa6`），复跑 6 条全绿。
+
+### 4.3 这次变异顺手抓出的测试自身的缺陷
+
+还原 4.2 之后单跑 `streaming_flow`，`a_connection_holding_too_many_requests_is_told_so_by_name` 仍然红：
+`one socket queued 12 further requests on top of a running command with no refusal`。原因不在生产代码，
+而在这条测试写死了 12——它是在上限还是 8 的时候定下的数字，而这一轮为了不让浏览器的大文件上传被自己
+压垮，把 `MAX_IN_FLIGHT_PER_CONNECTION` 抬到了 16。测试现在从被量的那个常量取数：
+
+    const FURTHER: usize = MAX_IN_FLIGHT_PER_CONNECTION + 1;
+
+（`MAX_IN_FLIGHT_PER_CONNECTION` 因此从私有升为 `pub`，`tests/streaming_flow.rs` 与
+`apps/chaos-ui/src/attachments.test.ts` 两处都据它取数。）这类「测试里那个恰好能过的数字」正是变异
+要抓的东西：它红过一次，才被换成从被测常量推导。
+
+
+第 5 节  用户那台开发服务器上的真实浏览器走查
+---------------------------------------------
+
+被走查的是用户手工测试用的那一套：Vite 在 0.0.0.0:5174、自签 TLS 前置在 0.0.0.0:5175、
+`chaos-web` 在 127.0.0.1:8787（`CHAOS_DEMO_CHUNK_GAP_MS=120`）。宿主进程已用**重新编译后的**二进制重启，
+否则走查会量到旧行为。脚本是一次性的，放在会话私有目录，未随仓库留存；下列输出逐字抄自当轮。
+
+    session-status: 会话已创建
+    turn 1 body length grew at 8 reads: 204 -> 206 -> 208 -> 210 -> 212 -> 214 -> 216 -> 214
+    停止 pressed at 234 body chars; badge after: 会话已创建
+    tab 2 changed 7 time(s) while answering its own prompt
+    two tabs answered in parallel without cross-talk
+    upload before approval: 附件已传完，等待审批写入：walkthrough-muvlonlo.txt
+    upload: 附件已写入 walkthrough-muvlonlo.txt（433152 字节）
+    page errors: none
+    WALKTHROUGH OK
+
+逐条说明它到底要求了什么：
+
+- 第一行之后那 8 次「正文长度变了」的读是在提交后 1.5s 内每 90ms 采一次得到的：字是**陆续**到的，
+  不是等一整段算完再画。最后一格从 216 退回 214 是「生成中」指示消失那一下。
+- `停止` 是在正文还有 234 字符时按下去的，按完之后：按钮不再可见、页面上出现「取消」字样、
+  且正文长度没有小于按下时（已显示的文字没被丢掉）。
+- 第二个标签页自己问了一句并自己流式收到回答（7 次变化），同时第一个标签页的转录没被搅动，
+  第二个标签页里也看不到第一个标签页的问题。
+- 9 × 47 KiB 的上传在真实主机上走完分片 → 审批 → 落盘，状态行报的字节数是 433152，与文件实际大小一致。
+- 390×844 视口下同样的路径跑通并留了截图。
+
+走查里有一条**没有**通过，而且是已登记的差距不是回退：第二个标签页不会跟到第一个标签页那一轮里去。
+原因是每个标签页加载时都发 `create_session`，两个标签页本来就是两个 engine 会话——那正是
+`TODO.md` 第 339 行（会话在协议里不是一等对象）记的东西。同一 engine 会话被两条连接同时订阅时的行为
+由宿主测试 `another_connection_follows_the_same_turn_without_asking_for_it` 覆盖。
+
+
+第 6 节  这一轮没有做到的
+-------------------------
+
+- **运行中插话**：输入框在 busy 时仍禁用，engine 也没有 `startNow`/`guide`/`queue` 三种投递语义与
+  `turn.steerQueued`/`turn.steerDrained` 两个终态。事件流已经是它的地基，但语义本身没动。
+- **断流恢复**：`sequence` 仍只附在部分消息上，没有全事件游标，也没有 delta replay；订阅者掉线后
+  补不回来（通道满时的处置是逐出慢订阅者并关掉它的 socket，这是有意的取舍，不是恢复）。
+- **同会话多标签**：见第 5 节，被第 339 行堵住。
+- **用量核算 / 模型选择**：`too_many_runs` 让「同时在跑几条」第一次变成可数的东西，但 token 数仍是
+  `pending.summary.len()` 编出来的，`TODO.md` 的 M2.5 判定 Unsupported 不变。
+
+
+第 7 节  全量闸门 sweep 在这一轮的新代码里抓到的两处
+-----------------------------------------------------
+
+`scripts/verify-gates.sh --with-build` 跑到 `cargo clippy --workspace --all-targets -- -D warnings`
+时红了，两条都在本轮新写的 engine 代码里：
+
+- `deliver_to` 的 `if let Some(sender) = … { if sender.try_send(…).is_err() { … } }` 是嵌套 `if`，
+  edition 2024 有 let-chain，`clippy::collapsible_if` 按仓库的 `-D warnings` 判红。改成
+  `if let Some(…) = … && sender.try_send(…).is_err()`。
+- `produce_run` 的 `drop(responder)`：`responder` 是个闭包，没有 `Drop` 实现，
+  `clippy::drop_non_drop` 判红。这一条不是风格问题——那句 `drop` 是当作「结束 `emit` 的可变借用」
+  写下去的，而 NLL 早就在最后一次使用之后放手了，也就是说那是一个什么都没做、却被当成正确性一部分的动作。
+  删掉之后 `cargo clippy -p chaos-engine --all-targets -- -D warnings` 全绿（exit 0），
+  engine 那 9 条流式测试仍全通过。
+
+`TODO status doc` 也红了一次，红的不是代码：本轮把 `TODO.md` 的 M1.1 那一行从 `[ ]` 翻成 `[~]`，
+`docs/architecture/todo-open-item-classification.md` 的分组表没跟着动，`--check-doc` 于是报
+
+    M1 unchecked: document says 8, TODO.md has 7
+    M1 partial: document says 16, TODO.md has 17
+
+这条门禁比的就是这两份文档，任何一边单独被改都会红。表格已改为 7/17，并在表下补了一句写明这一行为什么翻动、
+以及它为什么仍是 partial。
+
+
+第 8 节  判据
+-------------
+
+**一帧的处理时间不能再等于一轮的回答时间**，这句话在本仓库里由三条断言分别钉住：chunk 在 `Completed` 之前
+到达成者（engine 与宿主各一条）、起了一轮的连接照样能在 `Completed` 之前答完别的问题（宿主一条）、
+以及 cancel 之后产出者产出的数量仍明显小于它被要求的数量。反证是注入式的：把这一轮搬回提问那一帧，
+这三条一起红（第 4.2 节）。**同一连接的消息按到达顺序被处理**同理：把帧处理改回每帧一条线程，
+24 片背靠背的那条测试就以「第一个 `received` 是 98304」红掉（第 4.1 节）——它先前只是写在客户端注释里的
+一句话，现在是会被跑的。
+
+
+第 9 节  同一台主机上的第二个标签页：谁该听到哪一轮
+--------------------------------------------------
+
+第 5 节末尾那条没通过的走查（第二个标签页不跟第一个标签页那一轮）当时被归到「会话在协议里不是一等
+对象」那一行底下。把那句话拆开看其实是两件事：一件是**每个标签页加载都发 `create_session`**，所以两个
+标签页本来就是两个 engine 会话——那是 schema 问题，本节不动它；另一件是**即使两条连接看着同一个会话，
+第二条也听不到那一轮**——那是投递层的缺陷，本节修的是它，而它先前被上面那句话盖住了。这一节先量清
+主机到底广播了什么，再据此改客户端。
+
+### 9.1 投递原本只有一种听众
+
+改动前 engine 的产出全部经过 `deliver_to(sink, …)`：谁问的给谁。`subscribers` 那张表就是「所有活着的
+连接」，既没有 `publish` 也没有 `session_watchers`。于是同一个会话的第二条连接没有任何入口成为听众。
+
+现在 `broadcast_or_emit`（`crates/codegen/chaos-engine/src/lib.rs:2698`）按事件性质分两路：
+
+- `is_session_event()` 为真的（发生在转录本里的事：delta、工具调用、`completed`、取消的收尾…）走
+  `publish`，听众是「该会话的关注者集合」。
+- 不是会话事件的（工作区列表、已解析的 diff、一次 `ack`）要么是关于主机的事实，要么是对某一次请求的
+  回答，仍只回给出题的那条连接。广播 `file_contents` 会把一个标签页的文件放进另一个标签页的查看器，
+  那既不是它要的，也不是它该看的数据。
+
+一条连接进入那个集合有三条路，少一条就漏：
+
+| 入口 | 位置 | 为什么非要有 |
+| --- | --- | --- |
+| `dispatch_to` 在**处理之前**为请求点名的会话登记 | `lib.rs:2791` | `submit` 的第一个 delta 是在处理过程中产出的，处理完再登记就漏掉自己那一轮的开头 |
+| `adopt` 在一份转录被交出去时登记 | `lib.rs:2646` | `SessionSnapshot`/`SessionCreated` 是答案，走定向不走广播，而拿到它的那条连接正是屏幕上显示这段对话的人。`switch_workspace` 是非它不可的例子：它把标签页挪到哪个会话由主机决定，那条请求没点名任何会话 |
+| `unwatch` 在连接消失或被逐出时摘干净 | `lib.rs:2614` | 否则集合只增不减，一个已断开的连接的名字会留在它看过的每个会话里 |
+
+`publish`（`lib.rs:2668`）先把关注者集合从 `session_watchers` 复制出来，再去拿 `subscribers` 的锁，
+两把锁从不同时持有；写不进去（对端不再读）的连接连同它在所有会话里的登记一并被摘掉，而不是留下一个
+「看起来送达了」的名字。
+
+### 9.2 engine 与宿主各自量到的
+
+    $ cargo test -p chaos-engine --test streaming_flow
+    running 11 tests
+    test a_cancel_with_nothing_running_is_its_own_answer ... ok
+    test an_adapter_that_panics_ends_the_turn_and_frees_the_session ... ok
+    test chunks_reach_the_subscriber_while_the_adapter_is_still_producing ... ok
+    test a_connection_that_stops_reading_is_cut_off_without_losing_a_chunk_it_was_owed ... ok
+    test cancel_stops_the_producer_instead_of_only_booking_keeping ... ok
+    test a_host_refuses_more_answers_than_it_will_produce_at_once ... ok
+    test a_connection_that_never_named_the_session_hears_nothing_about_it ... ok
+    test a_paced_stand_in_answer_arrives_over_time ... ok
+    test an_answer_reaches_only_the_connection_that_asked_for_it ... ok
+    test a_second_prompt_is_refused_while_the_first_is_running_and_after_it_is_not ... ok
+    test a_connection_switched_into_a_session_follows_it_from_then_on ... ok
+
+    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.00s
+
+比第 3.1 节多了两条，而且必须成对读：`a_connection_that_never_named_the_session_hears_nothing_about_it`
+管「别广播」——旁观连接在场时把会话交给第一条连接去取消，旁观者必须一条会话事件都收不到，之后它自己
+`resume` 了那个会话才终于收到；`a_connection_switched_into_a_session_follows_it_from_then_on` 管
+「要广播」——一条连接被 `switch_workspace` 换进某个会话（它从头到尾没点过那个会话的名字），此后那个会话
+发生的事它要一路收到，收尾的 `Cancelled` 与 `Audit` 各一条。只写前一条，实现可以退化成「永远只回给出题
+连接」；只写后一条，实现可以退化成「广播一切」。两条同时在场才把中间那一段围出来。
+
+    $ cargo test -p xai-grok-web --test streaming_flow
+    running 7 tests
+    test a_prompt_while_a_question_is_pending_is_refused_over_the_socket ... ok
+    test the_connection_that_started_a_turn_still_answers_everything_else ... ok
+    test a_second_tab_that_opened_the_session_follows_the_turn ... ok
+    test deltas_reach_the_socket_before_the_producer_finishes ... ok
+    test cancel_reaches_a_turn_that_is_still_streaming ... ok
+    test a_tab_that_never_opened_the_session_never_sees_the_turn ... ok
+    test a_connection_holding_too_many_requests_is_told_so_by_name ... ok
+
+    test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.06s
+
+第 3.2 节那条 `another_connection_follows_the_same_turn_without_asking_for_it` **改了名**，因为名字承诺
+的是「不用开口就能跟」，而真实的性质是「先 `resume` 过（或被交接过转录本）的连接才跟得上」。名字不改，
+下一个读代码的人会照着名字去实现一个广播一切的主机——那正是上面第二条 engine 用例要拦的东西。
+
+### 9.3 主机到底广播了什么：对 shipped 二进制的实测
+
+单测证明了 engine 的分派规则，但**客户端该在什么时候自己去开口**只能从真实主机量。一个直接对
+`target/debug/chaos-web` 开两条 WebSocket 的 Node 脚本（脚本留在会话临时目录，它的价值只在当场量一次，
+不进仓库；下面引的每一行都是它的原样输出，两次重跑逐字相同），量出来的矩阵是：
+
+| 这一帧 | 另一条连接听到什么 |
+| --- | --- |
+| `create_workspace` | `ack`、`workspace_switched`、`session_created`、`workspaces`——**`workspaces` 到了** |
+| `switch_workspace` | `workspace_switched` + `session_snapshot`，**只发给提问者** |
+| `archive_workspace` | `workspace_archived` + `workspaces`（带新活动），到了 |
+| `submit`（该会话没被别的连接点名过） | 另一条连接一条收不到 |
+| `submit`（别的连接 `resume` 过该会话） | 该连接收到全部 delta 与 `completed` |
+| `create_session`（第二条连接，活动工作区已有会话） | 覆写 `workspace.last_session_id` |
+
+「被别的标签页带走」因此是真实存在的路径，不是假想：`create_workspace` 的 `workspaces` 会广播，而那条
+请求没有 `session_id` 可带；收到它的标签页就此显示出一段自己从未点名、也从未申请的对话。原样输出（截掉
+与结论无关的行）：
+
+    [A] -> switch_workspace ws=c5f2
+    [A] <- workspace_switched ws=c5f2
+    [A] <- session_snapshot ws=c5f2 sess=f3e7 msgs=
+    [A] -> submit sess=f3e7
+    [A] <- completed sess=f3e7
+    [B] <- handshake
+    [B] -> create_session
+    [B] <- session_created ws=c5f2 sess=8b7f
+    PROBE: B after create_session got: ["session_created/8b7f@c5f2"]
+    [A] <- workspaces active=c5f2 [First 1791235071581|c5f2|last=8b7f, 默认工作区|0a5c|last=9950, Second 1791235071581|a833|last=6d2a]
+    PROBE: B sees first.last=8b7f (A's session f3e7), B active=c5f2
+    --- A goes to second, then switches back to first; watch B ---
+    [A] -> switch_workspace ws=a833
+    [A] <- workspace_switched ws=a833
+    [A] <- session_snapshot ws=a833 sess=6d2a msgs=
+    [A] -> switch_workspace ws=c5f2
+    [A] <- workspace_switched ws=c5f2
+    [A] <- session_snapshot ws=c5f2 sess=8b7f msgs=
+    PROBE: B frames after switch: []
+    PROBE: client rule would resume 8b7f
+    [B] -> resume ws=c5f2 sess=8b7f
+    [B] <- session_snapshot ws=c5f2 sess=8b7f msgs=
+    --- A runs another turn; does B hear it? ---
+    [A] -> submit sess=f3e7
+    [A] <- completed sess=f3e7
+    PROBE: B frames during A's turn: []
+
+`PROBE: B frames after switch: []` 是这一节的核心一行：A 换工作区又换回来的那一刻，B 一帧都没收到，
+而 B 屏幕上的工作区已经换了会话。最后一行说明范围没有失控——B 没开口的那个会话（`f3e7`）那一轮确实
+一条都不发给它。
+
+### 9.4 客户端规则的第一版是错的
+
+第一版按**消息类型**判断：看到 `workspace_switched` 或 `workspace_archived` 就重开转录本。它同时错在
+三个方向：
+
+- `workspace_switched` 只发给提问者，所以对「被带走的标签页」它从不触发。新写的浏览器用例抓的就是这一条，
+  红在 `Expected: "历史已恢复" / Received: "工作区已切换"`：徽标停在「切换」那一档，从没走到「去把历史
+  取回来」。
+- 真正会带走标签页的是 `workspaces` 的广播，而那个类型恰好不在它看的集合里。
+- 更根本的是 `session_created` 与 `session_snapshot` 这两帧**确实**已经把转录本交到手上，规则必须放过
+  它们。「哪些类型算切换」这条线本来就划不出来，因为要判的性质不在类型上。
+
+### 9.5 现在的规则：不看消息是什么，看发生了什么
+
+`apps/chaos-ui/src/session.ts:242` 的 `sessionOpenMessage(previous, next, message)` 判的是状态差：
+`sessionId` 在这条消息前后变了、且这条消息不是刚把转录本交到手上的那两种，就说明屏幕上的对话被换掉了
+而内容没跟着来，于是发一条 `resume` 去取回来。`main.tsx:350` 在 `ws.onmessage` 里先留一份 `previous`
+再算 `next`，两者一并传进去：
+
+    const openAdopted = sessionOpenMessage(previous, next, message)
+    if (openAdopted) send(openAdopted)
+
+于是 `switch_workspace` 的落点、`archive_workspace` 的落点、以及别的标签页 `create_workspace` 引发的
+广播共用一条规则，要判的性质只有一个：我的对话换了，可我没拿到它。`sessionOpenMessage` 的单元测试同时
+覆盖了 `text_delta`、重复的 `workspaces`、`session_snapshot`、归档最后一个工作区四种应当返回 `null`
+的情形，防止它退化成「任何变化都重开一遍」。
+
+### 9.6 两处变异
+
+| 删掉什么 | 什么变红 |
+| --- | --- |
+| `main.tsx` 那两行 | `apps/chaos-ui/e2e/workspace-flow.pw.ts:156` 那条跨标签页用例：`Expected: "历史已恢复" / Received: "工作区已切换"`（桌面与移动两个视口同时红） |
+| `lib.rs:2707` 的 `self.adopt(&event, sink);` | 9.2 那条 engine 命令：`a_connection_switched_into_a_session_follows_it_from_then_on` 以 `切换进来的连接该听到的事件: no event within 20s` 红，`test result: FAILED. 10 passed; 1 failed` |
+
+两个源文件都写回到字节一致（`cmp` 通过、`sha256` 与动手前相同：engine 侧
+`57b36cd77bd1b0edff151af3f9a98c80c55a3b72c038ff3700e46b706defaa8a`），重跑 11 条全绿。两端各要一处变异
+是因为这条性质天然是两半：engine 不登记就没有东西可发，客户端不开口就没人登记——任何一半单独坏掉，
+页面上看到的都是同一个「转录本不动」。
+
+### 9.7 量到但没修，已登记进 `TODO.md`
+
+- **`switch_workspace` 不广播**：主机只有一个活动工作区，切过去之后两个标签页看着不同的会话，而没有任何
+  一帧告诉另一个标签页「活动变了」。9.5 的规则能让**被带走**的那一页自洽，但另一页不会主动知道。
+- **归档之后落在哪个工作区，主机自己也是任意挑的**：主机用
+  `.max_by_key(|candidate| (candidate.last_used_sequence, candidate.id))`
+  （`crates/codegen/chaos-engine/src/lib.rs:3336`）选落点，而 `last_used_sequence` 只在
+  `create_session`（`:3272`）、`switch_workspace`（`:3314`）、归档（`:3376`）时增长，`create_workspace`
+  是硬写 `= 1`（`:3219`），跑一轮 `submit` 更是完全不碰它；于是同批创建的工作区全都并列在 1，实际由
+  UUID 顺序决定。客户端原先还会自己猜一个（`candidates[0]`），那一半在 9.9 里量出来并修掉了；剩下的是
+  主机这一半——落点仍然是任意的，只是现在两侧至少落到同一个地方。原样输出：
+
+        list order (client's candidates come from this, first match wins): ["Beta|0f1d|seq=1|last=22b8","Gamma|4515|seq=1|last=1dec","Alpha|a260|seq=1|last=c7b2"]
+        active before archive: 4515
+        archive frames: ["workspace_archived@4515","workspace_switched@a260","session_snapshot@a260/c7b2 msgs=2","workspaces active=a260"]
+        active after archive (engine's own choice): a260
+        name: AR Alpha 1791235060556
+        client's candidates[0] would be: AR Beta 1791235060556|0f1d (seq=1)
+
+  同一份夹具里主机选了 `a260`（AR Alpha），客户端的旧规则会选 `0f1d`（AR Beta）。
+- **跟读的那一页会把连续两轮回答并进同一个气泡**：轮次分组以用户提问为锚点（`groupIntoTurns`），跟读的
+  标签页从不发问，于是第二段回答接进了第一段那个 `.assistant` 块。9.8 那条用例因此按内容断言而不是按
+  气泡条数断言——这既是测试的取舍，也是界面的缺陷。
+- 加上先前登记的 `create_session` 无条件覆写 `workspace.last_session_id`（`lib.rs:3271`，行号因本轮
+  engine 改动而后移，`TODO.md` 已改），M1.1 里「同一会话多标签」这一条不再是 UI 不可达，剩下的是上面
+  这些。
+
+### 9.8 前端与全量
+
+    $ (cd apps/chaos-ui && npm run test)
+     Test Files  9 passed (9)
+           Tests  143 passed (143)
+
+    $ (cd apps/chaos-ui && npm run typecheck)     # 0 error
+
+    $ CHAOS_E2E_BACKEND_PORT=8797 CHAOS_E2E_UI_PORT=5199 CHAOS_E2E_ORIGIN=http://127.0.0.1:5199 \
+      CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN=1 npm run test:e2e
+      （在 apps/chaos-ui 下执行）
+      Running 97 tests using 1 worker
+      6 skipped
+      91 passed (1.7m)
+      Running 18 tests using 1 worker
+      18 passed (22.8s)
+
+`workspace-flow.pw.ts` 新增三条，两个视口都跑：
+
+- `:118 switching workspaces reopens the conversation it adopted and keeps it live`：建两个工作区各问一句，
+  切回第一个之后要求转录本真的被取回（`.user` 只剩那一句、`.assistant` 里有 alpha 的字而没有 beta 的字），
+  再当场问第二句证明这一页还在跟着（`.user` 变 2、最后一块 `.assistant` 带出新字），最后切到 beta 要求
+  看不到 alpha 的第二句。
+- `:156 a tab moved along by another tab reopens the conversation it landed in and keeps hearing it`：
+  真的开第二个标签页，第二个标签页**一次都不点**——它只是被广播带走。它先看到徽标走到「历史已恢复」，
+  再看到第一个标签页问出的回答出现在自己屏上，而 `.user` 始终是 0（问句是别人问的，只有回答跨过来）；
+  第一个标签页再建一个工作区，它又一次「历史已恢复」并只看见新的那段对话；最后第一个标签页在同一个会话里
+  追问第三句，两个标签页的最后一块 `.assistant` 都带出那句字。第三条断言按内容写而不是按气泡条数写，
+  原因写在 9.7 第三条里，注释也写在了用例里。
+- `:201 a tab that archived the active workspace opens only the conversation the host lands it on`：
+  包住 `WebSocket.prototype.send` 与 `onmessage`，把归档前后这一页发出与收到的帧都记下来，然后要求
+  **这一页发出的 `resume` 集合恰好等于主机在 `workspace_switched` 里点名的那一个工作区**，并要求侧栏
+  高亮的条目也是它。9.9 说的是这条用例存在的原因。
+
+### 9.9 顺带量到并修掉的一处：归档活动工作区之后，谁说了算
+
+9.7 第二条原本只是「两侧算得不一样」。把它拿到真实浏览器里量之后，问题比登记的更具体，而且当场修掉了。
+
+一个把每帧都记下来的临时用例（跑完即删，正式的版本已收进
+`apps/chaos-ui/e2e/workspace-flow.pw.ts:201`）建三个工作区各问一句，再归档活动的那个，
+归档之后这一页自己发出的与收到的帧是：
+
+    -> archive_workspace workspace_id=181f9fff
+    <- workspace_archived workspace_id=181f9fff
+    -> resume workspace_id=6ada0186 session_id=3f006731     <- 这一页自己挑的落点
+    <- workspace_switched workspace_id=ba99fd48             <- 主机选的落点
+    -> resume workspace_id=ba99fd48 session_id=a8b17a6f
+    <- session_snapshot workspace_id=ba99fd48 session_id=a8b17a6f
+    <- workspaces active_workspace_id=ba99fd48
+    <- session_snapshot workspace_id=6ada0186 session_id=3f006731
+    <- session_snapshot workspace_id=ba99fd48 session_id=a8b17a6f
+
+三个事实：
+
+- 客户端 `session.ts` 原来的 `candidates[0]` 挑了 `6ada`（Alpha），主机挑了 `ba99`（Beta），
+  重复四次每次都不同（另一次客户端挑 `44bb6cb0`、主机 `d73a0e22`）。
+- 客户端不只是想错，它**发出去了**一条 `resume`，而主机**回答了**它——也就是说这条连接读到了
+  一个它并没有被切进去的工作区里的会话，那份转录本被整个画到屏幕上，直到主机自己的 `session_snapshot`
+  到达才被换掉。页面最终是一致的（一条连接按 FIFO 处理，第二条 `resume` 必然后答），但中间那一帧
+  显示的是别人的对话。
+- 主机在归档活动工作区时**一定**会补一帧 `workspace_switched`（`crates/codegen/chaos-engine/src/lib.rs:3325`
+  起：找不到候选还会现造一个「默认工作区」再切过去），所以客户端那一步猜测从来就没有存在的必要。
+
+修法是把落点交回主机：`workspace_archived` 命中当前工作区时只标记归档并清空
+（`apps/chaos-ui/src/session.ts:265-273`，改为一行 `workspaceChanged(nextState)`），不再自己填
+`activeWorkspaceId`/`sessionId`；随后主机那一帧 `workspace_switched` 说落在哪儿，就是哪儿，
+`sessionOpenMessage` 据此发出**唯一**一条 `resume`。附带好处是清空走的是 `workspaceChanged`，
+连文件面板、git 状态、终端结果一起清掉了——原先那条分支只清了转录本与审批，被归档工作区的文件面板
+会留在屏幕上。
+
+反证是把猜测写回去：`:201` 那条用例在桌面与移动两个视口同时以
+
+    Error: 这一页自己挑了落点：
+    -> resume workspace_id=be972c3e session_id=54f63f06
+    <- workspace_switched workspace_id=e66f7e64
+    -> resume workspace_id=e66f7e64 session_id=e7b117f7
+    - Expected  - 0
+    + Received  + 1
+      Array [
+    +   "be972c3e",
+        "e66f7e64",
+
+红掉（多出来的那一条正是发给猜测落点的 `resume`），写回原文后 2 passed。
+单元侧同步改了口径：`workspace-ui.test.ts` 里那条原名为
+`clears an archived current workspace and selects the remaining active workspace` 的用例，
+断言的正是被换掉的旧契约，改为 `clears an archived current workspace and leaves the landing spot
+to the host`；另在 `session.test.ts` 新增 `lets the host choose where an archived active workspace
+lands`，用一个「列表第一项与主机候选不同」的三工作区夹具把两种规则区分开——旧夹具只有两个工作区，
+猜第一个恰好会对，因此量不出这个缺陷。
+
+仍然没修、也没法在本轮修的（同一轮的宿主改动，登记在 9.7 第二条与 `TODO.md`）：
+主机为什么选 `ba99`——`last_used_sequence` 全等时由 UUID 决定，这个落点本身仍然是任意的，
+只是现在两侧至少会落到同一个地方。

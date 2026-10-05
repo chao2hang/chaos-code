@@ -153,6 +153,45 @@ export function beginAttachmentMessage(clientMsgId: string, sessionId: string, s
 }
 
 /**
+ * How many slices may be on the wire for one upload at a time.
+ *
+ * The host handles one connection's messages in arrival order and only keeps a
+ * bounded number of them waiting (`MAX_IN_FLIGHT_PER_CONNECTION` in
+ * `crates/codegen/xai-grok-web/src/lib.rs`), so a client that put a whole 10 MiB
+ * attachment -- 218 slices -- on the socket at once would be refused partway
+ * through and would have to call the failure its own. A window is sent, the host's
+ * `attachment_progress` says how much of it landed, and the next window follows:
+ * the transfer stays in order, bounded on both ends, and takes one round trip per
+ * window rather than per slice.
+ */
+export const UPLOAD_WINDOW = 4
+
+/** How many slices of a `byteLen` file the host has staged, given `receivedBytes`. */
+export function slicesStaged(byteLen: number, receivedBytes: number): number {
+  let staged = 0
+  let end = 0
+  for (const slice of chunkPlan(byteLen)) {
+    end += slice.length
+    if (receivedBytes < end) break
+    staged += 1
+  }
+  return staged
+}
+
+/**
+ * Slices to send now for a file of `byteLen`, with `sentSlices` already on the wire
+ * and `receivedBytes` acknowledged by the host.
+ *
+ * Never more than the window ahead of what the host has confirmed, so a stalled or
+ * refused host cannot be buried, and never past the last slice.
+ */
+export function uploadWindowSlices(byteLen: number, receivedBytes: number, sentSlices: number): number {
+  const total = chunkPlan(byteLen).length
+  const inFlight = sentSlices - slicesStaged(byteLen, receivedBytes)
+  return Math.max(0, Math.min(total - sentSlices, UPLOAD_WINDOW - inFlight))
+}
+
+/**
  * One `attachment_chunk` per slice, in order. The host processes a connection's
  * messages in arrival order, so a `finalize_attachment` queued behind these is
  * not applied until every byte ahead of it has been staged.

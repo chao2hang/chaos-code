@@ -2,6 +2,106 @@
 
 ## Unreleased
 
+### 改进：一轮回答不再占住提问它的那一帧 —— engine 异步产出事件、Web 宿主订阅并转发、停止真的中断，代价是逼出两处真缺陷
+
+`TODO.md` 里与 ZCode 差距最大的一条（M1.1 的「Web 端没有服务端推送」）今天做掉了一大半。之前
+`Engine::handle` 是返回整段回复的同步函数，宿主等它返回才往 socket 写，所以「流式」是把算完的字符串切开画，
+而且一条连接在处理一帧期间读不到下一帧；`Engine::subscribe` 定义了但没人调用；`cancel` 只是把已经跑完的一轮
+标成「本轮已取消」。
+
+- engine 侧：`dispatch_to` 是所有帧的入口，`is_session_event` 决定一条事件广播给全部订阅者还是只回给出题连接；
+  `run_submit` 把这一轮交给**它自己的 OS 线程**（`produce_run`），提问那一帧发完 `ack` 就返回。一轮回自己的
+  线程上跑之后，线程数这件事第一次有了归属，于是补了 `MAX_CONCURRENT_RUNS = 32` 的 run 名额：满了回答
+  `too_many_runs`（新码），而不是让进程无限起线程。`RunControl` 加 `finished` 位保证终态只发一次
+  （产出线程正常收尾与 panic 兜底可能同时到），Provider panic 以 `agent_failed` 结束并释放会话与名额。
+- 宿主侧：`websocket_session` 多一条订阅循环把事件写成帧；读到的帧交给**每条连接一个** FIFO 工作线程。
+- UI 侧：运行中出现停止按钮；`too_many_runs` 只在那对乐观气泡仍未被写入时撤回并放下 spinner（撤回不了说明
+  回答已经在跑，那条 spinner 属于它），`too_many_in_flight` 说的是整条连接、把所有等待中的面板一并放行。
+
+两处缺陷是这条改动自己逼出来的，都不是先想到再补的：
+
+- **附件分片会乱序落盘**。原来「一帧一条线程」看着无害，直到它和引擎里 `upload.chunks.push(bytes)`
+  这条按到达顺序追加的写法相遇：24 片写进同一个上传，字节总数对、内容错。顺序此前只是客户端注释里的
+  一句话，现在它有一条测试（`crates/codegen/xai-grok-web/tests/attachment_flow.rs` 的 24 片背靠背用例），
+  且有反证 —— 把工作线程的循环体改回每帧一条线程，该用例以「第一个 `attachment_progress` 的 `received`
+  是 98304 而不是 4096」红掉。
+- **一个大附件会压垮它自己的连接**。客户端此前是 `for (const m of attachmentChunkMessages(…)) send(m)`：
+  10 MiB 就是 218 帧一次性堆到连接上，而主机的每连接在飞上限即使抬到 16 也必然拒绝后半程，用户会看到
+  自己合法的上传被主机按 `too_many_in_flight` 拒绝。现在上传按窗口发（`UPLOAD_WINDOW = 4`，
+  由主机 `attachment_progress` 报告的已收字节续窗，最后一片被确认后才发 `finalize_attachment`），
+  上限抬到 16 才有意义；e2e 的负载也从 120 KiB（3 片，落在窗口之内，等于什么都没测）抬到 9 × 47 KiB，
+  并在页面里包住 `WebSocket.prototype.send`/`onmessage` 直接量线序：任一前缀里未确认的片数不超过 4
+  且峰值正好是 4 —— 后者是必要的，一个「一片一等」的客户端同样不越窗，但那不是发出去的东西。
+
+顺带一次自新：把一轮搬回提问那一帧的变异让宿主 6 条里红 3 条，其中一条（`in-flight` 那条）红得毫无道理，
+查下去是**测试自己**写死了 12 帧 —— 那是在上限还是 8 时定的数字，本轮为了上一条把上限抬到 16 之后它已经
+量不到东西了。现从被量的常量取数（`MAX_IN_FLIGHT_PER_CONNECTION` 因此升为 `pub`，Rust 测试与
+`attachments.test.ts` 两侧的窗口对照都据它）。
+
+反证、逐字输出与「仍未做到的四条」（运行中插话的三种投递语义、断流恢复与全事件游标、`turn.terminal`
+的分类终态、一个页面并列看着两个会话 —— 最后一项被「每页加载都 `create_session`」堵住，同一会话被两个
+标签页订阅这件事本身已由下一条解决）见
+`docs/verification/streamed-turn-2026-10-06.log`。浏览器侧是真实 Chromium 走的：字在 endpoint 还在产出时
+就到页面、`停止` 能中断活着的一轮且不丢已显示的文字、两个标签页并行不互相搅动、433152 字节的上传按窗
+走完审批并逐字节落盘、390×844 视口同样通过。
+
+（2026-10-06；`crates/codegen/chaos-engine/src/lib.rs`、`crates/codegen/chaos-engine/src/provider.rs`、`crates/codegen/chaos-engine/tests/streaming_flow.rs`、`crates/codegen/xai-grok-web/src/lib.rs`、`crates/codegen/xai-grok-web/tests/streaming_flow.rs`、`crates/codegen/xai-grok-web/tests/attachment_flow.rs`、`apps/chaos-ui/src/attachments.ts`、`apps/chaos-ui/src/attachments.test.ts`、`apps/chaos-ui/src/main.tsx`、`apps/chaos-ui/src/session.ts`、`apps/chaos-ui/e2e/attachment-upload.pw.ts`、`apps/chaos-ui/e2e/streaming-progress.pw.ts`、`TODO.md`、`docs/ci-test-debt.md`、`docs/verification/streamed-turn-2026-10-06.log`）
+
+### 修复：第二个标签页不再看着 —— 事件按「谁该听」分两路，被别的标签页带走的页面自己去把对话取回来
+
+上一条把一轮搬到自己的线程上之后，浏览器走查留下一条没通过：第二个标签页不跟第一个标签页那一轮。
+它当时被记成「会话在协议里不是一等对象」的下游，那句话把两件事盖在了一起：一件是每个标签页加载都发
+`create_session`，两个标签页本来就是两个会话（schema 问题，本轮不动）；另一件是**即使两条连接看着同一个
+会话，第二条也听不到那一轮** —— 那是投递层的缺陷，本轮修的就是它。
+
+之前 engine 的产出全部经过 `deliver_to(sink, …)`，也就是「谁问的给谁」；`subscribers` 那张表就是「所有
+活着的连接」，既没有 `publish` 也没有 `session_watchers`。现在 `broadcast_or_emit` 按事件性质分两路：
+`is_session_event()` 为真的（发生在转录本里的事）交给 `publish`，听众是「该会话的关注者集合」；其余
+（工作区列表、已解析的 diff、一次 `ack`）是关于主机的事实或一次回答，仍只回给出题的那条连接 —— 广播
+`file_contents` 会把一个标签页的文件放进另一个标签页的查看器。一条连接进入那个集合有三条入口，缺一即漏：
+`dispatch_to` 在**处理之前**为请求点名的会话登记（`submit` 的第一个 delta 是在处理过程中产出的，处理完
+再登记就漏掉自己那一轮的开头）、`adopt` 在一份转录本被交出去时登记（`SessionSnapshot`/`SessionCreated` 是
+答案所以走定向，可拿到它的那条连接正是屏幕上显示这段对话的人；`switch_workspace` 非它不可，因为那条请求
+不点名任何会话）、`unwatch` 在连接断开或被逐出时把它从所有会话里摘干净。
+
+宿主那条原名 `another_connection_follows_the_same_turn_without_asking_for_it` 的用例改了名，因为原名承诺的是
+「不用开口就能跟」，而真实的性质是「先被交接过转录本或先 `resume` 过的连接才跟得上」—— 不改名，下一个读代码
+的人会照着名字去实现一个广播一切的主机，那正是新加的「旁观者一条都收不到」那条用例要拦的东西。engine 侧两条
+新用例成对存在也是同一个道理：只写「别广播」，实现可以退化成永远只回给出题连接；只写「要广播」，可以退化成
+广播一切。
+
+客户端要回答的是另一个问题：**什么时候该自己开口**。第一版按消息类型判断（看到 `workspace_switched` 或
+`workspace_archived` 就去重开转录本），一次实测把它三个方向都推翻了对：`switch_workspace` 恰恰**只发给
+提问者**，被广播带走的标签页听到的是 `workspaces`，那条规则因此从不触发。现在的规则判的是状态差而不是消息
+类型 —— `sessionOpenMessage(previous, next, message)`：`sessionId` 在这条消息前后变了、而这条消息不是刚把
+转录本交到手上的那两种，就说明对话被换掉了而内容没跟着来，于是主动发一条 `resume`。`switch_workspace` 的
+落点、`archive_workspace` 的落点、以及别的标签页 `create_workspace` 引发的广播因此共用一条规则，要判的性质
+只有一个：我的对话换了，可我没拿到它。
+
+顺带量到并当场修掉一处：归档活动工作区之后，客户端会自己从列表里挑一个落点并**为它发一条 `resume`**，
+而主机挑的是另一个、并且**回答了**这条请求 —— 于是屏幕上画的是主机并没有选中的那段对话，直到主机自己的
+`session_snapshot` 到达才被换掉。主机在归档活动工作区时一定会补一帧 `workspace_switched`（找不到候选还会
+现造一个「默认工作区」），所以那次猜测从来没有存在的必要；现在客户端只标记归档并清空，落点由主机说。附带
+好处是清空走 `workspaceChanged`，连文件面板、git 状态、终端结果一起清掉了 —— 原先那条分支只清转录本与审批，
+被归档工作区的文件面板会留在屏幕上。旧夹具只有两个工作区，猜第一个恰好会对，所以量不出这个缺陷；新夹具用
+三个工作区把「列表第一项」与「主机的候选」分开。
+
+同一批实测还量出三条没修的，已各自立成 `TODO.md` 开放项：`switch_workspace` 不广播（两个标签页可以对
+「现在是哪个活动工作区」各持己见，被落下的那一页仍在往自己那份会话里写字）；归档落点由
+`(last_used_sequence, id)` 决定而 `last_used_sequence` 跑一轮 `submit` 根本不推进（于是同批创建的工作区全部
+并列，落点实际由 UUID 顺序决定）；跟读别人那一轮的标签页会把连续两轮回答并进同一个气泡（分组以「本页发过的
+提问」为锚点，而跟读的标签页从不发问）。
+
+反证两处，一端一个：删掉 `main.tsx` 里那两行，跨标签页那条浏览器用例在桌面与移动同时红在
+`Expected: "历史已恢复" / Received: "工作区已切换"`；删掉 `lib.rs` 里那句 `self.adopt(&event, sink);`，
+engine 那条「切换进来的连接该跟上」以 `no event within 20s` 红（`10 passed; 1 failed`）；把归档的猜测写回去，
+`:201` 那条用例红在 `+ "be972c3e"` 这一行 —— 多出来的那条 `resume` 正是发给它自己猜的落点的。三个源文件都
+写回到字节一致。逐帧矩阵（`create_workspace` 广播 `workspaces`、`switch_workspace` 只发提问者、
+`archive_workspace` 广播、未被点名的会话一条不外发）与两次重跑的逐字输出见
+`docs/verification/streamed-turn-2026-10-06.log` 第 9 节。
+
+（2026-10-06；`crates/codegen/chaos-engine/src/lib.rs`、`crates/codegen/chaos-engine/tests/streaming_flow.rs`、`crates/codegen/xai-grok-web/tests/streaming_flow.rs`、`apps/chaos-ui/src/session.ts`、`apps/chaos-ui/src/session.test.ts`、`apps/chaos-ui/src/workspace-ui.test.ts`、`apps/chaos-ui/src/main.tsx`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`、`TODO.md`、`docs/architecture/todo-open-item-classification.md`、`docs/verification/todo-open-items.tsv`、`docs/verification/streamed-turn-2026-10-06.log`）
+
 ### 修复：两个 Docker 实验台在检出里留下 root 所有的 `target/`，容器卫生门禁在下一次 CI 上把这件事说了出来
 
 上一批把实验台从「宿主编译、容器运行」改成「容器里编译」（见下面那条 2026-10-06 的 Docker 条目），代价是它们第一次把检出 bind mount 进容器，

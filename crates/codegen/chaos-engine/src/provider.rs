@@ -243,7 +243,14 @@ impl HttpPromptAdapter {
             .map(str::to_string)
     }
 
-    fn send_and_read(&self, body: serde_json::Value) -> Result<Vec<String>, String> {
+    /// Reads the SSE response and hands each delta to `emit` as its frame arrives,
+    /// which is what makes the answer appear while the Provider is still writing
+    /// it. `emit` returns `false` when the caller has stopped listening.
+    fn send_and_stream(
+        &self,
+        body: serde_json::Value,
+        emit: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<(), String> {
         let client = self.client()?;
         let request = self.authorize(client.post(&self.chat_endpoint).json(&body));
         let response = request
@@ -266,7 +273,7 @@ impl HttpPromptAdapter {
             }));
         }
         let mut reader = BufReader::new(std::io::Read::take(response, MAX_STREAM_BYTES)).lines();
-        let mut chunks: Vec<String> = Vec::new();
+        let mut produced = false;
         let mut provider_error: Option<String> = None;
         while let Some(line) = reader
             .next()
@@ -295,17 +302,25 @@ impl HttpPromptAdapter {
                 continue;
             }
             match Self::delta_of(&value) {
-                Some(text) if !text.is_empty() => chunks.push(text),
+                Some(text) if !text.is_empty() => {
+                    produced = true;
+                    if !emit(&text) {
+                        // The run was stopped. Returning here drops the response, and
+                        // with it the connection, rather than draining a reply that
+                        // nobody is going to show.
+                        return Ok(());
+                    }
+                }
                 _ => {}
             }
         }
         if let Some(message) = provider_error {
             return Err(format!("Provider 报告错误：{message}"));
         }
-        if chunks.is_empty() {
+        if !produced {
             return Err("Provider 未返回任何文本".to_string());
         }
-        Ok(chunks)
+        Ok(())
     }
 
     /// Strips the URL from transport errors: a proxy could place credentials
@@ -397,12 +412,25 @@ impl HttpPromptAdapter {
 
 impl PromptAdapter for HttpPromptAdapter {
     fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+        let mut chunks = Vec::new();
+        self.run_prompt_stream(prompt, &mut |chunk| {
+            chunks.push(chunk.to_string());
+            true
+        })?;
+        Ok(chunks)
+    }
+
+    fn run_prompt_stream(
+        &self,
+        prompt: &str,
+        emit: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<(), String> {
         let body = serde_json::json!({
             "model": self.model,
             "messages": [{ "role": "user", "content": prompt }],
             "stream": true,
         });
-        self.send_and_read(body)
+        self.send_and_stream(body, emit)
     }
 }
 

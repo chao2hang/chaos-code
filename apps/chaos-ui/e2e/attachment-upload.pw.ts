@@ -1,13 +1,17 @@
 import { expect, test, type Page } from '@playwright/test'
+import { UPLOAD_CHUNK_BYTES, UPLOAD_WINDOW } from '../src/attachments'
 import { existsSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const workspaceRoot = resolve('e2e/fixtures/workspace')
 
-// 120 KiB is three slices of the client's frame budget, so the transfer only
-// finishes if every slice is accepted and the host keeps a running total.
-const UPLOAD_BYTES = 120 * 1024
+// Nine slices of the client's frame budget, more than the four the client is
+// willing to have unacknowledged at once (`UPLOAD_WINDOW` in `src/attachments.ts`),
+// so the transfer only finishes if the client both keeps its slices inside the
+// window and refills it from the host's progress reports. Anything that fits in
+// one window would pass with a client that ignored `attachment_progress`.
+const UPLOAD_BYTES = 9 * 47 * 1024
 
 function payload(token: string, size: number): Buffer {
   const line = `chaos-e2e ${token} attachment payload line\n`
@@ -71,6 +75,53 @@ async function waitUploadStatusShown(page: Page, needle: string) {
     .toBe(true)
 }
 
+/**
+ * Records the order the client put slices on the wire and the order the host's
+ * progress reports came back, by wrapping the socket's own `send` and
+ * `onmessage` before the app takes it.
+ *
+ * `uploadWindowSlices` is what stops a browser from putting a whole 10 MiB
+ * attachment -- 218 slices -- on one socket at once; the host answers frames past
+ * its in-flight limit with `too_many_in_flight`, so a client that ignored the
+ * window would fail a legal upload. Only the wire order can show that, and the
+ * host acknowledges each slice it stages, so this observes both directions.
+ */
+async function recordWireOrder(page: Page) {
+  await page.addInitScript(() => {
+    const wire: string[] = []
+    ;(window as unknown as { __chaosWire: string[] }).__chaosWire = wire
+    const note = (text: string, mark: string) => {
+      if (text.includes(mark)) wire.push(mark === '"attachment_chunk"' ? 'c' : 'p')
+    }
+    const socketSend = WebSocket.prototype.send
+    WebSocket.prototype.send = function (data: unknown) {
+      if (typeof data === 'string') note(data, '"attachment_chunk"')
+      return (socketSend as (this: WebSocket, body: unknown) => void).call(this, data)
+    }
+    const onmessage = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage')
+    if (!onmessage?.set) throw new Error('WebSocket.prototype.onmessage 不是可写属性，无法记录线序')
+    Object.defineProperty(WebSocket.prototype, 'onmessage', {
+      configurable: true,
+      enumerable: onmessage.enumerable,
+      get(this: WebSocket) {
+        return onmessage.get?.call(this)
+      },
+      set(this: WebSocket, handler: ((event: MessageEvent) => void) | null) {
+        const wrapped = function (this: WebSocket, event: MessageEvent) {
+          if (typeof event.data === 'string') note(event.data, '"attachment_progress"')
+          return handler?.apply(this, [event])
+        }
+        onmessage.set!.call(this, wrapped)
+      },
+    })
+  })
+}
+
+/** The recorded wire order, one character per slice sent (`c`) and progress report received (`p`). */
+function wireOrder(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __chaosWire: string[] }).__chaosWire)
+}
+
 test('an approved browser upload writes the file into the workspace', async ({ page }) => {
   const unique = token()
   const name = `upload-${unique}.txt`
@@ -83,6 +134,7 @@ test('an approved browser upload writes the file into the workspace', async ({ p
     // The upload has to create the file, otherwise the byte comparison is vacuous.
     expect(existsSync(onDisk)).toBe(false)
 
+    await recordWireOrder(page)
     await openUploadPanel(page)
     await page.getByTestId('upload-file-input').setInputFiles({ name, mimeType: 'text/plain', buffer: contents })
     await page.getByTestId('upload-target-path').fill(relativePath)
@@ -100,6 +152,28 @@ test('an approved browser upload writes the file into the workspace', async ({ p
     await expect(approval).toHaveCount(0)
     await expect(submit).toBeEnabled()
     expect((await readFile(onDisk)).equals(contents)).toBe(true)
+
+    // The window is what this payload measures. Between the host's progress
+    // reports the client never had more than `UPLOAD_WINDOW` slices
+    // unacknowledged -- a client that ignored the window would be refused partway
+    // by the host's per-connection in-flight limit -- and it did fill the window,
+    // so this is the shipped pacing and not one slice per round trip.
+    const wire = await wireOrder(page)
+    const slices = Math.ceil(UPLOAD_BYTES / UPLOAD_CHUNK_BYTES)
+    expect(slices).toBeGreaterThan(UPLOAD_WINDOW)
+    expect(wire.filter((mark) => mark === 'c')).toHaveLength(slices)
+    // Every slice the host staged is reported, so the client can refill.
+    expect(wire.filter((mark) => mark === 'p')).toHaveLength(slices)
+    let unacknowledged = 0
+    let peak = 0
+    for (const mark of wire) {
+      unacknowledged += mark === 'c' ? 1 : -1
+      // Negative would mean the host reported bytes for a slice it was never sent.
+      expect(unacknowledged).toBeGreaterThanOrEqual(0)
+      expect(unacknowledged).toBeLessThanOrEqual(UPLOAD_WINDOW)
+      peak = Math.max(peak, unacknowledged)
+    }
+    expect(peak).toBe(UPLOAD_WINDOW)
 
     // Second code path over the same bytes: content search and the file reader
     // can only report what is really on disk.

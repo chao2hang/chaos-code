@@ -1921,11 +1921,13 @@ run、`status=completed` 配 `conclusion=in_progress`、一份 HTTP 200 且内�
 比对 web 端与 ZCode 时要写一条「模型/端点不可切换」的差距行，需要先确认 Chaos 现状。子代理的取证包照抄了
 `TODO.md` 里 M3.1 那条已有行的说法 —— 「Base URL/model 更新在当前 engine 内即时生效」。这句话若抄进新的取证文档，
 差距行就会被判定为「已实现一半」，而差距本身就消失了。动手写之前去看了被引用的那个接口：
-`crates/codegen/chaos-engine/src/lib.rs:33` 的 `PromptAdapter::run_prompt(&self, prompt: &str)` 只有 prompt 一个入参，
-两个调用点（同文件 `lib.rs:2616` 的正常轮次、`lib.rs:2814` 的提交信息生成）也只传 prompt；真正决定发给谁的
-`HttpPromptAdapter` 把 `chat_endpoint`、`models_endpoint`、`model` 存成构造期字段（`crates/codegen/chaos-engine/src/provider.rs:47`），
-由 `provider.rs:153` 的 `from_env` 在进程启动时填好，装配点在 `crates/codegen/xai-grok-web/src/main.rs:16`。
-`GuiSettings.model` / `base_url` 的读写只出现在 `lib.rs:3062`（GetSettings）、`lib.rs:3085`（UpdateSettings）与
+`crates/codegen/chaos-engine/src/lib.rs` 的 `PromptAdapter::run_prompt(&self, prompt: &str)`（trait 声明在
+`lib.rs:36`，方法在 `lib.rs:37`）只有 prompt 一个入参，两个调用点也只传 prompt —— 正常轮次在
+`produce_run` 里的 `lib.rs:2854`（流式形态 `run_prompt_stream`，同文件 `:51`），提交信息生成在 `lib.rs:3417`；
+真正决定发给谁的
+`HttpPromptAdapter` 把 `chat_endpoint`、`models_endpoint`、`model` 存成构造期字段（`crates/codegen/chaos-engine/src/provider.rs:48`），
+由 `provider.rs:153` 的 `from_env` 在进程启动时填好，装配点在 `crates/codegen/xai-grok-web/src/main.rs:23`。
+`GuiSettings.model` / `base_url` 的读写只出现在 `lib.rs:3665`（GetSettings）、`lib.rs:3688`（UpdateSettings）与
 `ValidateProvider` 那一条腿上。也就是说「改完能存住、GetSettings 读得回来、进程重启后新值在用」是真的，
 「这一轮对话就换了模型」在源码里没有任何承载它的地方。
 
@@ -1994,6 +1996,46 @@ run、`status=completed` 配 `conclusion=in_progress`、一份 HTTP 200 且内�
 **判据：仓库的路径门禁覆盖不到仓库之外，所以关于外部系统的每一句断言的验收只能是人手实测一次，且复现命令
 与输出要写在它旁边；未经复述的摘录不得入册。引用一条已有的账本行或既有文档等于重新对它负责，
 要当场对签名或对文件复核。**
+
+## 2026-10-06：一条测试写死的 12 帧，是在另一个常量还是 8 的时候定的 —— 变异注入到与它无关的方向才把它照出来
+
+把「一轮回答跑到自己的线程上」这件事做完之后，先跑的是变异而不是新测试：如果反证不红，新加的三条断言
+（chunk 在 `Completed` 之前到达、起了一轮的连接照样答别的问题、cancel 打断的是活着的一轮）就只是装饰。
+
+- 变异 A：宿主里把工作线程的循环体包回 `std::thread::spawn`，即恢复「一帧一条线程」，只改顺序，其余不碰。
+  `slices_sent_back_to_back_are_written_in_the_order_they_arrived` 变红，红得比预期更早 —— 它没等到逐字节比对，
+  在收事件那一步就报 `unexpected AttachmentProgress { received: 98304 }`（应是 4096 的第一片）。这说明
+  「分片按到达顺序落盘」这条不变量此前只活在客户端注释里，任何一次并发派发都会静默改变文件内容。
+- 变异 A 的第一版是错的，而且错得会被误当成「测试没本事」：它把 `frames_rx.recv()` 一起挪回了 async 任务体，
+  于是阻塞的是 tokio 工作线程，帧永远进不到 `frames_tx`，测试是**挂住**而不是变红。挂住的变异不算反证，
+  丢弃重做 —— 变异必须只动被质疑的那一件事。
+- 变异 B：engine 里在 `ack` 之后插一条「有 sink 就就地产出」，即把这一轮放回提问那一帧。宿主 6 条红 3 条，
+  三条名字正是这条改动要保的三件事。**但其中一条红得不对劲**：`a_connection_holding_too_many_requests_is_told_so_by_name`
+  的原文是 `one socket queued 12 further requests on top of a running command with no refusal`，而它是在变异里红的
+  —— 还原生产代码之后单跑，它**还是红**。
+- 还原后仍红，说明缺陷在测试侧。它写死 `const FURTHER: usize = 12;`，是在 `MAX_IN_FLIGHT_PER_CONNECTION`
+  还是 8 的年代定的数；本轮为了让 10 MiB 附件不被自家连接的上限掐掉，把上限抬到 16，于是 12 帧已经落进
+  限值之内，这条测试从此变成一条「什么都不肯拒绝」的空断言，而它一直是绿的。修法不是把 12 换成 20，
+  而是让它从被量的那个常量取数：`const FURTHER: usize = MAX_IN_FLIGHT_PER_CONNECTION + 1;`（该常量因此
+  从私有升为 `pub`）。同一个常量在 `apps/chaos-ui/src/attachments.test.ts` 里也被读了一次，用来断言
+  客户端窗口必须严格小于主机的在飞上限 —— 那两个数字一个是「浏览器敢发几片」，一个是「主机肯压几帧」，
+  它们之间的关系是产品合同，不该靠两边各自记得。
+- 顺带记一条同类：`an_adapter_that_panics_ends_the_turn_and_frees_the_session` 断言第二轮的 `TextDelta` 条数
+  为 1，而它自定的夹具（`PanicsOnTheFirstAnswer`）第二次进来先 `emit("写了一半")` 再 `emit("这一次写完了")`
+  ——本来就是两条。这条断言量的性质是「会话被释放、第二轮能正常答」，条数属于夹具的 chunking，
+  于是改断言为「第二轮必须把它那一句独有的文字送到」，而不是把期望数改成 2 继续量一个无关的东西。
+
+- 同一轮改动把 `PromptAdapter` 的两个调用点与 settings 两条 handler 的行号都挪走了，本文件上面
+  「设置改了当前 engine 即时生效」那一节引用的位置因此重写为当前行号（`lib.rs:36/37/51/2854/3417`、
+  `provider.rs:48`、`main.rs:23`、`lib.rs:3665/3688`）。行号引用不会有任何门禁替它响：
+  `check-doc-path-refs.py` 只查路径在不在仓库里，`lib.rs:2616` 只要 `crates/codegen/chaos-engine/src/lib.rs`
+  还在就算通过，指向的却是一句文档注释。
+
+**判据：断言里凡是「刚好够过」的数量，必须写成从被量的那个常量推导出来的式子；一个手调出来的数字在常量
+动过一次之后就会变成一条永远绿的空断言，而它变绿的过程没有任何东西会响。变异要注入到与目标相邻但
+不同方向的改动上 —— 本轮那条写死帧数的测试，只有在「改的是线程模型、不是拒绝逻辑」的变异里才被顺带照出，
+因为它红的根本不是自己声称在量的那件事。改了被文档引用的那些位置，就得当场把引用重抄一遍，因为
+没有门禁会替你发现行号已经指向别处。**
 
 ## Risk
 

@@ -7,6 +7,7 @@ import {
   MAX_FRAME_BYTES,
   MIME_BY_EXTENSION,
   UPLOAD_CHUNK_BYTES,
+  UPLOAD_WINDOW,
   attachmentChunkMessages,
   base64,
   beginAttachmentMessage,
@@ -17,7 +18,9 @@ import {
   describeUpload,
   finalizeAttachmentMessage,
   isUploadFailure,
+  slicesStaged,
   uploadIsInFlight,
+  uploadWindowSlices,
   validateAttachmentMessage,
   type UploadStatus,
 } from './attachments'
@@ -96,7 +99,89 @@ describe('attachment upload framing', () => {
     expect(messages.every((message) => message.type === 'attachment_chunk' && message.upload_id === 'upload-1')).toBe(true)
   })
 
+  it('counts only whole slices as staged, so the window waits for real bytes', () => {
+    const size = 10 * UPLOAD_CHUNK_BYTES + 5
+    const total = chunkPlan(size).length
+
+    expect(slicesStaged(size, 0)).toBe(0)
+    // A partial slice is not staged: the host appends bytes as they arrive and
+    // only a whole slice can be relied on, so the window stays shut.
+    expect(slicesStaged(size, UPLOAD_CHUNK_BYTES - 1)).toBe(0)
+    expect(slicesStaged(size, UPLOAD_CHUNK_BYTES)).toBe(1)
+    expect(slicesStaged(size, 3 * UPLOAD_CHUNK_BYTES + 1)).toBe(3)
+    expect(slicesStaged(size, size - 5)).toBe(total - 1)
+    expect(slicesStaged(size, size)).toBe(total)
+    // Past the last byte the host can report, the count does not run off the end.
+    expect(slicesStaged(size, size + UPLOAD_CHUNK_BYTES)).toBe(total)
+    expect(slicesStaged(0, 0)).toBe(0)
+  })
+
+  it('keeps at most a window of slices unacknowledged and never sends past the end', () => {
+    const size = 10 * UPLOAD_CHUNK_BYTES + 5
+    const total = chunkPlan(size).length
+
+    // Nothing acknowledged yet: a full window goes out, which is what keeps a
+    // short file to a single round trip instead of one slice per round trip.
+    expect(uploadWindowSlices(size, 0, 0)).toBe(UPLOAD_WINDOW)
+    expect(uploadWindowSlices(2 * UPLOAD_CHUNK_BYTES, 0, 0)).toBe(2)
+    expect(uploadWindowSlices(UPLOAD_CHUNK_BYTES, 0, 0)).toBe(1)
+    expect(uploadWindowSlices(0, 0, 0)).toBe(0)
+    // Everything on the wire and none of it acknowledged: the client waits rather
+    // than burying a host that is slow or has stopped reading.
+    expect(uploadWindowSlices(size, 0, UPLOAD_WINDOW)).toBe(0)
+    expect(uploadWindowSlices(size, 0, total)).toBe(0)
+    // One slice acknowledged lets exactly one more go, so throughput is the window.
+    expect(uploadWindowSlices(size, UPLOAD_CHUNK_BYTES, UPLOAD_WINDOW)).toBe(1)
+    // The tail: fewer slices remain than the window is willing to send.
+    expect(uploadWindowSlices(size, size - 5, total - 1)).toBe(1)
+    expect(uploadWindowSlices(size, size, total)).toBe(0)
+  })
+
+  it('drives a whole upload through the window without exceeding it', () => {
+    const size = 37 * UPLOAD_CHUNK_BYTES + 11
+    const plan = chunkPlan(size)
+    const total = plan.length
+    const ends = plan.map((slice) => slice.offset + slice.length)
+
+    // The pump `main.tsx` runs, replayed against a host that stages slices in
+    // arrival order and acknowledges every byte it holds: send what the window
+    // allows, take back the acknowledgement, repeat. The assertions are the
+    // invariants the host's per-connection queue depends on.
+    let sent = 0
+    let received = 0
+    let peakInFlight = 0
+    for (let round = 0; received < size; round += 1) {
+      expect(round).toBeLessThan(total + UPLOAD_WINDOW + 2)
+      const toSend = uploadWindowSlices(size, received, sent)
+      expect(toSend).toBeGreaterThanOrEqual(0)
+      expect(sent + toSend).toBeLessThanOrEqual(total)
+      sent += toSend
+      peakInFlight = Math.max(peakInFlight, sent - slicesStaged(size, received))
+      expect(peakInFlight).toBeLessThanOrEqual(UPLOAD_WINDOW)
+      // The host acks up to the end of the next slice it has taken.
+      const staged = slicesStaged(size, received)
+      received = ends[Math.min(staged, total - 1)]
+    }
+
+    expect(sent).toBe(total)
+    expect(uploadWindowSlices(size, received, sent)).toBe(0)
+    // The window is what makes the biggest admitted file a bounded burst: without
+    // it the browser would put all 218 slices on the socket at once and the host
+    // would refuse the frames past its in-flight limit, blaming the user's file.
+    expect(chunkPlan(MAX_ATTACHMENT_BYTES).length).toBeGreaterThan(UPLOAD_WINDOW * 10)
+    expect(peakInFlight).toBe(UPLOAD_WINDOW)
+    // The host counts frames it has not answered yet (`MAX_IN_FLIGHT_PER_CONNECTION`
+    // in `crates/codegen/xai-grok-web/src/lib.rs`) and answers the frames past that
+    // with `too_many_in_flight`, so a window at or past its bound would make every
+    // legal upload fail on the host's own accounting. Read from the Rust source so
+    // the two numbers cannot drift apart unnoticed.
+    const inFlightBound = Number(/const MAX_IN_FLIGHT_PER_CONNECTION: usize = (\d+);/.exec(WEB_SOURCE)?.[1])
+    expect(Number.isInteger(inFlightBound)).toBe(true)
+    expect(UPLOAD_WINDOW).toBeLessThan(inFlightBound)
+  })
+
   it('round-trips a single byte and an unaligned tail through base64', () => {
+
     for (const length of [1, 2, 3, 4, UPLOAD_CHUNK_BYTES - 1, UPLOAD_CHUNK_BYTES + 1]) {
       const bytes = patternBytes(length)
       expect(decode(base64(bytes))).toEqual(bytes)

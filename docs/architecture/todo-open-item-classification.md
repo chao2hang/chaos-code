@@ -179,7 +179,7 @@ language review, screen-reader testing or platform acceptance.
 |---|---:|---:|
 | M-1 | 1 | 5 |
 | M0 | 0 | 11 |
-| M1 | 8 | 16 |
+| M1 | 10 | 17 |
 | M2 | 4 | 24 |
 | M3 | 7 | 12 |
 | M4 | 5 | 13 |
@@ -212,6 +212,30 @@ list: the "whiteboard" evidence on the ZCode side turns out to come from a bundl
 Feishu SDK, and this machine has no ZCode client at all, so the whole comparison
 rests on data contracts and protocol vocabulary and reaches no conclusion about
 any user interface.
+
+One of those 14 rows moved the same day: the M1.1 row about the absence of a real
+server push went unchecked to partial, because the engine now produces a turn on its
+own thread, the Web host subscribes and forwards, and cancel interrupts a turn that is
+still streaming. It stays partial because two named things are still missing there
+(stream recovery and a terminal event per turn), and the judgment table in section 2.2
+of `TODO.md` still reads Degraded for that capability. See
+`docs/verification/streamed-turn-2026-10-06.log`.
+
+M1 then gained three unchecked rows of its own, all found by measuring what a second
+browser tab actually receives from the shipped `chaos-web` binary rather than by reading
+the code: `switch_workspace` is answered only to the connection that asked, so two tabs
+can hold different views of the one engine-wide active workspace with nothing sent to
+reconcile them; the workspace an archived active workspace lands on is chosen by
+`(last_used_sequence, id)` where `last_used_sequence` never advances on a turn, so the
+choice is decided by UUID order; and a tab that follows another tab's conversation merges
+consecutive answers into one assistant bubble, because turn grouping is anchored on a
+prompt this tab sent and a follower sends none. Delivering events per session also
+exposed a defect that was fixed rather than registered: the client used to pick the
+landing workspace itself after an archive and send a `resume` for it, the host answered
+that request, and the wrong conversation was drawn on screen until the host's own frame
+arrived -- the client now waits for the host to say where it landed, pinned by a browser
+spec that reads the frame log. Section 9.9 of the same evidence file carries both the
+frame transcript and the mutation that turns that spec red.
 
 
 ## Locally delivered in this audit pass

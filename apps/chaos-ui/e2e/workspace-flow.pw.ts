@@ -110,6 +110,165 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   await expect(page.locator('.user p').filter({ hasText: `beta after reload ${suffix}` })).toBeVisible()
 })
 
+// A workspace switch points the page at a conversation this connection never named,
+// and a host sends a session's events only to the connections that named it. So the
+// page has to ask to open what it adopted: without that request the timeline would be
+// blank for a workspace that has a transcript, and the tab would sit out anything that
+// conversation goes on to produce.
+test('switching workspaces reopens the conversation it adopted and keeps it live', async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  const alpha = `E2E Reopen Alpha ${suffix}`
+  const beta = `E2E Reopen Beta ${suffix}`
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+
+  await createWorkspace(page, alpha)
+  await sendPrompt(page, `alpha marker ${suffix}`, `alpha marker ${suffix}`)
+  await createWorkspace(page, beta)
+  await sendPrompt(page, `beta marker ${suffix}`, `beta marker ${suffix}`)
+
+  await withSidebar(page, () => workspaceButton(page, alpha).click())
+  await expect(page.locator('.user')).toHaveCount(1)
+  await expect(page.locator('.user').first()).toContainText(`alpha marker ${suffix}`)
+  await expect(page.locator('.assistant').first()).toContainText(`alpha marker ${suffix}`)
+  await expect(page.locator('.assistant')).not.toContainText(`beta marker ${suffix}`)
+
+  // Reopened and still answering here: the next turn's chunks reach this connection.
+  // Written out rather than through `sendPrompt`, which compares against the first
+  // turn on screen -- and the reopened transcript made that one an older turn.
+  await page.getByTestId('composer-input').fill(`alpha second ${suffix}`)
+  await page.getByTestId('composer-submit').click()
+  await expect(page.locator('.user')).toHaveCount(2)
+  await expect(page.locator('.user').last()).toContainText(`alpha second ${suffix}`)
+  await expect(page.locator('.assistant').last()).toContainText(`alpha second ${suffix}`)
+
+  await withSidebar(page, () => workspaceButton(page, beta).click())
+  await expect(page.locator('.user')).toHaveCount(1)
+  await expect(page.locator('.user').first()).toContainText(`beta marker ${suffix}`)
+  await expect(page.locator('.user')).not.toContainText(`alpha second ${suffix}`)
+})
+
+// The engine keeps one active workspace, and `create_workspace` / `archive_workspace`
+// are announced to every connection. A second tab is therefore moved into a conversation
+// it never asked for and never named -- and a host sends a session's events only to the
+// connections that named it. So the moved tab has to ask to open what it was handed: without
+// that request its timeline is the one part of the page that stops updating.
+test('a tab moved along by another tab reopens the conversation it landed in and keeps hearing it', async ({ page, context }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  const alpha = `E2E Moved Alpha ${suffix}`
+  const beta = `E2E Moved Beta ${suffix}`
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+
+  const joiner = await context.newPage()
+  await joiner.goto('/')
+  await expect(joiner.getByTestId('session-status')).toHaveText('会话已创建')
+
+  // Only the first tab clicks; the second is moved by the broadcast, and the reopened
+  // status is the visible trace of the request it sent for itself.
+  await createWorkspace(page, alpha)
+  await expect(joiner.getByTestId('session-status')).toHaveText('历史已恢复')
+  await sendPrompt(page, `alpha marker ${suffix}`, `alpha marker ${suffix}`)
+  await expect(joiner.locator('.assistant')).toContainText(`alpha marker ${suffix}`)
+  // The prompt was typed on the other tab, so only the answer crosses over.
+  await expect(joiner.locator('.user')).toHaveCount(0)
+
+  await createWorkspace(page, beta)
+  await expect(joiner.getByTestId('session-status')).toHaveText('历史已恢复')
+  await sendPrompt(page, `beta marker ${suffix}`, `beta marker ${suffix}`)
+  await expect(joiner.locator('.assistant')).toContainText(`beta marker ${suffix}`)
+  // A follower, not a second writer: everything on this tab arrived from the other one,
+  // and the move into `beta` left the earlier conversation behind, as it does on any tab.
+  await expect(joiner.locator('.user')).toHaveCount(0)
+  await expect(joiner.locator('.assistant')).not.toContainText(`alpha marker ${suffix}`)
+
+  // And it keeps following: a third turn in the conversation it was moved into, one that
+  // neither of the two clicks this tab ever made produced. The two answers share a bubble
+  // here -- a turn is anchored by the prompt that started it, and this tab never sent one.
+  await page.getByTestId('composer-input').fill(`third marker ${suffix}`)
+  await page.getByTestId('composer-submit').click()
+  await expect(page.locator('.assistant').last()).toContainText(`third marker ${suffix}`)
+  await expect(joiner.locator('.assistant').last()).toContainText(`third marker ${suffix}`)
+  await expect(joiner.locator('.assistant')).toContainText(`beta marker ${suffix}`)
+  await joiner.close()
+})
+
+// Archiving the active workspace makes the host pick a replacement, and on a host whose
+// workspaces were all used equally that pick is not the first live entry of the list --
+// which is what a client guessing for itself would choose. Measured against the shipped
+// host before this was fixed, the guessing tab sent `resume` for its own pick, the host
+// answered it, and the wrong conversation was on screen until the host's own frame landed.
+test('a tab that archived the active workspace opens only the conversation the host lands it on', async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  const alpha = `E2E Archive Alpha ${suffix}`
+  const beta = `E2E Archive Beta ${suffix}`
+  const gamma = `E2E Archive Gamma ${suffix}`
+
+  await page.addInitScript(() => {
+    const wire: string[] = []
+    ;(window as unknown as { __chaosArchiveWire: string[] }).__chaosArchiveWire = wire
+    const brief = (raw: string, direction: string) => {
+      try {
+        const message = JSON.parse(raw) as Record<string, unknown>
+        if (message.type !== 'archive_workspace' && message.type !== 'workspace_archived'
+          && message.type !== 'workspace_switched' && message.type !== 'resume'
+          && message.type !== 'session_snapshot' && message.type !== 'workspaces' && message.type !== 'error') return
+        const parts = [`${direction} ${message.type}`]
+        for (const key of ['workspace_id', 'session_id', 'active_workspace_id', 'code']) {
+          if (message[key]) parts.push(`${key}=${String(message[key]).slice(0, 8)}`)
+        }
+        wire.push(parts.join(' '))
+      } catch {
+        wire.push(`${direction} <non-json>`)
+      }
+    }
+    const send = WebSocket.prototype.send
+    WebSocket.prototype.send = function (data: unknown) {
+      if (typeof data === 'string') brief(data, '->')
+      return (send as (this: WebSocket, body: unknown) => void).call(this, data)
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage')
+    if (!descriptor?.set) throw new Error('WebSocket.prototype.onmessage 不是可写属性，无法记录归档后的帧')
+    const setHandler = descriptor.set
+    Object.defineProperty(WebSocket.prototype, 'onmessage', {
+      ...descriptor,
+      set(handler: ((event: MessageEvent) => void) | null) {
+        setHandler.call(this, handler ? ((event: MessageEvent) => {
+          if (typeof event.data === 'string') brief(event.data, '<-')
+          handler(event)
+        }) as EventListener : null)
+      },
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+  for (const [name, marker] of [[alpha, 'alpha'], [beta, 'beta'], [gamma, 'gamma']] as const) {
+    await createWorkspace(page, name)
+    await page.getByTestId('composer-input').fill(`${marker} marker ${suffix}`)
+    await page.getByTestId('composer-submit').click()
+    await expect(page.locator('.assistant').last()).toContainText(`${marker} marker ${suffix}`)
+  }
+
+  const wireStart = await page.evaluate(() => (window as unknown as { __chaosArchiveWire: string[] }).__chaosArchiveWire.length)
+  await withSidebar(page, () => page.getByRole('button', { name: `归档工作区 ${gamma}` }).click())
+  await expect(page.getByTestId('session-status')).toHaveText('历史已恢复')
+
+  const wire = await page.evaluate((from) => (window as unknown as { __chaosArchiveWire: string[] }).__chaosArchiveWire.slice(from), wireStart)
+  const hostPick = /<- workspace_switched workspace_id=(\w{8})/.exec(wire.join('\n'))?.[1]
+  expect(hostPick, `归档活动工作区后主机没有说落在哪儿：\n${wire.join('\n')}`).toBeTruthy()
+  // The only conversation this page asked to open is the one the host landed it on.
+  const resumed = wire.filter((line) => line.startsWith('-> resume')).map((line) => /workspace_id=(\w{8})/.exec(line)?.[1])
+  expect(resumed, `这一页自己挑了落点：\n${wire.join('\n')}`).toEqual([hostPick])
+  // The transcript it ends on is that workspace's own, and the sidebar agrees with the host.
+  const shown = await page.evaluate(() => (document.querySelector('button[data-testid^="workspace-"].active')?.getAttribute('data-testid') ?? '').replace('workspace-', '').slice(0, 8))
+  expect(shown).toBe(hostPick)
+  // The archived conversation is off the page. Counted rather than read, because the
+  // landing workspace may legitimately have an empty transcript.
+  await expect(page.locator('.user p, .assistant p').filter({ hasText: `gamma marker ${suffix}` })).toHaveCount(0)
+  expect(wire.filter((line) => line.includes('error'))).toEqual([])
+})
+
 test('timeline follows new responses at the bottom and preserves a reader anchor when scrolled up', async ({ page }) => {
   await page.goto('/')
   const timeline = page.getByTestId('session-timeline')
