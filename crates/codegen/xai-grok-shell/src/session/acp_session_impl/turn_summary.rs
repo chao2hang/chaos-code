@@ -4,6 +4,7 @@
 //! Shared sampling setup is in [`super::side_call`].
 
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 impl SessionActor {
     /// (Re)start the per-turn dashboard summary side-call for the turn `prompt_id` that just completed successfully.
@@ -18,12 +19,7 @@ impl SessionActor {
         }
         // A queued follow-up promoted by `maybe_start_running_task` is already running when this fires from the completion arm
         // A snapshot taken now would contain that turn's user message, so bail; the running turn's own completion re-fires
-        if self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .is_some()
-        {
+        if self.current_prompt_id.lock_or_recover().is_some() {
             return;
         }
         self.abort_turn_summary();

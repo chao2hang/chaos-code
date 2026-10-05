@@ -230,12 +230,11 @@ pub(crate) fn prompt_suggest_reasoning_budget(
 mod tests {
     use super::*;
     use crate::agent::config::ConfigSource;
+    use crate::util::shared_guard::LockOrRecover;
 
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = ENV_LOCK.lock_or_recover();
         xai_grok_test_support::env::remove_var(ENV_PROMPT_SUGGESTIONS);
         guard
     }

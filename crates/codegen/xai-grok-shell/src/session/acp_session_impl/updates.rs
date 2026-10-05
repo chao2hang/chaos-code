@@ -1,6 +1,7 @@
 //! Outbound updates for `SessionActor`: `send_update` and its buffered/transient/direct variants.
 //! Also xAI-notification handling and the gateway-bridge dispatch shims.
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 /// Hook / image-intake diagnostics leave the no-output rewind window open; every other variant closes it.
 pub(super) fn closes_cancel_rewind_window(update: &XaiSessionUpdate) -> bool {
     !matches!(
@@ -152,11 +153,7 @@ impl SessionActor {
         if by_model.is_empty() && !incomplete {
             return Ok(SubagentUsageApply::AttributedToPrompt);
         }
-        let current = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .clone();
+        let current = self.current_prompt_id.lock_or_recover().clone();
         let attributable = parent_prompt_id.is_some() && parent_prompt_id == current.as_deref();
         if !self
             .chat_state_handle

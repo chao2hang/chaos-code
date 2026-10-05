@@ -1,6 +1,7 @@
 //! The single refresh owner: every managed-config fetch and apply is driven from here.
 
 use crate::auth::GrokAuth;
+use crate::util::shared_guard::LockOrRecover;
 
 use super::ManagedConfigError;
 use super::response::{
@@ -206,9 +207,7 @@ pub fn start_refresh_supervisor(auth_manager: &std::sync::Arc<crate::auth::AuthM
 
 /// Keeps a live supervisor, replaces a dead one; the slot only swaps state, so poison is harmless.
 pub(super) fn ensure_supervisor(spawn: impl FnOnce() -> ManagedConfigRefresher) {
-    let mut slot = REFRESH_SUPERVISOR
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut slot = REFRESH_SUPERVISOR.lock_or_recover();
     if slot.as_ref().is_some_and(|sup| !sup.handle.is_finished()) {
         return;
     }
@@ -217,10 +216,7 @@ pub(super) fn ensure_supervisor(spawn: impl FnOnce() -> ManagedConfigRefresher) 
 
 /// Test seam: take the armed supervisor so a test's guard drop disarms it.
 pub fn take_refresh_supervisor() -> Option<ManagedConfigRefresher> {
-    REFRESH_SUPERVISOR
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take()
+    REFRESH_SUPERVISOR.lock_or_recover().take()
 }
 
 pub fn spawn_refresh_supervisor(

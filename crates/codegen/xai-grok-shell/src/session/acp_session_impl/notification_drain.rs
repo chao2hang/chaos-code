@@ -1,6 +1,7 @@
 //! Idle-gated pending-notification buffering and drain for `SessionActor`, plus auto-start of queued prompts (`maybe_start_running_task`).
 
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 /// Maximum number of pending notifications before oldest are dropped.
 pub(super) const MAX_PENDING_NOTIFICATIONS: usize = 50;
@@ -338,10 +339,7 @@ impl SessionActor {
             );
         }
         {
-            let mut current_prompt_id = self
-                .current_prompt_id
-                .lock()
-                .expect("current_prompt_id mutex poisoned");
+            let mut current_prompt_id = self.current_prompt_id.lock_or_recover();
             *current_prompt_id = Some(prompt_id.clone());
         }
         state.rewindable = true;

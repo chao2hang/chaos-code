@@ -1,3 +1,4 @@
+use crate::util::shared_guard::ReadWriteOrRecover;
 use agent_client_protocol as acp;
 
 use crate::agent::config::ModelEntry;
@@ -52,18 +53,13 @@ static RUNTIME_API_KEY: std::sync::RwLock<RuntimeApiKey> =
     std::sync::RwLock::new(RuntimeApiKey::Unset);
 
 fn runtime_api_key() -> RuntimeApiKey {
-    RUNTIME_API_KEY
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    RUNTIME_API_KEY.read_or_recover().clone()
 }
 
 /// Publish an API key for the rest of the process without mutating the
 /// inherited environment.
 pub(crate) fn set_runtime_api_key(key: impl Into<String>) {
-    let mut slot = RUNTIME_API_KEY
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut slot = RUNTIME_API_KEY.write_or_recover();
     *slot = RuntimeApiKey::Present(key.into());
 }
 
@@ -72,9 +68,7 @@ pub(crate) fn set_runtime_api_key(key: impl Into<String>) {
 /// The legacy `GROK_CODE_XAI_API_KEY` is left alone, matching the previous
 /// behaviour of removing only `XAI_API_KEY`.
 pub(crate) fn clear_runtime_api_key() {
-    let mut slot = RUNTIME_API_KEY
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut slot = RUNTIME_API_KEY.write_or_recover();
     *slot = RuntimeApiKey::Cleared;
 }
 
@@ -82,9 +76,7 @@ pub(crate) fn clear_runtime_api_key() {
 /// production publisher cannot leak into the next one.
 #[cfg(test)]
 pub(crate) fn reset_runtime_api_key_for_test() {
-    let mut slot = RUNTIME_API_KEY
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut slot = RUNTIME_API_KEY.write_or_recover();
     *slot = RuntimeApiKey::Unset;
 }
 
@@ -517,6 +509,7 @@ mod runtime_api_key_tests {
     //! The runtime key replaced `std::env::set_var("XAI_API_KEY", ..)`, so these
     //! drive the real reader and assert the environment is never touched.
     use super::*;
+    use crate::util::shared_guard::poison_rwlock_through_a_panicking_writer;
     use serial_test::serial;
 
     /// Restores "environment wins" so a test cannot leak the cell.
@@ -610,6 +603,40 @@ mod runtime_api_key_tests {
             }
         });
         reset_runtime_api_key_for_test();
+    }
+
+    /// The cell is read on every auth resolution, and the value behind it is a plain
+    /// enum. A poisoning must cost at most the key the dead writer was storing, never
+    /// the resolution that only wanted to read it.
+    #[test]
+    #[serial]
+    fn a_poisoned_runtime_key_cell_still_answers_and_still_accepts_a_write() {
+        let _reset = Reset;
+        reset_runtime_api_key_for_test();
+        set_runtime_api_key("stored-by-the-dead-writer");
+        poison_rwlock_through_a_panicking_writer(&RUNTIME_API_KEY);
+        assert!(
+            matches!(runtime_api_key(), RuntimeApiKey::Present(_)),
+            "the key the dead writer stored must still be handed out"
+        );
+        clear_runtime_api_key();
+        assert!(
+            matches!(runtime_api_key(), RuntimeApiKey::Cleared),
+            "and a later clear must still land behind the poisoning"
+        );
+        set_runtime_api_key("published-after-the-poisoning");
+        assert!(
+            matches!(
+                runtime_api_key(),
+                RuntimeApiKey::Present(key) if key == "published-after-the-poisoning"
+            ),
+            "and so must a later publish, which is what the auth flow calls"
+        );
+        assert!(
+            RUNTIME_API_KEY.is_poisoned(),
+            "the poisoning itself must stay visible to anyone who asks"
+        );
+        RUNTIME_API_KEY.clear_poison();
     }
 }
 

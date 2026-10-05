@@ -14,6 +14,7 @@ use super::ShellCompletionData;
 use crate::agent::mvp_agent::{LocalRef, MvpAgent};
 use crate::extensions::notification::{SessionNotification, SessionUpdate};
 use crate::session::SessionCommand;
+use crate::util::shared_guard::LockOrRecover;
 use agent_client_protocol as acp;
 use tokio::sync::mpsc;
 use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
@@ -33,9 +34,7 @@ pub(crate) fn worker_runtime() -> Result<&'static tokio::runtime::Handle, std::i
     if let Some(runtime) = WORKER.get() {
         return Ok(runtime.handle());
     }
-    let _guard = INIT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = INIT.lock_or_recover();
     if let Some(runtime) = WORKER.get() {
         return Ok(runtime.handle());
     }

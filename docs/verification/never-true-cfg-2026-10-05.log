@@ -478,3 +478,37 @@ executed.
   feature still reaches a crate on every target.
 - Nothing here repairs the two upstream syncs that silently discarded this module's newer tests.
   The sync procedure is a separate row in `TODO.md`.
+
+== 10. What CI said about 1683249c
+
+The host sweep and the container `--full` above both run on this machine, so they can only say the
+tree is green under this toolchain. The pushed commit is the part that answers whether the revived
+tests and the new gate are green where the repository is actually built. Run 37252151767 is the run
+for `1683249c`; it reached a terminal verdict of `success` with every job green, which includes the
+`cargo test --workspace` leg that compiles and executes the 20 tests in `agent::auth_method`, and
+the two gate invocations added by this batch.
+
+    $ gh run list --branch main --limit 4 \
+          --json databaseId,headSha,status,conclusion --jq \
+          '.[] | [.databaseId, .headSha[0:8], .status, (.conclusion // "pending")] | @tsv'
+    37252151767       1683249c      completed       success
+    37241741685       7334b9f3      completed       success
+    37236877469       07d51c8c      completed       success
+
+    $ gh run view 37252151767 --json jobs \
+          --jq '.jobs[] | [.name, .status, .conclusion] | @tsv'
+    installer integrity labs                completed       success
+    rust check / clippy / test              completed       success
+    GUI engine, Web host and frontend       completed       success
+    docs localization                       completed       success
+    secret scan                             completed       success
+    workflows present                       completed       success
+    npm package scripts                     completed       success
+    GUI browser E2E                         completed       success
+    platform tests (windows-latest)         completed       success
+    platform tests (macos-14)               completed       success
+
+That closes the gap §9 leaves open only in the direction it names: the revived tests are executed by
+the Linux job and by nothing else, so a macOS or Windows break inside them would still be invisible.
+The two platform legs here passed for the same reason they passed before -- they do not compile
+`xai-grok-shell` -- and their green is not evidence about this batch either way.

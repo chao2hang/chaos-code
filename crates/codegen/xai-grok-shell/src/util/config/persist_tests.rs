@@ -919,6 +919,7 @@ mod resolve_auto_compact {
         resolve_auto_compact_threshold_percent,
     };
     use crate::agent::config::{Config, ConfigModelOverride, ModelInfo};
+    use crate::util::shared_guard::LockOrRecover;
     use std::sync::Mutex;
     const TEST_MODEL: &str = "grok-4.5";
     const OTHER_MODEL: &str = "grok-4.3";
@@ -968,17 +969,13 @@ mod resolve_auto_compact {
     }
     impl EnvVarGuard {
         fn set(value: &str) -> Self {
-            let lock = ENV_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let lock = ENV_LOCK.lock_or_recover();
             let prev = std::env::var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT).ok();
             xai_grok_test_support::env::set_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT, value);
             Self { _lock: lock, prev }
         }
         fn unset() -> Self {
-            let lock = ENV_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let lock = ENV_LOCK.lock_or_recover();
             let prev = std::env::var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT).ok();
             xai_grok_test_support::env::remove_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT);
             Self { _lock: lock, prev }

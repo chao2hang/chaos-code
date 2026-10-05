@@ -1,0 +1,188 @@
+# Lock poison recovery consolidated onto one shared guard trait (2026-10-05)
+
+== 1. What this batch replaces
+
+`xai-grok-shell` read its `std::sync` locks in two moods. Some call sites recovered from poisoning on the
+spot, some turned poisoning into a panic. This batch puts all of them on one pair of traits
+(`crates/codegen/xai-grok-shell/src/util/shared_guard.rs`) so that the recovery policy lives in exactly one
+place, and then gives the traits consumers that actually read a poisoned guard through shipped code.
+
+  * 28 call sites that panicked on poisoning, in 11 files, were rewritten onto `lock_or_recover` /
+    `read_or_recover` / `write_or_recover`. Four of those 28 sit under `#[cfg(test)]`, so they were never
+    production sites and the census does not move for them.
+  * 10 call sites that already recovered, but each spelled `unwrap_or_else(PoisonError::into_inner)` by
+    hand, were folded onto the same traits. These change no count at all: they did not panic before.
+  * The 15 sites in `agent/models/startup_prefetch.rs` that the previous batch had routed through a
+    module-private helper now call the shared trait too, and that helper is gone.
+  * 17 new tests: 5 for the trait itself (`util/shared_guard_tests.rs`), 11 consumer tests in
+    `tools/tool_context.rs`, `session/acp_session_impl/turn_task.rs`, `claude_import.rs`,
+    `agent/auth_method.rs`, and 1 `#[tokio::test]` in `managed_config/tests.rs`.
+
+== 2. The baseline cell went red before any mutation did, and it was the harness's fault
+
+The matrix's first cell mutates nothing. It exists because every other cell is judged by one bit: did the
+test command exit non-zero. Without an unmutated reading of the same command, "did not go red" has three
+possible causes (no coverage, the command never reached that code, or the fix is genuinely unobserved) and
+the exit code does not separate them. Round one's baseline cell aborted:
+
+    B0: 0 site(s) mutated -> CAUGHT (expected survived) ** CONTRARY TO EXPECTATION ** exit=101
+
+and inside that cell's captured output:
+
+    thread 'session::acp_session::cancel_running_task_tests::handle_prompt_frames_interrupt_on_user_message' (2807178) has overflowed its stack
+    fatal runtime error: stack overflow, aborting
+    error: test failed, to rerun pass `-p xai-grok-shell --lib`
+
+Nothing about this batch is involved. `scripts/verify-gates.sh` exports a stack floor for every gate and the
+container exports the same value through `--env`, because the actor tests in this crate need more than the
+harness default:
+
+    RUST_MIN_STACK_DEFAULT=16777216
+    export RUST_MIN_STACK="${RUST_MIN_STACK:-${RUST_MIN_STACK_DEFAULT}}"
+
+The matrix had been launched with a bare `cargo test -p xai-grok-shell --lib`, which is not the command the
+shipped runners run. With the floor exported, the same unmutated command is green, and that reading is the
+one every later FULL cell is compared against:
+
+    B0: 0 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+
+The harness was then changed so this cannot recur silently: a red baseline aborts the whole run with its own
+exit code instead of letting 29 later cells be judged against it, and a cell that disagrees with its
+expectation now makes the run exit non-zero (it had been returning 0 unconditionally, so the first round's
+nine disagreements printed their own warning into a green exit code).
+
+== 3. Round one: 30 cells, 9 of them disagreeing with the expectation table
+
+    matrix: 30 mutants, 22 caught, 8 survived, 9 contrary to expectation ['B0', 'T2', 'T7', 'C2', 'C4', 'A2', 'A4', 'G1', 'G2']
+
+Two of the nine are the baseline and the two FULL cells (`G1`, `G2`) judged against it, all three explained
+by section 2. The remaining six split into two honest categories, and they are not the same finding.
+
+== 4. Three survivors sit in `#[cfg(test)]` helpers, which are not shipped code
+
+`T2` is `BlockingWaitState::set_depth_for_test`, `C4` is `claude_import::reset_marker_cache_for_test`, `A4`
+is `reset_runtime_api_key_for_test`. All three are `#[cfg(test)]` items with no shipped caller: the census
+excludes `cfg(test)` spans, which is exactly why 28 rewritten sites moved `expect_prod` by 24 and not by 28.
+A mutant inside a test-only helper is observable only through test code, and a test written to observe it
+would have the test harness as its subject. These three are recorded as expected survivals with that reason
+attached in the matrix's own expectation table rather than dropped from the batch:
+
+    T2: 1 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+        reason for expecting survival: tool_context.rs:90 is `set_depth_for_test`, a #[cfg(test)] setter: no shipped caller, so a mutant there is observable only through test code
+
+== 5. Three survivors were real gaps in the tests, and they are now closed
+
+`T7` is `BlockingWaitGuard::enter`, `C2` is the cache-filling write inside `is_claude_import_marked`, `A2` is
+`set_runtime_api_key`. All three are production writes. The tests written for this batch reached the guard in
+a poisoned state and then read or cleared it, but never wrote through it:
+
+  * `the_wait_guard_still_counts_in_through_a_poisoned_state` poisons first and then enters a wait, because
+    the depth is what makes `queue_input` take its send-now path; counting out alone left `enter` uncovered.
+  * `a_poisoned_marker_cache_still_fills_itself_on_the_first_uncached_read` leaves the cache empty instead of
+    seeding it, so the call has to read the marker from disk and store it through the poisoned guard. The
+    expected value is whatever the file says, so the test holds with or without the marker set.
+  * `a_poisoned_runtime_key_cell_still_answers_and_still_accepts_a_write` now publishes a key after the
+    poisoning too; it had only cleared one, which left the publisher the auth flow actually calls uncovered.
+
+    T7: 1 site(s) mutated -> CAUGHT (expected caught) as expected exit=101
+        tools::tool_context::tests::the_wait_guard_still_counts_in_through_a_poisoned_state
+    C2: 1 site(s) mutated -> CAUGHT (expected caught) as expected exit=101
+        claude_import::tests::a_poisoned_marker_cache_still_fills_itself_on_the_first_uncached_read
+    A2: 1 site(s) mutated -> CAUGHT (expected caught) as expected exit=101
+        agent::auth_method::runtime_api_key_tests::a_poisoned_runtime_key_cell_still_answers_and_still_accepts_a_write
+
+== 6. Round two: 9 cells re-judged, none disagreeing
+
+    B0: 0 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+    T2: 1 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+        reason for expecting survival: tool_context.rs:90 is `set_depth_for_test`, a #[cfg(test)] setter: no shipped caller, so a mutant there is observable only through test code
+    T7: 1 site(s) mutated -> CAUGHT (expected caught) as expected exit=101
+        tools::tool_context::tests::the_wait_guard_still_counts_in_through_a_poisoned_state
+    C2: 1 site(s) mutated -> CAUGHT (expected caught) as expected exit=101
+        claude_import::tests::a_poisoned_marker_cache_still_fills_itself_on_the_first_uncached_read
+        claude_import::tests::gate_marker_cache_unset_means_uses_disk
+    A2: 1 site(s) mutated -> CAUGHT (expected caught) as expected exit=101
+        agent::auth_method::runtime_api_key_tests::a_poisoned_runtime_key_cell_still_answers_and_still_accepts_a_write
+        agent::auth_method::runtime_api_key_tests::runtime_key_overrides_the_inherited_environment
+    C4: 1 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+        reason for expecting survival: claude_import.rs:536 is `reset_marker_cache_for_test`, #[cfg(test)] only
+    A4: 1 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+        reason for expecting survival: auth_method.rs:79 is `reset_runtime_api_key_for_test`, #[cfg(test)] only
+    G1: 12 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+        reason for expecting survival: the 12 current_prompt_id accessors in the actor need a live session that has published a prompt id and then poisoned the cell; no unit-test seam does that
+    G2: 4 site(s) mutated -> SURVIVED (expected survived) as expected exit=0
+        reason for expecting survival: spawn.rs:37 subagent counter needs a live coordinator; persist_tests.rs:972/978 and prompt_suggest.rs:237 are themselves test-cfg code
+    matrix: 9 mutants, 3 caught, 6 survived, 0 contrary to expectation []
+
+Taken together the two rounds measure 29 mutants over the 28 rewritten sites plus the three recovery bodies
+in the trait itself: 22 caught, 7 survived, none contrary to expectation. The 7 surviving cells cover 21
+call sites, and the two big ones (`G1`, `G2`) are recorded as open work rather than being described as
+unreachable: closing them needs a session actor that has published a prompt id, which no unit-test seam
+constructs today.
+
+== 7. The failure mode these sites had is an abort, not a test failure
+
+Three of the rewritten sites are reached from a `Drop` that runs while the thread is already unwinding
+(`BlockingWaitGuard::drop`, `TurnSubagentScopeGuard::drop`, and `FinishGuard::drop` from the previous batch).
+A panic raised during unwinding cannot be caught, so the mutant does not fail one assertion, it kills the
+test binary:
+
+    thread 'tools::tool_context::tests::a_stale_guard_still_leaves_the_new_generation_alone_behind_a_poisoned_state' panicked
+    panic in a destructor during cleanup
+    thread caused non-unwinding panic. aborting.
+    error: test failed, to rerun pass `-p xai-grok-shell --lib`
+    Caused by:
+      process didn't exit successfully: `target/debug/deps/xai_grok_shell-08161f36e816855b 'util::shared_guard' 'tools::tool_context' 'session::acp_session::turn_task' 'claude_import::' 'agent::models::startup_prefetch' 'agent::auth_method' managed_config` (signal: 6, SIGABRT: process abort signal)
+
+(The binary path is the workspace's own `target/debug/deps` build output, written here relative to the
+workspace root; the rest of the block is verbatim.)
+
+That is scored as caught. Treating it as a flaky harness and retrying would throw away the exact behaviour
+this batch removes.
+
+== 8. Measurement, both readings taken from the current source
+
+Before the change (recorded in the committed baseline at `1683249c`'s successor) and after, each a separate
+scan rather than arithmetic:
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 24 fewer production sites than recorded
+
+    $ python3 scripts/ci/panic-site-census.py --write-baseline scripts/ci/panic-site-baseline.tsv
+    wrote scripts/ci/panic-site-baseline.tsv (97 crates)
+
+    -xai-grok-shell	23	110	28	13
+    +xai-grok-shell	23	86	28	13
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+
+The columns are crate, `unwrap_prod`, `expect_prod`, `panic_prod`, `unsafe_prod`. `expect_prod` is the one
+this batch moves, by 24: the 24 production `.expect("… poisoned …")` sites. Production `unwrap` (23),
+`panic` (28) and `unsafe` (13) are untouched, which is the check that the batch did not silently move work
+from one panic shape to another.
+
+== 9. Test and gate readings
+
+    $ cargo fmt --all --check
+    (no output)
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-shell --lib -- util::shared_guard tools::tool_context session::acp_session::turn_task claude_import:: agent::models::startup_prefetch agent::auth_method managed_config
+    test result: ok. 125 passed; 0 failed; 1 ignored; 0 measured; 6806 filtered out; finished in 0.16s
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-shell --lib
+    (green; this is the B0 cell of round two, exit=0)
+
+The filtered command is the fast cell's command, and the `125 passed` reading is what keeps that cell from
+being vacuous: an empty filter match exits 0 in the same shape as a real pass.
+
+== 10. Reproduce
+
+    $ git clone . /tmp/repro && git -C /tmp/repro checkout --detach HEAD
+    $ cd /tmp/repro
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    $ bash scripts/verify-gates.sh --with-build
+
+The mutation matrix itself is not committed; it is a scratch tool. Its transcripts are the two files this
+log quotes, kept under `{SCRATCH}` for the duration of the batch, and every cell restored its source from a
+pristine copy with `cmp` verifying the bytes afterwards.

@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### 修复：十一个文件各自把「锁被毒化」当 panic 用，现在它们共用一条恢复路径
+
+`xai-grok-shell` 读 `std::sync` 锁有两种脾气：一种当场恢复（`unwrap_or_else(PoisonError::into_inner)`），
+一种把中毒直接变成 panic（`.lock().unwrap()` / `.expect("… poisoned …")`）。后者散在 11 个文件的 28 处，
+各自写一遍恢复或干脆不恢复；上一个批次刚在 `startup_prefetch.rs` 立了个模块私有 helper。这一批把 28 处全部
+换成 crate 内共享的 `LockOrRecover` / `ReadWriteOrRecover`（`crates/codegen/xai-grok-shell/src/util/shared_guard.rs`），
+再把 10 处「本来就会恢复、只是各自拼一遍 `unwrap_or_else`」的调用点收进同一对 trait，以后改恢复策略只有
+一个地方可改。被换成恢复的调用点守的都是普通值：等待记忆的 depth/generation 与已记住的工具 id、
+`claude_import` 的导入标记缓存、运行时 API key 单元格、配置监督者的任务槽、session actor 的
+`current_prompt_id`；它们跨 panic 结构完好，`.unwrap()` 在这里没守护任何不变量，只把一次失败变成两次。
+其中 `BlockingWaitGuard::drop` 与 `TurnSubagentScopeGuard::drop` 与上一批的 `FinishGuard::drop` 同形 ——
+它们的 `Drop` 恰好在已经展开的路径上运行，展开途中再 panic 直接 abort 进程；矩阵里这几格的变异体现场原文
+就是 `panic in a destructor during cleanup` / `thread caused non-unwinding panic. aborting.` / `signal: 6, SIGABRT`，
+整条 cargo 命令异常终止，属于被抓到而不是环境噪声。
+
+- 覆盖面按「测试能不能真的把中毒的守卫放到出厂调用点前面」实测，不按改了多少行估算。新增 17 条测试：
+  trait 自身 5 条，`BlockingWaitState` 的读法与 `enter`/`drop` 计数、`claude_import` 标记缓存的冷启动与热路径、
+  运行时 API key 的读/清/发布、配置监督者任务槽的交接共 12 条，全部驱动出厂函数，用真实方式把守卫毒化
+  （一个线程持锁时死掉，panic 在上一层接住）。模块切片 `125 passed; 0 failed; 1 ignored`。
+- 变异矩阵 29 格：`22 caught, 7 survived, 0 contrary to expectation`，每格还原后用 `cmp` 核对字节相同。
+  第一轮报了 9 个「与预期相反」，其中 3 格（基线格 `B0` 与两个 FULL 格）是矩阵自己跑错环境：它用裸
+  `cargo test` 跑全库，没导出出厂 runner 都会导出的 `RUST_MIN_STACK=16777216`，于是 actor 测试栈溢出、
+  什么都没改的第一格先 abort，而两个本该暴露覆盖缺口的 FULL 格被同一次 abort 判成「被抓到」，方向恰好相反。
+  同一格导出栈底线之后 `exit=0`，矩阵也改成基线不绿就用独立退出码中止整轮，并要求每条存活豁免带可读理由。
+- 其余 6 格给出两类不同结论。`T2`/`C4`/`A4` 是 `set_depth_for_test`、`reset_marker_cache_for_test`、
+  `reset_runtime_api_key_for_test` 三个 `#[cfg(test)]` 助记，没有出厂调用者，为它们写测试等于拿测试脚手架
+  当被检对象，按名字带理由记为豁免。`T7`/`C2`/`A2` 是真洞：`BlockingWaitGuard::enter`、
+  `is_claude_import_marked` 里那次填缓存的写、`set_runtime_api_key` 在中毒之后只被读过、清过，没被写过；
+  补法不是加断言而是换前置状态（先毒化再进入等待、缓存留空让冷路径真的读盘再写回、毒化之后再发布一次 key），
+  三格随即由绿变红并各自点名到那条新测试。
+- 剩下 2 格 21 个站点记成待办而不是「结构不可达」：session actor 的 12 处 `current_prompt_id` 读法要有一个
+  活着的会话先发布 prompt id 再把那格毒化，`subagent/spawn.rs` 的计数器要有一个活的协调器，本仓库单测
+  没有这个接缝；把它们写成只测 helper 的测试，等于给红灯装保险丝。
+- 计量前后各是一次独立扫描：`xai-grok-shell` 生产 `expect` 站点 `110 → 86`（减 24，因为 28 处里有 4 处写在
+  `#[cfg(test)]` 之下，本来就不在生产计数里），生产 `unwrap` 23、`panic` 28、`unsafe` 13 三项不动，这正说明
+  活儿没被从一种 panic 形状挪到另一种；`scripts/ci/panic-site-baseline.tsv` 这层天花板随之下调，复核读数
+  `baseline holds: 97 crates, 0 fewer production sites than recorded`。
+- `docs/ci-test-debt.md` 记下三件事：退出码型矩阵必须自带未变异基线且基线不成立时整轮作废、写矩阵的人要
+  单独验证「判据不成立时进程非零」（当时那句 `return 0` 是无条件的）、空过滤器与未覆盖在退出码上同形。
+  全过程记在 `docs/verification/lock-poison-consolidation-2026-10-05.log`。
+
+（2026-10-05；`crates/codegen/xai-grok-shell/src/util/shared_guard.rs`、`crates/codegen/xai-grok-shell/src/util/shared_guard_tests.rs`、`crates/codegen/xai-grok-shell/src/util/mod.rs`、`crates/codegen/xai-grok-shell/src/tools/tool_context.rs`、`crates/codegen/xai-grok-shell/src/claude_import.rs`、`crates/codegen/xai-grok-shell/src/agent/auth_method.rs`、`crates/codegen/xai-grok-shell/src/agent/subagent/spawn.rs`、`crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs`、`crates/codegen/xai-grok-shell/src/managed_config/supervisor.rs`、`crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_task.rs`、`scripts/ci/panic-site-baseline.tsv`、`docs/verification/lock-poison-consolidation-2026-10-05.log`）
+
 ### 修复：预取线程死掉时，只想读设置的启动流程不该跟着一起崩
 
 `crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs` 里还剩 16 个生产 `.unwrap()`，

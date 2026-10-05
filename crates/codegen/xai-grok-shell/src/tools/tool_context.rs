@@ -3,6 +3,7 @@
 //! The session actor needs it for non-tool operations (ACP communication, git, rewind, etc.).
 //! Tool execution goes through the ToolBridge, which has its own SessionContext from xai-grok-tools.
 use crate::terminal::AsyncTerminalRunner;
+use crate::util::shared_guard::LockOrRecover;
 use agent_client_protocol as acp;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -82,23 +83,14 @@ impl BlockingWaitState {
         Self(std::sync::Mutex::new(BlockingWaitInner::default()))
     }
     pub(crate) fn depth(&self) -> usize {
-        self.0
-            .lock()
-            .expect("blocking wait state mutex poisoned")
-            .depth
+        self.0.lock_or_recover().depth
     }
     #[cfg(test)]
     pub(crate) fn set_depth_for_test(&self, depth: usize) {
-        self.0
-            .lock()
-            .expect("blocking wait state mutex poisoned")
-            .depth = depth;
+        self.0.lock_or_recover().depth = depth;
     }
     pub(crate) fn generation(&self) -> u64 {
-        self.0
-            .lock()
-            .expect("blocking wait state mutex poisoned")
-            .generation
+        self.0.lock_or_recover().generation
     }
     /// Hold the wait-memory lock for one read-and-maybe-write so a parallel abort cannot land between a check and a clear.
     /// No-op if `generation` does not match (cancel already reset).
@@ -107,7 +99,7 @@ impl BlockingWaitState {
         generation: u64,
         f: impl FnOnce(&mut Option<Vec<String>>) -> R,
     ) -> Option<R> {
-        let mut inner = self.0.lock().expect("blocking wait state mutex poisoned");
+        let mut inner = self.0.lock_or_recover();
         if inner.generation != generation {
             return None;
         }
@@ -133,14 +125,10 @@ impl BlockingWaitState {
     }
     #[cfg(test)]
     pub(crate) fn interrupted_wait_ids(&self) -> Option<Vec<String>> {
-        self.0
-            .lock()
-            .expect("blocking wait state mutex poisoned")
-            .interrupted_wait_ids
-            .clone()
+        self.0.lock_or_recover().interrupted_wait_ids.clone()
     }
     pub(crate) fn reset(&self) {
-        let mut state = self.0.lock().expect("blocking wait state mutex poisoned");
+        let mut state = self.0.lock_or_recover();
         state.generation = state.generation.wrapping_add(1);
         state.depth = 0;
         state.interrupted_wait_ids = None;
@@ -156,7 +144,7 @@ impl BlockingWaitGuard {
     }
     pub(crate) fn enter(state: Arc<BlockingWaitState>) -> Self {
         let generation = {
-            let mut inner = state.0.lock().expect("blocking wait state mutex poisoned");
+            let mut inner = state.0.lock_or_recover();
             inner.depth = inner.depth.saturating_add(1);
             inner.generation
         };
@@ -165,11 +153,7 @@ impl BlockingWaitGuard {
 }
 impl Drop for BlockingWaitGuard {
     fn drop(&mut self) {
-        let mut inner = self
-            .state
-            .0
-            .lock()
-            .expect("blocking wait state mutex poisoned");
+        let mut inner = self.state.0.lock_or_recover();
         if inner.generation == self.generation {
             inner.depth = inner.depth.saturating_sub(1);
         }
@@ -397,7 +381,8 @@ mod output_budget_tests {
 }
 #[cfg(test)]
 mod tests {
-    use super::BlockingWaitState;
+    use super::{BlockingWaitGuard, BlockingWaitState};
+    use crate::util::shared_guard::poison_mutex_through_a_panicking_thread;
     use crate::{terminal::AsyncTerminalRunner, tools::ToolContext};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -448,5 +433,113 @@ mod tests {
                 live_orphan_heal_lock: Arc::new(tokio::sync::Mutex::new(())),
             }
         }
+    }
+
+    /// Every reader of the wait memory goes through the same guard, and the depth is what
+    /// makes `queue_input` take the send-now path. A poisoning must cost at most one
+    /// remembered id, never the turn.
+    #[test]
+    fn a_poisoned_wait_state_still_answers_every_reader() {
+        let state = BlockingWaitState::new();
+        state.set_depth_for_test(2);
+        state.note_interrupted_wait(vec!["task-a".to_string()]);
+        let generation = state.generation();
+        poison_mutex_through_a_panicking_thread(&state.0);
+        assert_eq!(
+            state.depth(),
+            2,
+            "the depth the dead holder was reading stays readable"
+        );
+        assert_eq!(state.generation(), generation);
+        assert_eq!(
+            state.interrupted_wait_ids(),
+            Some(vec!["task-a".to_string()])
+        );
+        assert!(state.0.is_poisoned(), "and the poisoning must stay visible");
+    }
+
+    #[test]
+    fn an_interrupted_wait_merge_still_lands_behind_a_poisoned_guard() {
+        let state = BlockingWaitState::new();
+        let generation = state.generation();
+        poison_mutex_through_a_panicking_thread(&state.0);
+        let applied = state.update_interrupted_wait(generation, |remembered| {
+            remembered
+                .get_or_insert_default()
+                .push("task-b".to_string());
+        });
+        assert!(applied.is_some(), "the generation check must still run");
+        assert_eq!(
+            state.interrupted_wait_ids(),
+            Some(vec!["task-b".to_string()]),
+            "and the write must land"
+        );
+    }
+
+    /// `BlockingWaitGuard::drop` is the line in this file that can abort the process: it
+    /// runs during unwinding when the waiting thread is already panicking, and a panic
+    /// raised while unwinding cannot be caught.
+    #[test]
+    fn the_wait_guard_still_counts_out_through_a_poisoned_state() {
+        let state = Arc::new(BlockingWaitState::new());
+        let guard = BlockingWaitGuard::enter(Arc::clone(&state));
+        assert_eq!(state.depth(), 1, "entering must have counted in");
+        poison_mutex_through_a_panicking_thread(&state.0);
+        drop(guard);
+        assert_eq!(state.depth(), 0, "and dropping must still count out");
+    }
+
+    /// The other half of the pair: a tool that starts an interruptible wait after the
+    /// state was already poisoned still has to be counted in, otherwise the depth stays
+    /// at zero and `queue_input` sends input mid-wait.
+    #[test]
+    fn the_wait_guard_still_counts_in_through_a_poisoned_state() {
+        let state = Arc::new(BlockingWaitState::new());
+        poison_mutex_through_a_panicking_thread(&state.0);
+        let before = state.generation();
+        let guard = BlockingWaitGuard::enter(Arc::clone(&state));
+        assert_eq!(
+            state.depth(),
+            1,
+            "entering through the poisoned state counts in"
+        );
+        assert_eq!(
+            guard.generation(),
+            before,
+            "under the generation still in force"
+        );
+        drop(guard);
+        assert_eq!(state.depth(), 0, "and the paired drop counts back out");
+    }
+
+    #[test]
+    fn a_poisoned_wait_state_can_still_be_reset_for_the_next_turn() {
+        let state = BlockingWaitState::new();
+        state.set_depth_for_test(3);
+        let before = state.generation();
+        poison_mutex_through_a_panicking_thread(&state.0);
+        state.reset();
+        assert_eq!(state.depth(), 0);
+        assert_eq!(state.generation(), before + 1);
+        assert_eq!(state.interrupted_wait_ids(), None);
+    }
+
+    /// A guard left over from the dead generation must not decrement the depth the next
+    /// turn is counting on, and that rule is evaluated under the same guard that just
+    /// refused to panic.
+    #[test]
+    fn a_stale_guard_still_leaves_the_new_generation_alone_behind_a_poisoned_state() {
+        let state = Arc::new(BlockingWaitState::new());
+        let stale = BlockingWaitGuard::enter(Arc::clone(&state));
+        state.reset();
+        let _current = BlockingWaitGuard::enter(Arc::clone(&state));
+        assert_eq!(state.depth(), 1, "the new turn counts as one wait");
+        poison_mutex_through_a_panicking_thread(&state.0);
+        drop(stale);
+        assert_eq!(
+            state.depth(),
+            1,
+            "the stale guard must still see that it is stale and leave it alone"
+        );
     }
 }

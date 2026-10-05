@@ -1,6 +1,7 @@
 //! Goal-harness support for `SessionActor`: reminder/directive templates, goal wrappers, availability, and goal token accounting.
 
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 /// Number of consecutive non-completing goal-mode turns before the goal auto-pauses with `GoalPauseReason::BackOff`. See `handle_turn_end`.
 /// Compile-time constant for v1; remote tunability is a deferred follow-up.
@@ -1277,11 +1278,7 @@ impl SessionActor {
         let task_tool_name = self.resolve_goal_tool_names().await.task;
         // Tag the planner with the goal-creation turn's prompt id so its `subagent.json` / parent `subagents_spawned` ref link to this turn
         // That matches how model-spawned subagents attach to their parent
-        let parent_prompt_id = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .clone();
+        let parent_prompt_id = self.current_prompt_id.lock_or_recover().clone();
         // A mirror-child fork copies the parent conversation verbatim, so it must use the parent model to reuse the parent's cached prefix
         let role_override = crate::session::goal_planner::RoleSpawnOverride::default();
         if !matches!(
@@ -1390,11 +1387,7 @@ impl SessionActor {
             .unwrap_or_default();
 
         let task_tool_name = self.resolve_goal_tool_names().await.task;
-        let parent_prompt_id = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .clone();
+        let parent_prompt_id = self.current_prompt_id.lock_or_recover().clone();
         // Resolve the strategist role override: the entitlement and toolset capability gate, per-role fail-open
         // Borrows `event_tx` for the describe round-trip; `event_tx` moves into the spawner
         let (role_override, tool_names, inherit_tool_names) = self
@@ -1499,11 +1492,7 @@ impl SessionActor {
             .map(|c| c.model)
             .unwrap_or_default();
         let task_tool_name = self.resolve_goal_tool_names().await.task;
-        let parent_prompt_id = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .clone();
+        let parent_prompt_id = self.current_prompt_id.lock_or_recover().clone();
         // The summarizer always inherits the current model (no per-role key); its prompt names the parent toolset's tools
         let tool_names = self.resolve_inherit_role_tool_names().await;
 

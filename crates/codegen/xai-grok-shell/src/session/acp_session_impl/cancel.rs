@@ -1,6 +1,7 @@
 //! Cancellation, send-now, rewind, reporting, and terminal cleanup for `SessionActor`.
 
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 /// Whether the post-cancel notification drain stays suppressed: rewind and non-stop cancels clear it, a stop gesture arms it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,11 +402,7 @@ impl SessionActor {
         // The pin is only a snapshot: the authoritative cancel identity is `running_task.prompt_id`, captured under the state lock below
         // `current_prompt_id` is cleared early (turn scope guard drop / `handle_completion`) while the finished front and its task slot are still queued
         // Keying the durable `TurnCompleted` on the pin alone would lose the terminal (and its `cancelTrigger`) in that window
-        let pinned_prompt_id = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .clone();
+        let pinned_prompt_id = self.current_prompt_id.lock_or_recover().clone();
         {
             xai_grok_telemetry::unified_log::info(
                 "shell.cancel.processing",

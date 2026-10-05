@@ -3,6 +3,7 @@ pub(crate) mod dual_clock;
 pub mod grok_auth_credentials;
 pub mod hooks;
 pub mod limits;
+pub(crate) mod shared_guard;
 pub(crate) mod subprocess;
 pub(crate) mod text_sanitize;
 pub(crate) mod user_identity;

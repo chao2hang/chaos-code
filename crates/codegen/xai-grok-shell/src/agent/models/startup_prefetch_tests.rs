@@ -3,10 +3,11 @@ use std::time::Duration;
 
 use super::{
     Accept, INFLIGHT, Inflight, State, accept, accept_with_deadline, begin_before_policy_gate,
-    clear_for_tests, inject_with_origin_for_tests, lock_or_recover, wait_finished,
+    clear_for_tests, inject_with_origin_for_tests, wait_finished,
 };
 use crate::agent::config::Config;
 use crate::util::config::RemoteSettings;
+use crate::util::shared_guard::{LockOrRecover, poison_mutex_through_a_panicking_thread};
 
 fn marker_settings() -> Option<RemoteSettings> {
     Some(RemoteSettings {
@@ -16,11 +17,11 @@ fn marker_settings() -> Option<RemoteSettings> {
 }
 
 fn registered_marker() -> Option<bool> {
-    // Reads the module's own guards, so it reads them the module's way: some
+    // Reads the module's own guards the way the module reads them, because some
     // tests below hand back a guard poisoned on purpose.
-    let inflight = lock_or_recover(&INFLIGHT);
+    let inflight = INFLIGHT.lock_or_recover();
     let cell = inflight.as_ref()?;
-    let state = lock_or_recover(&cell.state);
+    let state = cell.state.lock_or_recover();
     state.settings.as_ref().and_then(|s| s.path_not_found_hints)
 }
 
@@ -98,24 +99,6 @@ fn wait_settings_leaves_the_fetch_for_accept() {
     }
 }
 
-/// Poisons a guard the way the real failure does it: a thread dies holding it.
-/// The panic is caught one frame above the guard, so the process survives and
-/// the scope's join makes the poisoning visible before this returns.
-fn poison_through_a_panicking_thread<T: Send>(guard: &Mutex<T>) {
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _held = guard.lock().unwrap();
-                panic!("a worker dying inside the guard");
-            }));
-        });
-    });
-    assert!(
-        guard.is_poisoned(),
-        "the poisoning above must be observable"
-    );
-}
-
 /// A fetch the worker finished and then died holding the guard over.
 fn poisoned_fetch(settings: Option<RemoteSettings>, origin: &str) -> Arc<Inflight> {
     let cell = Arc::new(Inflight {
@@ -129,7 +112,7 @@ fn poisoned_fetch(settings: Option<RemoteSettings>, origin: &str) -> Arc<Infligh
         }),
         done: Condvar::new(),
     });
-    poison_through_a_panicking_thread(&cell.state);
+    poison_mutex_through_a_panicking_thread(&cell.state);
     cell
 }
 
@@ -139,7 +122,7 @@ fn poisoned_fetch(settings: Option<RemoteSettings>, origin: &str) -> Arc<Infligh
 fn the_finish_guard_finishes_the_fetch_through_a_poisoned_state_guard() {
     let cell = poisoned_fetch(marker_settings(), "https://poisoned.invalid");
     drop(super::FinishGuard(cell.clone()));
-    let state = lock_or_recover(&cell.state);
+    let state = cell.state.lock_or_recover();
     assert!(
         state.finished,
         "a poisoned guard must not leave the fetch looking still in flight"
@@ -176,7 +159,7 @@ fn a_poisoned_guard_under_a_sleeping_waiter_ends_the_wait_without_a_panic() {
         state: Mutex::new(State::default()),
         done: Condvar::new(),
     });
-    poison_through_a_panicking_thread(&cell.state);
+    poison_mutex_through_a_panicking_thread(&cell.state);
     assert!(
         wait_finished(cell, Duration::from_millis(50)).is_none(),
         "a worker that died without notifying must spend the wait, not panic the waiter"
@@ -195,7 +178,7 @@ fn accept_consumes_a_fetch_behind_a_poisoned_registry_guard() {
     let egress_open = crate::util::config::resolve_remote_fetch_enabled();
     clear_for_tests();
     super::inject_for_tests(marker_settings());
-    poison_through_a_panicking_thread(&INFLIGHT);
+    poison_mutex_through_a_panicking_thread(&INFLIGHT);
     match accept() {
         Accept::Consumed(settings) => {
             assert!(
@@ -245,7 +228,7 @@ fn accept_consumes_a_fetch_behind_a_poisoned_state_guard() {
         marker_settings(),
         &super::resolve_startup_endpoints().proxy_url(),
     );
-    *lock_or_recover(&INFLIGHT) = Some(cell);
+    *INFLIGHT.lock_or_recover() = Some(cell);
     match accept() {
         Accept::Consumed(settings) => {
             assert!(
@@ -279,7 +262,7 @@ fn wait_settings_finds_the_fetch_through_a_poisoned_registry_guard() {
     let egress_open = crate::util::config::resolve_remote_fetch_enabled();
     clear_for_tests();
     super::inject_for_tests(marker_settings());
-    poison_through_a_panicking_thread(&INFLIGHT);
+    poison_mutex_through_a_panicking_thread(&INFLIGHT);
     let peek = || super::wait_settings(Duration::ZERO).and_then(|s| s.path_not_found_hints);
     if egress_open {
         assert_eq!(
@@ -306,7 +289,7 @@ fn wait_settings_finds_the_fetch_through_a_poisoned_registry_guard() {
 fn begin_reports_the_in_flight_fetch_through_a_poisoned_registry_guard() {
     clear_for_tests();
     super::inject_for_tests(marker_settings());
-    poison_through_a_panicking_thread(&INFLIGHT);
+    poison_mutex_through_a_panicking_thread(&INFLIGHT);
     assert!(
         begin_before_policy_gate(&Config::default()),
         "a poisoned registry guard must not read as 'nothing in flight'"

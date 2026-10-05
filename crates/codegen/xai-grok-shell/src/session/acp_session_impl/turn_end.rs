@@ -2,6 +2,7 @@
 
 use super::turn_end_hooks::{cancel_details, cancel_reason_for_completion};
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 fn completion_cancel_trigger(result: &PromptTurnResult) -> Option<&str> {
     match result.as_ref().ok()?.completion_kind {
@@ -213,8 +214,7 @@ impl SessionActor {
         });
         let should_flush_reminders = self
             .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
+            .lock_or_recover()
             .as_deref()
             .is_none_or(|current| current == prompt_id);
         if should_flush_reminders {

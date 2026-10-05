@@ -1,4 +1,5 @@
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 impl SessionActor {
     async fn send_thought_chunk(&self, text: String, chunk_index: u64) {
@@ -58,13 +59,8 @@ impl SessionActor {
                 // A same-turn restart, a doomloop's next reasoning-only generation, keeps the collected segments and just opens a new one
                 // That way every generation survives instead of only the last
                 // `current_prompt_id` / `current_turn_number` are set by the prompt handler before any sampler events arrive
-                // Panic on lock poison to match the file convention
                 {
-                    let prompt_id = self
-                        .current_prompt_id
-                        .lock()
-                        .expect("current_prompt_id mutex poisoned")
-                        .clone();
+                    let prompt_id = self.current_prompt_id.lock_or_recover().clone();
                     let mut cap = self.streaming_turn_capture.lock();
                     if cap.prompt_id.as_deref() != prompt_id.as_deref() {
                         cap.begin_turn(prompt_id, self.current_turn_number.get());
@@ -88,11 +84,7 @@ impl SessionActor {
                     {
                         let mut cap = self.streaming_turn_capture.lock();
                         if cap.prompt_id.is_none() {
-                            let prompt_id = self
-                                .current_prompt_id
-                                .lock()
-                                .expect("current_prompt_id mutex poisoned")
-                                .clone();
+                            let prompt_id = self.current_prompt_id.lock_or_recover().clone();
                             cap.begin_turn(prompt_id, self.current_turn_number.get());
                             // `StreamStarted` was dropped; count this generation so `attempt_count` matches the path where `StreamStarted` arrived
                             // No timestamp is available, so none is stamped
@@ -120,11 +112,7 @@ impl SessionActor {
                     {
                         let mut cap = self.streaming_turn_capture.lock();
                         if cap.prompt_id.is_none() {
-                            let prompt_id = self
-                                .current_prompt_id
-                                .lock()
-                                .expect("current_prompt_id mutex poisoned")
-                                .clone();
+                            let prompt_id = self.current_prompt_id.lock_or_recover().clone();
                             cap.begin_turn(prompt_id, self.current_turn_number.get());
                             // `StreamStarted` was dropped; count this generation so `attempt_count` matches the path where `StreamStarted` arrived
                             // No timestamp is available, so none is stamped

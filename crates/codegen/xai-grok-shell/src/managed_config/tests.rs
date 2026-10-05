@@ -3,6 +3,8 @@ use super::response::ManagedConfigResponse;
 use super::store::*;
 use super::supervisor::*;
 use super::*;
+use crate::util::shared_guard::{LockOrRecover, poison_mutex_through_a_panicking_thread};
+use serial_test::serial;
 
 #[test]
 fn gate_snapshot_denies_when_lock_held_or_unopenable() {
@@ -39,14 +41,16 @@ async fn refresher_drop_stops_work_without_cancelling_parent() {
     assert!(!parent.is_cancelled());
 }
 
+/// The slot is a process global, so this test and the poisoning one below take turns.
 #[tokio::test]
+#[serial]
 async fn supervisor_slot_respawns_a_dead_task_and_keeps_a_live_one() {
     let dead = ManagedConfigRefresher::spawn(&tokio_util::sync::CancellationToken::new(), async {});
     while !dead.handle.is_finished() {
         tokio::task::yield_now().await;
     }
     let dead_token = dead.cancel.clone();
-    *REFRESH_SUPERVISOR.lock().unwrap() = Some(dead);
+    *REFRESH_SUPERVISOR.lock_or_recover() = Some(dead);
 
     ensure_supervisor(|| {
         ManagedConfigRefresher::spawn(
@@ -59,7 +63,7 @@ async fn supervisor_slot_respawns_a_dead_task_and_keeps_a_live_one() {
         "the finished supervisor must be replaced (its guard dropped)"
     );
     {
-        let slot = REFRESH_SUPERVISOR.lock().unwrap();
+        let slot = REFRESH_SUPERVISOR.lock_or_recover();
         assert!(
             !slot.as_ref().unwrap().handle.is_finished(),
             "a live supervisor must now occupy the slot"
@@ -67,8 +71,7 @@ async fn supervisor_slot_respawns_a_dead_task_and_keeps_a_live_one() {
     }
 
     let live_token = REFRESH_SUPERVISOR
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_ref()
         .unwrap()
         .cancel
@@ -76,7 +79,50 @@ async fn supervisor_slot_respawns_a_dead_task_and_keeps_a_live_one() {
     ensure_supervisor(|| unreachable!("a live supervisor must be kept, not respawned"));
     assert!(!live_token.is_cancelled());
 
-    *REFRESH_SUPERVISOR.lock().unwrap() = None;
+    *REFRESH_SUPERVISOR.lock_or_recover() = None;
+}
+
+/// The slot only swaps one owner for another, which is why production recovers here.
+/// A poisoning must not turn "hand the running task over" into a panic in the caller
+/// that is trying to shut the supervisor down.
+#[tokio::test]
+#[serial]
+async fn a_poisoned_supervisor_slot_still_hands_over_its_task() {
+    let live = ManagedConfigRefresher::spawn(
+        &tokio_util::sync::CancellationToken::new(),
+        std::future::pending(),
+    );
+    let token = live.cancel.clone();
+    *REFRESH_SUPERVISOR.lock_or_recover() = Some(live);
+    poison_mutex_through_a_panicking_thread(&REFRESH_SUPERVISOR);
+    let taken = take_refresh_supervisor();
+    assert!(
+        taken.is_some(),
+        "the supervisor occupying the slot must still be handed over"
+    );
+    assert!(!token.is_cancelled(), "taking it must not cancel it yet");
+    drop(taken);
+    assert!(
+        token.is_cancelled(),
+        "dropping the taken guard must still cancel"
+    );
+    ensure_supervisor(|| {
+        ManagedConfigRefresher::spawn(
+            &tokio_util::sync::CancellationToken::new(),
+            std::future::pending(),
+        )
+    });
+    let rearmed = take_refresh_supervisor();
+    assert!(
+        rearmed.is_some(),
+        "the respawn path must still fill the slot through the poisoned guard"
+    );
+    drop(rearmed);
+    assert!(
+        REFRESH_SUPERVISOR.is_poisoned(),
+        "the poisoning itself must stay visible"
+    );
+    REFRESH_SUPERVISOR.clear_poison();
 }
 
 #[test]

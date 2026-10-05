@@ -1,6 +1,7 @@
 //! Goal handling for `SessionActor`.
 
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 /// Minimum toolset a role needs, checked by the parent-side gate.
 /// A configured harness `agent_type` whose role toolset lacks the capability fails open to the current model and session harness.
@@ -509,11 +510,7 @@ impl SessionActor {
                 details_path: String::new(),
             };
         };
-        let parent_prompt_id = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned")
-            .clone();
+        let parent_prompt_id = self.current_prompt_id.lock_or_recover().clone();
         let task_tool_name = self.resolve_goal_tool_names().await.task;
 
         let n = self.goal_verifier_skeptic_count.clamp(

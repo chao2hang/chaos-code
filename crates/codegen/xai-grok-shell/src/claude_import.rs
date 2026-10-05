@@ -3,6 +3,7 @@
 // This module reuses the existing discovery and parsing functions from claude_compat.rs and util/config.rs
 // It does NOT modify the runtime Claude compat layer; that continues to work as before
 
+use crate::util::shared_guard::ReadWriteOrRecover;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -514,25 +515,25 @@ static MARKER_CACHE: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(No
 /// That variant logs one line so users can see the cutoff fired.
 /// Use the bare version for read-time display logic that already has its own path (e.g. UI listings in `extensions/skills.rs` and `inspect.rs`).
 pub(crate) fn is_claude_import_marked() -> bool {
-    if let Some(v) = *MARKER_CACHE.read().expect("MARKER_CACHE poisoned") {
+    if let Some(v) = *MARKER_CACHE.read_or_recover() {
         return v;
     }
     let config_path = crate::util::grok_home::grok_home().join("config.toml");
     let v = is_claude_import_marked_at(&config_path);
-    *MARKER_CACHE.write().expect("MARKER_CACHE poisoned") = Some(v);
+    *MARKER_CACHE.write_or_recover() = Some(v);
     v
 }
 
 /// Forcibly seed the cache with the freshly written marker value.
 /// The slash command calls this after `apply_import` writes the marker so gate checks reflect the new state without a restart.
 pub(crate) fn refresh_marker_cache(value: bool) {
-    *MARKER_CACHE.write().expect("MARKER_CACHE poisoned") = Some(value);
+    *MARKER_CACHE.write_or_recover() = Some(value);
 }
 
 /// Reset the marker cache to uninitialised. Test-only.
 #[cfg(test)]
 pub(crate) fn reset_marker_cache_for_test() {
-    *MARKER_CACHE.write().expect("MARKER_CACHE poisoned") = None;
+    *MARKER_CACHE.write_or_recover() = None;
 }
 
 /// Like [`is_claude_import_marked`], but logs a one-time `info!` line on the first true result per process.
@@ -1129,6 +1130,7 @@ fn apply_hooks_to_dir(hooks_dir: &Path, items: &[ImportableItem]) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::shared_guard::poison_rwlock_through_a_panicking_writer;
 
     #[test]
     fn format_rule_bash_with_pattern() {
@@ -2092,11 +2094,62 @@ extra_rule_dirs = ["/c/rules"]
         reset_marker_cache_for_test();
         let _ = is_claude_import_marked();
         assert!(
-            MARKER_CACHE
-                .read()
-                .expect("MARKER_CACHE poisoned")
-                .is_some(),
+            MARKER_CACHE.read_or_recover().is_some(),
             "cache should be populated after a call"
         );
+    }
+
+    /// The marker gate is read on every Claude-compat fallback: MCP loader discovery,
+    /// hook discovery, `util/config.rs`. A poisoned cache guard must not become a panic
+    /// inside any of them, and the cached answer is an honest `Option<bool>` either way.
+    #[test]
+    #[serial]
+    fn a_poisoned_marker_cache_still_answers_and_still_accepts_a_seed() {
+        let _g = MarkerGuard;
+        reset_marker_cache_for_test();
+        refresh_marker_cache(true);
+        poison_rwlock_through_a_panicking_writer(&MARKER_CACHE);
+        assert!(
+            is_claude_import_marked(),
+            "the value the dead writer stored must still be handed out"
+        );
+        refresh_marker_cache(false);
+        assert!(
+            !is_claude_import_marked(),
+            "and a freshly seeded value must still land behind the poisoning"
+        );
+        assert!(
+            MARKER_CACHE.is_poisoned(),
+            "the poisoning itself must stay visible to anyone who asks"
+        );
+        MARKER_CACHE.clear_poison();
+    }
+
+    /// The cold path is the one that matters: the first gated call after the poisoning has
+    /// to read the marker from disk and store it, and every runtime compat gate reads
+    /// through this function. The expected value is whatever the file says, so the test
+    /// holds on a host with or without the marker set.
+    #[test]
+    #[serial]
+    fn a_poisoned_marker_cache_still_fills_itself_on_the_first_uncached_read() {
+        let _g = MarkerGuard;
+        reset_marker_cache_for_test();
+        poison_rwlock_through_a_panicking_writer(&MARKER_CACHE);
+        assert!(
+            MARKER_CACHE.read_or_recover().is_none(),
+            "the cache must be empty so the call has to compute and store"
+        );
+        let computed = is_claude_import_marked();
+        assert_eq!(
+            *MARKER_CACHE.read_or_recover(),
+            Some(computed),
+            "what the disk said must be stored through the poisoned guard"
+        );
+        assert_eq!(
+            is_claude_import_marked(),
+            computed,
+            "and the next read is served from that stored value"
+        );
+        MARKER_CACHE.clear_poison();
     }
 }

@@ -1,6 +1,7 @@
 //! Turn-task data, the spawn and completion paths, and guards for `SessionActor`.
 
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 
 pub(super) struct TurnSubagentScopeGuard {
     current_prompt_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -21,10 +22,7 @@ impl TurnSubagentScopeGuard {
 
 impl Drop for TurnSubagentScopeGuard {
     fn drop(&mut self) {
-        let mut current_prompt_id = self
-            .current_prompt_id
-            .lock()
-            .expect("current_prompt_id mutex poisoned");
+        let mut current_prompt_id = self.current_prompt_id.lock_or_recover();
         if current_prompt_id.as_deref() == Some(self.prompt_id.as_str()) {
             *current_prompt_id = None;
         }
@@ -274,10 +272,7 @@ impl SessionActor {
     /// when it still names `prompt_id`. Leaves the goal-loop gate alone.
     pub(super) async fn clear_pinned_prompt_if_current(&self, prompt_id: &str) {
         let cleared = {
-            let mut current = self
-                .current_prompt_id
-                .lock()
-                .expect("current_prompt_id mutex poisoned");
+            let mut current = self.current_prompt_id.lock_or_recover();
             if current.as_deref() == Some(prompt_id) {
                 *current = None;
                 true
@@ -306,10 +301,7 @@ impl SessionActor {
 
     pub(super) async fn clear_exact_turn_resources(&self, prompt_id: &str) {
         {
-            let mut current = self
-                .current_prompt_id
-                .lock()
-                .expect("current_prompt_id mutex poisoned");
+            let mut current = self.current_prompt_id.lock_or_recover();
             if current.as_deref() == Some(prompt_id) {
                 *current = None;
             }
@@ -532,6 +524,44 @@ mod task_slot_tests {
             fired.load(Ordering::SeqCst),
             10,
             "only the re-armed task fires"
+        );
+    }
+}
+
+#[cfg(test)]
+mod turn_scope_guard_tests {
+    use super::TurnSubagentScopeGuard;
+    use crate::util::shared_guard::{LockOrRecover, poison_mutex_through_a_panicking_thread};
+
+    /// `TurnSubagentScopeGuard::drop` runs on the way out of a turn, including while the
+    /// turn is already unwinding. A panic raised there, in a `Drop` that is already
+    /// unwinding, aborts the process; reading the pin instead costs nothing, because the
+    /// value behind it is an `Option<String>`.
+    #[test]
+    fn the_turn_scope_guard_clears_its_pin_through_a_poisoned_mutex() {
+        let pin = std::sync::Arc::new(std::sync::Mutex::new(Some("p1".to_string())));
+        let guard = TurnSubagentScopeGuard::new(std::sync::Arc::clone(&pin), "p1".to_string());
+        poison_mutex_through_a_panicking_thread(&pin);
+        drop(guard);
+        assert_eq!(
+            *pin.lock_or_recover(),
+            None,
+            "the guard must still clear the prompt it owns"
+        );
+    }
+
+    /// The other half of the same rule, under the same poisoned guard: a turn that is no
+    /// longer the pinned one must leave the newer pin alone.
+    #[test]
+    fn the_turn_scope_guard_still_spares_a_newer_pin_behind_a_poisoned_mutex() {
+        let pin = std::sync::Arc::new(std::sync::Mutex::new(Some("p2".to_string())));
+        let guard = TurnSubagentScopeGuard::new(std::sync::Arc::clone(&pin), "p1".to_string());
+        poison_mutex_through_a_panicking_thread(&pin);
+        drop(guard);
+        assert_eq!(
+            pin.lock_or_recover().as_deref(),
+            Some("p2"),
+            "a guard for p1 must not clear a pin that moved on to p2"
         );
     }
 }
