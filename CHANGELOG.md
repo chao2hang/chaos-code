@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### 修复：预取线程死掉时，只想读设置的启动流程不该跟着一起崩
+
+`crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs` 里还剩 16 个生产 `.unwrap()`，
+全部是同一类：对这个模块自己共享给工作线程的两把 `std::sync` 锁调用 `.lock().unwrap()`。这个模块
+本来就为「工作线程死了」而设计 —— `FinishGuard` 即使在工作线程展开的路径上也会把这次预取标成已结束，
+`State::panicked` 记下它死过，`accept` 打一条日志然后带着空设置继续启动 —— 偏偏它预留的这一个失败，
+会让之后每一个读这两把锁的调用点 panic。`begin_inner` 在持有全局注册表 `INFLIGHT` 的路径里
+`Arc::new` 之后才 `std::thread::spawn`，而 `spawn` 在系统拒绝建线程时就是 panic：开机正是线程与内存
+最紧的时刻，一次被拒绝的线程不再是「没有设置」，而是把注册表毒化掉，此后每一次 `begin*`、
+`wait_settings`、`accept`、`clear_for_tests` 都报「已毒化」而不是回答「没有进行中的预取」。另一把
+状态锁的代价更硬：`FinishGuard::drop` 要拿它，而这个 `Drop` 恰恰在工作线程已经展开时运行，展开中
+再 panic 会直接 abort 进程 —— 这一行是整份文件里唯一把「丢掉一次预取」升级成「进程没了」的地方。
+两把锁保护的值都是普通 `Option`，跨 panic 结构完好，`.unwrap()` 在这里没有守护任何不变量，只是把
+一次失败变成两次。
+
+14 处替换走同一个模块私有 helper（`unwrap_or_else(PoisonError::into_inner)`），文件里连测试在内
+`.unwrap()` 归零；`Condvar::wait_timeout_while` 的毒化以 `LockResult` 的 `Err` 到达，同样按恢复处理，
+于是「守卫被毒化但预取其实已完成」不会再被误读成超时、把等在那里的设置白白扔掉。恢复只取数据、
+**不**清毒标记，这一点由测试钉住，免得日后有人把它「整理」成 `clear_poison()` 而把信号弄丢。
+
+新增 7 条测试全部驱动出厂函数，用真实方式把守卫毒化：一个线程持有锁时死掉，panic 在上一层被接住，
+线程 scope 的 join 保证返回中毒已可见。两条 `wait_finished` 测试是一对镜像 —— 已完成但被毒化的守卫
+必须读成「工作线程结束了」，未通知就死掉的守卫必须让等待花完预算返回 —— 其余三条分别覆盖注册表
+与状态两把锁在 `accept`、`wait_settings`、`begin` 三条路径上的读法；其中依赖外发开关的两条不跳过，
+而是按出厂代码读的 `resolve_remote_fetch_enabled()` 断言，并补上「消费后必须注销」这类两种环境下都
+成立的断言。14 个变异体逐个把站点换回 `.lock().unwrap()`，每次还原后用 `cmp` 核对字节相同：
+`12 caught, 2 survived, 0 contrary to expectation`。两个幸存者都不是测试缺口而是结构不可达：
+`wait_settings` 最后一行挡在读磁盘配置的外发开关之后（本机与 CI 都是关，单测不许改真实 `$HOME`），
+`if cfg!(test)` 之下那三行在单测构建里根本不参与编译，两条都由 `crates/codegen/xai-grok-shell/tests/`
+里会写 `[features] remote_fetch = true` 的集成测试跑真实路径。第一轮矩阵曾把 `Finished::take` 里
+那处读判为「与预期相反」，暴露出测试只毒化过注册表、从没带着中毒的状态守卫走进 `accept`；补一条
+测试后它由单一测试杀掉，两轮日志都留在证据里。计量按当前源码重算，前后都是实测而非算术：
+`xai-grok-shell` 生产 unwrap `39 → 23`，全工作区 `293 → 277`，基线随之从天花板下调一层，
+复核输出 `baseline holds: 97 crates, 0 fewer production sites than recorded`。
+
+（2026-10-05；`crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs`、`crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch_tests.rs`、`scripts/ci/panic-site-baseline.tsv`、`docs/verification/lock-poison-prefetch-2026-10-05.log`）
+
 ### 门禁：一条永不为真的 `cfg` 把 23 条测试藏了一个月，现在有人会响，而扫描器不再把它们记成生产位点
 
 `crates/codegen/xai-grok-shell/src/agent/auth_method.rs` 的 `mod tests` 前面写的是 `#[cfg(any())]`。

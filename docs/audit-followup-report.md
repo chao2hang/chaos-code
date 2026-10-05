@@ -583,6 +583,11 @@ unsafe 位点从 657 到 658。也就是说缺陷 1 不只是把测试位点算�
 | `xai-grok-bundle/src/lib.rs:519,521,522`、`xai-grok-shell/src/agent/models/startup_prefetch.rs:218,253,259` | `#[cfg(any(test, feature = "test-support"))]` 的 helper，`.unwrap()` |
 | `common/xai-circuit-breaker/src/clock.rs:47`、`xai-grok-workspace/src/handle.rs:5086,5093`、`.../session/tool_config.rs:548,572` | `any(test, feature = "test-hooks"/"test-support")` 形状的 helper，`.expect()`。它们算"生产"是口径**故意**保守的结果：feature 一开就编译进去，扫描器无权假设没人开 |
 
+那 3 个 `startup_prefetch.rs` 位点（`clear_for_tests`、`inject_with_origin_for_tests`、
+`inflight_for_tests`）在 2026-10-05 被整批清掉（同文件 16 个生产 unwrap 全部去除，
+`xai-grok-shell` 生产 unwrap 39 → 23，见 `docs/verification/lock-poison-prefetch-2026-10-05.log`），
+上表记的是 2026-10-04 那棵树，照抄行号会找不到东西。
+
 反过来被**正确移出**生产的（缺陷 1 之前凭空算进来的）：`xai-grok-sandbox/src/deny/glob.rs` 46 处
 （41 unwrap / 4 expect / 1 panic）与 `deny/mod.rs:417`、`xai-grok-workspace/src/permission/auto_mode/mod.rs`
 14 处与 `bash_command_splitting.rs` 5 处、`xai-grok-shell/src/agent/config_model_override_parse.rs`

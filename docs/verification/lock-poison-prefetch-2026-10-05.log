@@ -1,0 +1,327 @@
+# A dead prefetch worker could take down the boot that only wanted to read its settings (2026-10-05)
+
+`crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs` held 16 of the crate's 39
+remaining production `.unwrap()` calls, and all 16 were `std::sync` lock calls on the two guards
+this module shares with the thread it spawns. The module is explicitly built to survive a worker
+that dies -- `FinishGuard` marks the fetch finished even while the worker unwinds, `State::panicked`
+records that it happened, and `accept` logs it and boots without settings -- yet the one failure it
+plans for was also the failure that made every later reader of those guards panic. This batch
+removes all 16, adds seven tests that hand each guard over poisoned on purpose, and measures the
+result with the census and a 14-mutant matrix.
+
+== 0. The module, and the two guards
+
+One fetch of `/v1/models` and `/v1/settings` per process. The begin side is the pager, the commit
+side is `bootstrap`; they share no owner object, so the fetch lives in a process global:
+
+    static INFLIGHT: Mutex<Option<Arc<Inflight>>> = Mutex::new(None);
+
+    struct Inflight {
+        origin: String,
+        state: Mutex<State>,
+        done: Condvar,
+    }
+
+Every consumer -- `begin`, `begin_before_policy_gate`, `wait_settings`, `accept`,
+`accept_with_deadline`, the three `*_for_tests` helpers and `FinishGuard::drop` -- reaches the
+result through one of those two mutexes. Each of the 16 calls was the panicking form:
+
+    line  where                                  expression
+    46    FinishGuard::drop                      self.0.state.lock().unwrap()
+    58    begin_before_policy_gate               INFLIGHT.lock().unwrap().is_some()
+    80    begin_inner (cfg!(test) early return)  INFLIGHT.lock().unwrap().is_some()
+    82    begin_inner                            INFLIGHT.lock().unwrap().is_some()
+    89    begin_inner                            let mut inflight = INFLIGHT.lock().unwrap()
+    102   the spawned worker body                worker_cell.state.lock().unwrap()
+    119   wait_finished (Condvar argument)       cell.state.lock().unwrap()
+    120   wait_finished (wait result)            .wait_timeout_while(..).unwrap()
+    131   Finished::take                         INFLIGHT.lock().unwrap()
+    136   Finished::take                         std::mem::take(&mut *self.0.state.lock().unwrap())
+    143   wait_settings                          INFLIGHT.lock().unwrap().clone()?
+    151   wait_settings                          finished.0.state.lock().unwrap().settings.clone()
+    169   accept_with_deadline                   INFLIGHT.lock().unwrap().clone()
+    218   clear_for_tests                        INFLIGHT.lock().unwrap().take()
+    253   inject_with_origin_for_tests           *INFLIGHT.lock().unwrap() = Some(cell)
+    259   inflight_for_tests                     INFLIGHT.lock().unwrap().is_some()
+
+Line numbers are the ones the census reported before the change; section 3 has the command that
+lists them and the clone it was run against.
+
+== 1. How a guard here gets poisoned, and what the panic then costs
+
+The registry guard is the one with a concrete mechanism on the shipped path. `begin_inner` takes
+`INFLIGHT`, allocates the `Inflight`, spawns the worker and only then stores the cell, so the
+`std::thread::spawn` that can panic on resource exhaustion runs inside the critical section:
+
+    let mut inflight = INFLIGHT.lock().unwrap();
+    if inflight.is_some() {
+        return true;
+    }
+    let cell = Arc::new(Inflight { .. });
+    let worker_cell = cell.clone();
+    std::thread::spawn(move || { .. });      // panics if the OS refuses the thread
+    *inflight = Some(cell);
+
+A refused thread at boot is exactly the situation this code is written for -- the boot should
+continue with no settings -- and instead it poisoned the global registry. From that point every
+`begin*`, `wait_settings`, `accept`, `clear_for_tests` and `inflight_for_tests` call in the process
+panicked with "already poisoned" instead of reporting "no fetch in flight".
+
+The state guard's cost is the worse of the two and does not need a poisoned guard to be worth
+fixing: `FinishGuard::drop` takes it, and that `Drop` runs on the worker's way out, including while
+the worker is already unwinding. A panic raised inside a `Drop` that is already unwinding aborts
+the process, so the guard read in `FinishGuard::drop` is the one line in this file where the
+panicking form turns a lost fetch into a dead binary.
+
+Both guarded values stay structurally valid across a panic -- `State`'s fields are plain `Option`s
+and the registry is an `Option<Arc<_>>` -- so reading them is safe. What the panicking form bought
+was nothing: there is no invariant here that a poisoned guard protects.
+
+== 2. The change
+
+One module-private helper, and 14 substitutions covering the 16 expressions (line 119/120 is one
+call whose result is unwrapped on the next line, and the three `cfg!(test)` early returns share a
+shape with the real ones):
+
+    /// Locks a guard of this module without panicking on poisoning.
+    ///
+    /// A poisoned guard here means the prefetch worker died while holding it, which
+    /// is the one failure this module is built to survive: [`State::panicked`]
+    /// records it and every consumer is written to cope with a dead worker. Both
+    /// guarded values stay structurally valid across a panic -- `State`'s fields are
+    /// plain `Option`s and the registry is an `Option<Arc<_>>` -- so the data is
+    /// readable as it stands. An `unwrap` would instead turn one dead worker into a
+    /// second panic in whatever thread only wanted to read settings, and in
+    /// [`FinishGuard::drop`] it would be worse: panicking while already unwinding
+    /// aborts the process.
+    fn lock_or_recover<T>(guard: &Mutex<T>) -> MutexGuard<'_, T> {
+        guard.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+The file now contains no `.unwrap()` at all, production or test, and the `Condvar` result uses the
+same recovery (`.wait_timeout_while` returns `LockResult`, so the poisoning arrives there as an
+`Err` rather than as a panic):
+
+    $ grep -c '\.unwrap()' crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs
+    0
+
+`unwrap_or_else(PoisonError::into_inner)` recovers the data without clearing the poisoning: the
+mutex stays poisoned, so a `.unwrap()` elsewhere still reports that a holder died. The test suite
+relies on that and pins it explicitly (section 4).
+
+== 3. Census, measured on both trees
+
+Both columns are measurements, not arithmetic. "before" is a clone of the commit this batch sits on
+top of, checked out detached; "after" is the tree this batch lands on. The rows are the census's own
+aligned output, so the columns are the four production counts and the all-builds `.unwrap()` count:
+
+    $ git clone -q --no-hardlinks "file://$PWD" {SCRATCH}/b21/before-1683249c
+    $ git -C {SCRATCH}/b21/before-1683249c checkout -q --detach 1683249c
+
+The 16 lines behind the table in section 0, from the same clone:
+
+    $ cd {SCRATCH}/b21/before-1683249c && python3 scripts/ci/panic-site-census.py \
+          --list xai-grok-shell | grep startup_prefetch
+    crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs:46: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs:58: .unwrap()
+    ...                     16 lines, 46 to 259, exactly the table above
+
+    $ python3 scripts/ci/panic-site-census.py | grep -E '^(xai-grok-shell|TOTAL)[[:space:]]'
+    xai-grok-shell                        23     110      28      13         8234
+    TOTAL                                277     589     130     428        32159
+
+    $ cd {SCRATCH}/b21/before-1683249c && python3 scripts/ci/panic-site-census.py \
+          | grep -E '^(xai-grok-shell|TOTAL)[[:space:]]'
+    xai-grok-shell                        39     110      28      13         8251
+    TOTAL                                293     589     130     428        32176
+
+So: `xai-grok-shell` production `.unwrap()` 39 -> 23 and 8251 -> 8234 in all builds; the workspace
+293 -> 277 and 32176 -> 32159; `expect_prod`, `panic_prod` and `unsafe_prod` identical in both
+columns, at crate and workspace level. The 16 production sites are the batch; the 17th of the
+all-`.unwrap()` drop is in the test file, where the pre-existing `.unwrap()` in `registered_marker`
+became a read through the module's own helper. The baseline is a ceiling, so lowering it is a
+separate deliberate step:
+
+    $ python3 scripts/ci/panic-site-census.py --write-baseline scripts/ci/panic-site-baseline.tsv
+    $ git diff --unified=0 scripts/ci/panic-site-baseline.tsv
+    -xai-grok-shell	39	110	28	13
+    +xai-grok-shell	23	110	28	13
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+    exit=0
+
+== 4. The tests
+
+Seven new tests, all driving shipped functions rather than the helper. Each poisons a guard the way
+the real failure does -- a thread dies holding it, the panic caught one frame above the guard, and
+the thread scope's join makes the poisoning visible before the test proceeds:
+
+    fn poison_through_a_panicking_thread<T: Send>(guard: &Mutex<T>) {
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _held = guard.lock().unwrap();
+                    panic!("a worker dying inside the guard");
+                }));
+            });
+        });
+        assert!(guard.is_poisoned(), "the poisoning above must be observable");
+    }
+
+    cargo test -q -p xai-grok-shell --lib agent::models::startup_prefetch
+
+    running 11 tests
+    ...........
+    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 6904 filtered out; finished in 0.05s
+
+    1  begin_does_not_replace_an_inflight_fetch                    (pre-existing)
+    2  accept_discards_a_fetch_from_another_origin                 (pre-existing)
+    3  accept_deadline_spends_the_budget                           (pre-existing)
+    4  wait_settings_leaves_the_fetch_for_accept                   (pre-existing)
+    5  the_finish_guard_finishes_the_fetch_through_a_poisoned_state_guard
+    6  wait_finished_yields_a_poisoned_guard_instead_of_reading_as_a_timeout
+    7  a_poisoned_guard_under_a_sleeping_waiter_ends_the_wait_without_a_panic
+    8  accept_consumes_a_fetch_behind_a_poisoned_registry_guard
+    9  accept_consumes_a_fetch_behind_a_poisoned_state_guard
+    10 wait_settings_finds_the_fetch_through_a_poisoned_registry_guard
+    11 begin_reports_the_in_flight_fetch_through_a_poisoned_registry_guard
+
+Test 6 is the one that keeps `wait_finished` honest in both directions: a poisoned guard on a
+finished fetch must read as "the worker is done", not as a deadline, or the boot would silently
+throw away settings that were waiting there. Test 7 is its mirror -- the worker died without
+notifying, so the wait must spend its budget and return, not panic.
+
+Test 8 and 10 derive their expectation from the same knob the shipped code reads,
+`resolve_remote_fetch_enabled()`, instead of skipping when the egress gate is closed. That gate is
+config-on-disk with no environment override and defaults to off, so on this host and in CI a test
+that wanted "settings handed out" would have had to skip; both tests assert whatever the shipped
+gate decides, and test 8 then adds the assertions that hold either way -- the consumed fetch must
+be deregistered, and a later `inject` / `clear` must still work through the poisoned guard. Test 9
+is the same shape for the second guard, and asserts the deregistration rather than the returned
+settings, because `Finished::take` runs before the gate is consulted.
+
+The recovery deliberately does not clear the poisoning, and one test pins that too, so nobody can
+later "tidy" it into `clear_poison()` and lose the signal for other modules:
+
+    assert!(
+        guard.is_poisoned(),
+        "recovery must not silently clear the poisoning: another module's \
+         `.unwrap()` still has to see that a holder died"
+    );
+
+== 5. Mutation matrix
+
+`{SCRATCH}/mutate.py` puts one site back to the panicking form, runs this module's tests, records
+which tests noticed, then restores the file and verifies the restore with `cmp`; a mutant that
+cannot be reverted aborts the run. Two runs were needed and the reason is section 6.
+
+    $ cd {SCRATCH} && python3 mutate.py; echo "matrix exit=$?"
+    M1  FinishGuard::drop guard: caught (1 failing tests)
+    M2  begin_before_policy_gate pre-gate read: caught (3 failing tests)
+    M3  wait_finished state lock: caught (3 failing tests)
+    M4  wait_finished wait result: caught (1 failing tests)
+    M5  Finished::take registry: caught (3 failing tests)
+    M6  Finished::take state: caught (1 failing tests)
+    M7  wait_settings registry read: caught (1 failing tests)
+    M8  wait_settings state read: MISSED (0 failing tests)
+    M9  accept_with_deadline registry read: caught (2 failing tests)
+    M10 clear_for_tests: caught (4 failing tests)
+    M11 inject_with_origin_for_tests: caught (2 failing tests)
+    M12 inflight_for_tests: caught (4 failing tests)
+    M13 the shared helper itself: caught (9 failing tests)
+    M14 the three sites under `if cfg!(test)`: MISSED (0 failing tests)
+    12 caught, 2 survived, 0 contrary to expectation
+    matrix exit=0
+
+    $ cmp {SCRATCH}/startup_prefetch.rs.pristine \
+          crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs && echo RESTORED
+    RESTORED
+
+M13 kills 9 of the 11 tests at once, which is the point of the shared helper: one mutant, and the
+whole module's coverage reacts.
+
+The two survivors are not gaps in the tests; no unit-test build of this crate can reach either site:
+
+* M8, the guarded read on the last line of `wait_settings`. It sits behind `still_accepted`, which
+  reads `resolve_remote_fetch_enabled()` from config on disk (default off, deliberately no
+  environment override, and a unit test may not rewrite the real `$HOME`). With the egress gate
+  closed -- the state on this host and in CI -- the call returns before reaching that line. The
+  integration binaries under `crates/codegen/xai-grok-shell/tests/` do open the gate (their helper
+  writes `remote_fetch = true` into an isolated home) and drive the real path, but they cannot
+  poison a private `Mutex` field from outside the module.
+* M14, the three sites under `if cfg!(test) { ... }`. A unit-test build takes the early return, so
+  the non-test form is not compiled into the test binary at all. Those three lines are the shape
+  the shipped build uses and are covered by the same integration binaries.
+
+Recording a survivor as "structurally unreachable here" is only honest while the reason holds. If
+the egress gate ever gains a test seam, M8 stops being excusable and the test for it is missing.
+
+== 6. The first run found a hole in the tests
+
+The first matrix run had M6 (the guarded read inside `Finished::take`) as a third survivor, and the
+run reported it as contrary to expectation:
+
+    M6  Finished::take state: MISSED (0 failing tests)
+    ...
+    11 caught, 3 survived, 1 contrary to expectation
+    matrix exit=1
+
+The existing tests poisoned the registry (`INFLIGHT`) but never the per-fetch `state` guard on the
+way into `accept`, so nothing read that line with the guard poisoned. Adding test 9 closed it: the
+second run reports M6 caught by one test, which is the tightest possible signal -- one site, one
+test that reads it. The first run's logs are kept next to the second's
+(`{SCRATCH}/mutation-run1.log`, `{SCRATCH}/matrix-run1.stdout`) rather than overwritten, because
+the hole and its closure are the useful part.
+
+== 7. Behaviour change, stated plainly
+
+Nothing about a healthy fetch changed: the same values are read, in the same order, under the same
+locks. What changed is what a poisoning panic used to do. A boot that would previously have
+panicked -- in the pager reading settings, in `bootstrap` consuming the fetch, or in the process
+aborting through `FinishGuard::drop` -- now reads whatever the dead holder left, and the module's
+existing reporting takes over: `State::panicked` logs "settings prefetch thread panicked", the
+fetch is consumed or left registered exactly as before, and the boot continues without settings.
+
+== 8. Gates and reproduce
+
+The host runner refuses to call itself green while Rust files are changed and its build gates
+were skipped, so the plain run reported the change instead of a verdict and exited non-zero:
+
+    $ bash scripts/verify-gates.sh
+    ...
+    SKIP  cargo check (build gate; --with-build runs it)
+    SKIP  cargo clippy (build gate; --with-build runs it)
+    SKIP  cargo test (build gate; --with-build runs it)
+    SKIP  GUI protocol types (build gate; --with-build runs it)
+
+    NOT COVERED  4 build gate(s) skipped while 2 changed file(s) are theirs to measure:
+                  crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs
+                  crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch_tests.rs
+                  run: scripts/verify-gates.sh --with-build
+
+That refusal is the runner working as designed on a Rust batch. With the build gates included, the
+same tree passes everything it runs:
+
+    $ bash scripts/verify-gates.sh --with-build
+    ...
+    PASS  cargo check
+    PASS  cargo clippy
+    PASS  cargo test
+    PASS  GUI protocol types
+
+    all gates passed on the host (42 run, 0 skipped)
+
+    $ cargo test -q -p xai-grok-shell --lib agent::models::startup_prefetch
+    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 6904 filtered out; finished in 0.05s
+
+To reproduce the matrix from a clean checkout of this commit, with the module's sources saved
+aside first:
+
+    $ cd <this repo>
+    $ cargo test -q -p xai-grok-shell --lib agent::models::startup_prefetch   # 11 passed
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+
+and then, for one site at a time, replace `lock_or_recover(&X)` with `X.lock().unwrap()` and re-run
+the test command: every site except the two named in section 5 must turn it red.

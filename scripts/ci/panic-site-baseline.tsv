@@ -58,7 +58,7 @@ xai-grok-secrets	0	1	1	0
 xai-grok-session-events	0	0	0	0
 xai-grok-session-search	0	2	1	0
 xai-grok-shared	0	8	0	17
-xai-grok-shell	39	110	28	13
+xai-grok-shell	23	110	28	13
 xai-grok-shell-base	0	0	0	13
 xai-grok-shell-session-support	0	0	0	0
 xai-grok-shell-terminal	9	3	0	0

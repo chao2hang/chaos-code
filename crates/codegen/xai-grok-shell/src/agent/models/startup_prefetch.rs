@@ -3,7 +3,7 @@
 //! (`bootstrap`) share no owner object. The worker never writes: the models
 //! cache write lands only in [`accept`], after the policy re-checks.
 
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use super::{
@@ -13,6 +13,21 @@ use super::{
 use crate::agent::config::Config;
 use crate::auth::{GrokAuth, GrokComConfig};
 use crate::util::config::RemoteSettings;
+
+/// Locks a guard of this module without panicking on poisoning.
+///
+/// A poisoned guard here means the prefetch worker died while holding it, which
+/// is the one failure this module is built to survive: [`State::panicked`]
+/// records it and every consumer is written to cope with a dead worker. Both
+/// guarded values stay structurally valid across a panic -- `State`'s fields are
+/// plain `Option`s and the registry is an `Option<Arc<_>>` -- so the data is
+/// readable as it stands. An `unwrap` would instead turn one dead worker into a
+/// second panic in whatever thread only wanted to read settings, and in
+/// [`FinishGuard::drop`] it would be worse: panicking while already unwinding
+/// aborts the process.
+fn lock_or_recover<T>(guard: &Mutex<T>) -> MutexGuard<'_, T> {
+    guard.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 static INFLIGHT: Mutex<Option<Arc<Inflight>>> = Mutex::new(None);
 
@@ -43,7 +58,7 @@ struct FinishGuard(Arc<Inflight>);
 
 impl Drop for FinishGuard {
     fn drop(&mut self) {
-        let mut state = self.0.state.lock().unwrap();
+        let mut state = lock_or_recover(&self.0.state);
         state.finished = true;
         state.panicked = std::thread::panicking();
         drop(state);
@@ -55,7 +70,7 @@ impl Drop for FinishGuard {
 /// repair is pending (no authenticated request under an untrusted policy).
 pub fn begin_before_policy_gate(cfg: &Config) -> bool {
     if cfg!(test) {
-        return INFLIGHT.lock().unwrap().is_some();
+        return lock_or_recover(&INFLIGHT).is_some();
     }
     if cfg.remote_settings.is_some() || crate::managed_config::policy_repair_pending() {
         return false;
@@ -77,16 +92,16 @@ pub fn begin_with_auth(auth: Option<GrokAuth>) -> bool {
 /// Auth is lazy so tests reach the guard without touching disk.
 fn begin_inner(auth: impl FnOnce() -> Option<GrokAuth>) -> bool {
     if cfg!(test) {
-        return INFLIGHT.lock().unwrap().is_some();
+        return lock_or_recover(&INFLIGHT).is_some();
     }
-    if INFLIGHT.lock().unwrap().is_some() {
+    if lock_or_recover(&INFLIGHT).is_some() {
         return true;
     }
     // Reads disk; stay outside the registry lock.
     let Some(env) = prefetch_env(auth()) else {
         return false;
     };
-    let mut inflight = INFLIGHT.lock().unwrap();
+    let mut inflight = lock_or_recover(&INFLIGHT);
     if inflight.is_some() {
         return true;
     }
@@ -99,7 +114,7 @@ fn begin_inner(auth: impl FnOnce() -> Option<GrokAuth>) -> bool {
     std::thread::spawn(move || {
         let _guard = FinishGuard(worker_cell.clone());
         let (models, settings, settings_write) = super::run_prefetch(env);
-        let mut state = worker_cell.state.lock().unwrap();
+        let mut state = lock_or_recover(&worker_cell.state);
         state.settings = settings;
         state.models_write = models.into_deferred_write();
         state.settings_write = settings_write;
@@ -116,8 +131,8 @@ struct Finished(Arc<Inflight>);
 fn wait_finished(cell: Arc<Inflight>, deadline: Duration) -> Option<Finished> {
     let (state, wait) = cell
         .done
-        .wait_timeout_while(cell.state.lock().unwrap(), deadline, |s| !s.finished)
-        .unwrap();
+        .wait_timeout_while(lock_or_recover(&cell.state), deadline, |s| !s.finished)
+        .unwrap_or_else(PoisonError::into_inner);
     drop(state);
     if wait.timed_out() {
         return None;
@@ -128,19 +143,19 @@ fn wait_finished(cell: Arc<Inflight>, deadline: Duration) -> Option<Finished> {
 impl Finished {
     /// Remove the registry entry and yield the worker's result.
     fn take(self) -> State {
-        let mut registry = INFLIGHT.lock().unwrap();
+        let mut registry = lock_or_recover(&INFLIGHT);
         if registry.as_ref().is_some_and(|c| Arc::ptr_eq(c, &self.0)) {
             registry.take();
         }
         drop(registry);
-        std::mem::take(&mut *self.0.state.lock().unwrap())
+        std::mem::take(&mut *lock_or_recover(&self.0.state))
     }
 }
 
 /// Clone the settings once ready, leaving the fetch registered for
 /// `bootstrap` to consume. Read-only.
 pub fn wait_settings(timeout: Duration) -> Option<RemoteSettings> {
-    let cell = INFLIGHT.lock().unwrap().clone()?;
+    let cell = lock_or_recover(&INFLIGHT).clone()?;
     if !still_accepted(&cell.origin) {
         return None;
     }
@@ -148,7 +163,7 @@ pub fn wait_settings(timeout: Duration) -> Option<RemoteSettings> {
     if !still_accepted(&finished.0.origin) {
         return None;
     }
-    finished.0.state.lock().unwrap().settings.clone()
+    lock_or_recover(&finished.0.state).settings.clone()
 }
 
 pub(crate) enum Accept {
@@ -166,7 +181,7 @@ pub(crate) fn accept() -> Accept {
 }
 
 fn accept_with_deadline(deadline: Duration) -> Accept {
-    let Some(cell) = INFLIGHT.lock().unwrap().clone() else {
+    let Some(cell) = lock_or_recover(&INFLIGHT).clone() else {
         return Accept::Miss;
     };
     let origin = cell.origin.clone();
@@ -215,7 +230,7 @@ fn consume() -> Option<RemoteSettings> {
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub fn clear_for_tests() {
-    INFLIGHT.lock().unwrap().take();
+    lock_or_recover(&INFLIGHT).take();
 }
 
 fn still_accepted(origin: &str) -> bool {
@@ -250,13 +265,13 @@ pub fn inject_with_origin_for_tests(settings: Option<RemoteSettings>, origin: St
         }),
         done: Condvar::new(),
     });
-    *INFLIGHT.lock().unwrap() = Some(cell);
+    *lock_or_recover(&INFLIGHT) = Some(cell);
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub fn inflight_for_tests() -> bool {
-    INFLIGHT.lock().unwrap().is_some()
+    lock_or_recover(&INFLIGHT).is_some()
 }
 
 #[cfg(test)]
