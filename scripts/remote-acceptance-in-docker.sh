@@ -5,9 +5,10 @@
 # the machine that wrote them, against a server that machine started. That proves
 # the code works; it does not prove the *documented deployment* works, because a
 # developer box already has git, a warm cargo cache, a permissive filesystem and a
-# shell full of tools. This script puts the server on a stock Debian container that
-# has never seen the repository, reaches it through a tunnel the way a real remote
-# session does, and checks what M4.6 asks about: deployment, version negotiation,
+# shell full of tools. This script compiles the two binaries inside a stock Debian
+# container that has never seen the repository, puts the server on that container the
+# way a real remote host would run it, reaches it through a tunnel the way a real
+# remote session does, and checks what M4.6 asks about: deployment, version negotiation,
 # reading, searching, writing, git diff, tool execution, credential handling, path
 # escape, a failed upgrade, a dropped connection, an out-of-space remote disk, the
 # provenance an artifact has to carry before a host will run it, port forwarding and
@@ -37,9 +38,9 @@
 #   scripts/remote-acceptance-in-docker.sh --keep       # leave containers + dir
 #
 # Environment:
-#   IMAGE      image standing in for the remote host (default chaos-verify:local;
-#              any Debian-family image with git works -- the server shells out to
-#              git for `diff`)
+#   IMAGE      image that compiles the binaries and stands in for the remote host
+#              (default chaos-verify:local; any Debian-family image with git works --
+#              the server shells out to git for `diff`)
 #   WORK_DIR   where the two machine roots live (default: a fresh mktemp dir)
 #   CARGO_ARGS extra args for the artifact build (default: --offline --locked)
 #
@@ -448,11 +449,52 @@ wait_for_port() {
 
 # ---------------------------------------------------------------- artifacts ----
 
-log "building the artifacts on this machine"
-(cd "${repo_root}" && cargo build -p chaos-engine --bins ${CARGO_ARGS})
-cp "${repo_root}/target/debug/chaos-remote-server" "${lab_root}/host/bin/"
-cp "${repo_root}/target/debug/chaos-remote-server" "${lab_root}/dev/bin/"
-cp "${repo_root}/target/debug/chaos-remote" "${lab_root}/dev/bin/"
+log "building the artifacts inside ${IMAGE}"
+# The image that runs the binaries has to be the image that compiled them.
+# Building on this machine and copying the result in works only while the host's
+# libc is not newer than the image's: the CI runner is Ubuntu 24.04 at glibc 2.39
+# while this image is Debian bookworm at 2.36, so on CI every copy died at load
+# time inside a container that had done nothing wrong. The warm caches are the
+# named volumes scripts/verify-in-docker.sh uses.
+mkdir -p "${lab_root}/artifacts"
+if ! docker run --rm --init --workdir /src \
+  --volume "${repo_root}:/src" \
+  --volume "${lab_root}:/lab" \
+  --volume chaos-verify-cargo-registry:/usr/local/cargo/registry \
+  --volume chaos-verify-cargo-git:/usr/local/cargo/git \
+  --volume chaos-verify-target:/src/target \
+  --env PYTHONDONTWRITEBYTECODE=1 \
+  --env GIT_CONFIG_COUNT=1 \
+  --env GIT_CONFIG_KEY_0=safe.directory \
+  --env GIT_CONFIG_VALUE_0=/src \
+  "${IMAGE}" bash -c "set -euo pipefail
+    cargo build -p chaos-engine --bins ${CARGO_ARGS}
+    for bin in chaos-remote-server chaos-remote; do
+      cp target/debug/\${bin} /lab/artifacts/\${bin}
+      sha256sum /lab/artifacts/\${bin} | cut -d' ' -f1 > /lab/artifacts/\${bin}.sha256
+    done"; then
+  echo "the build inside ${IMAGE} failed; nothing was deployed." >&2
+  exit 1
+fi
+
+# Every machine in this lab has to be handed the same bytes it can be compared
+# against, so each deployed copy is checked against the digest the build wrote.
+require_artifact() { # name, destination
+  local name="$1" dest="$2" want got
+  want="$(cat "${lab_root}/artifacts/${name}.sha256")"
+  got="$(sha256sum "${dest}" | cut -d' ' -f1)"
+  if [ "${want}" != "${got}" ]; then
+    echo "${name}: ${dest} is ${got:0:12}… but ${IMAGE} built ${want:0:12}…" >&2
+    exit 1
+  fi
+}
+
+cp "${lab_root}/artifacts/chaos-remote-server" "${lab_root}/host/bin/"
+cp "${lab_root}/artifacts/chaos-remote-server" "${lab_root}/dev/bin/"
+cp "${lab_root}/artifacts/chaos-remote" "${lab_root}/dev/bin/"
+require_artifact chaos-remote-server "${lab_root}/host/bin/chaos-remote-server"
+require_artifact chaos-remote-server "${lab_root}/dev/bin/chaos-remote-server"
+require_artifact chaos-remote "${lab_root}/dev/bin/chaos-remote"
 
 # The workspace the remote host will serve, laid down from this machine so the run
 # is reproducible: one committed state plus one uncommitted change, because `diff`
@@ -710,8 +752,10 @@ docker run -d --name "${disk_container}" --network host \
   -v "${lab_root}/disk:/lab" -v "${lab_root}/shared:/shared" \
   --tmpfs "/lab/workspace:size=32m,exec" \
   "${IMAGE}" sleep "${container_keepalive}" >/dev/null
-cp "${repo_root}/target/debug/chaos-remote-server" "${lab_root}/disk/chaos-remote-server"
-cp "${repo_root}/target/debug/chaos-remote" "${lab_root}/disk/chaos-remote"
+cp "${lab_root}/artifacts/chaos-remote-server" "${lab_root}/disk/chaos-remote-server"
+cp "${lab_root}/artifacts/chaos-remote" "${lab_root}/disk/chaos-remote"
+require_artifact chaos-remote-server "${lab_root}/disk/chaos-remote-server"
+require_artifact chaos-remote "${lab_root}/disk/chaos-remote"
 head -c 3000000 /dev/zero >"${lab_root}/disk/blob"
 docker exec -d "${disk_container}" bash -c \
   "exec /lab/chaos-remote-server --workspace /lab/workspace --unix /shared/disk.sock \
@@ -747,8 +791,10 @@ docker run -d --name "${noexec_container}" --network host \
   -v "${lab_root}/noexec:/lab" -v "${lab_root}/shared:/shared" \
   --tmpfs /lab/workspace:size=32m \
   "${IMAGE}" sleep "${container_keepalive}" >/dev/null
-cp "${repo_root}/target/debug/chaos-remote-server" "${lab_root}/noexec/chaos-remote-server"
-cp "${repo_root}/target/debug/chaos-remote" "${lab_root}/noexec/chaos-remote"
+cp "${lab_root}/artifacts/chaos-remote-server" "${lab_root}/noexec/chaos-remote-server"
+cp "${lab_root}/artifacts/chaos-remote" "${lab_root}/noexec/chaos-remote"
+require_artifact chaos-remote-server "${lab_root}/noexec/chaos-remote-server"
+require_artifact chaos-remote "${lab_root}/noexec/chaos-remote"
 check_in_noexec "the workspace is a filesystem the host will not execute from" \
   "grep -q ' /lab/workspace .*noexec' /proc/mounts"
 check_in_noexec "and a 0755 file in it really is unrunnable" \

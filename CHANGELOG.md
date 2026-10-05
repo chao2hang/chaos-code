@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### 修复：两个 Docker 实验台在宿主上编译、在另一个发行版里运行，一句关于容器的判决量的其实是宿主
+
+计划运行 `37297270032` 里 web TLS 部署实验台只留下一句 `the backend never answered on loopback inside its
+container; giving up.`，而它上一行是 `the container runs this binary: 20M` —— 一个尺寸，没有摘要。这两个
+实验台（`scripts/` 里唯一两个「先编译本仓库、再问部署后的程序问题」的）一直在**启动它们的那台宿主**上构建，
+再把二进制拷进容器：runner 是 Ubuntu 24.04（glibc 2.39），实验台镜像 `chaos-verify:local` 是 Debian
+bookworm（glibc 2.36），送进去的二进制在容器里连加载都过不去（`version 'GLIBC_2.38' not found`）；而写它们
+的那台机器是 glibc 2.35、产物实测 libc 上限 `GLIBC_2.34`，于是同一条命令在本地永远绿。
+
+- 修法是**让产物将要运行的那个镜像自己编译它**：`cargo build` 改成一次 `${IMAGE}` 的 `docker run`，暖名卷
+  复用 `scripts/verify-in-docker.sh` 已有的三个（本机暖编译 0.50 s 与 0.41 s），宿主 libc 自此与结论无关；
+  runner 上不再有任何东西需要编译，dotslash、protoc、rustup 与 cargo 缓存四步一并下线。
+- 「在镜像里编」单独存在仍不够：部署点若仍指向别处，实验台照样能对着一份本次没人构建的旧二进制打满 41 或
+  130 个 `ok`。远程实验台原先五处 `cp "${repo_root}/target/debug/…"` 一律改从 `${lab_root}/artifacts/` 取，
+  并由新增的 `require_artifact` 在启动任何容器之前逐个比对 sha256。
+- 第二个缺陷是可诊断性：后端是 `docker exec -d` 起在 `sleep infinity` 容器里的，输出重定向到
+  `/work/backend.log`，而失败分支打的是 `docker logs --tail 20` —— 那是 `sleep` 的输出，永远为空。CI 那句
+  读不懂的失败不是措辞问题，是脚本读错了文件；现在打的是后端自己那个文件的尾巴。
+- 三点变异各打一处：W1（web 部署产物指回宿主机那一遍）与 R1（远程实验台 dev 容器里换成宿主 `/bin/ls`）被
+  摘要比对当场拒绝；W2（部署 24.04 的 `/bin/ls` 且同时让比对失效）复现出 CI 那句原文，并由新的日志转储当场
+  点名 `GLIBC_2.38' not found`。三次运行后脚本 `cmp` 逐字节还原。
+- 本机改完分别是 41 项与 130 项全绿；runner 那一条腿要等下一次调度或手动跑，其结论按约定追加进证据日志，
+  不在提交时假定。`/bin/ls` 那份证据里没有一行 Rust，这条根因与语言无关。
+
+（2026-10-06；`scripts/web-deployment-in-docker.sh`、`scripts/remote-acceptance-in-docker.sh`、`.github/workflows/docker-labs.yml`、`docs/verification/docker-lab-glibc-2026-10-06.log`、`docs/ci-test-debt.md`、`TODO.md`）
+
 ### 改进：web 端与 ZCode 的差距第一次按「表与事件名」量出来，14 条新开放行，以及一条被推翻的「模型即时生效」
 
 用户实测 web 端之后的判断是「差异还是较大」。要把这句话变成能修的东西，先得承认取证边界：这台机器上的 ZCode 只有

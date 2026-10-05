@@ -63,55 +63,32 @@ jobs:
 
       # socat is the tunnel between the two machines in the remote lab: the
       # transport dials loopback only, so killing socat is how a dropped network
-      # is produced. openssl mints the lab CA the TLS lab hands to curl. The rest
-      # mirror the `Install Linux deps` step in ci.yml, because both labs build
-      # real binaries on this runner and mount them into the container.
+      # is produced. openssl mints the lab CA the TLS lab hands to curl. Nothing
+      # here is a compiler: both labs build inside the image they deploy into
+      # (see the next step's comment), so the runner needs no Rust toolchain, no
+      # protoc launcher and no cargo cache.
       - name: Install lab dependencies
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libssl-dev ca-certificates socat openssl
+            ca-certificates git socat openssl
           socat -V >/dev/null && echo "socat ready"
           openssl version
 
-      # `bin/protoc` is a dotslash launcher, and the crates with .proto files need
-      # it at build time. Same pin as ci.yml and docker/verify.Dockerfile.
-      - name: Install dotslash
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-linux-musl.x86_64.v0.5.3.tar.gz -o /tmp/dotslash.tar.gz
-          tar -xzf /tmp/dotslash.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
-      - name: Install protoc
-        shell: bash
-        run: bin/protoc --version
-
-      - name: Read pinned toolchain
-        id: toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
-          test -n "$channel" || { echo "no channel pinned in rust-toolchain.toml" >&2; exit 1; }
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.channel }}
-
-      # The same prefix key as the `rust` job in ci.yml, so a scheduled run at the
-      # same Cargo.lock starts from dependencies somebody else already compiled.
-      # Without it this job is two cold workspace builds a day.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: chaos-ci
-
       # Both labs run their workload inside an image that has never seen this
       # repository -- that is the whole point of them -- and default to this tag.
+      #
+      # The labs also *compile* inside it, and that is the fix for scheduled run
+      # 37297270032, which went red with nothing but "the backend never answered
+      # on loopback inside its container". The binaries used to be built on this
+      # runner and mounted in: this runner is Ubuntu 24.04 at glibc 2.39 while the
+      # image is Debian bookworm at 2.36, so every mounted binary died at load
+      # time with "version `GLIBC_2.38' not found" in a container that had done
+      # nothing wrong, and the one machine where the lab passed (a developer box
+      # whose glibc is older than the image's) was the reason nobody noticed.
+      # Compiling where the artifact will run makes the host's libc irrelevant.
       - name: Build the clean-host image
         shell: bash
         run: docker build -f docker/verify.Dockerfile -t chaos-verify:local .

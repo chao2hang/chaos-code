@@ -1939,6 +1939,38 @@ run、`status=completed` 配 `conclusion=in_progress`、一份 HTTP 200 且内�
 **判据：账本行里「改了会生效」这类关于运行时行为的半句，只能由把值送到执行处的那个接口来支持，接口签名里没有的
 参数就不算生效；引用一条已有的账本行等于重新对它负责，要当场对签名复核，不得当作信源转抄。**
 
+## 2026-10-06：实验台在宿主上编译、在另一个发行版里运行，一条关于容器的判决量的是宿主
+
+`scripts/web-deployment-in-docker.sh` 与 `scripts/remote-acceptance-in-docker.sh` 是六个 `-in-docker.sh`
+里唯一两个「先编译本仓库、再问部署后的程序问题」的实验台，也是 `.github/workflows/docker-labs.yml`
+每天 03:17 唯一真正跑的两个。它们的构建一直在**启动它的宿主**上完成，再把二进制拷进容器。计划运行
+`37297270032`（提交 `e90e1582`）因此红了整整五天里的一次，而它留下的全部线索是一句
+`the backend never answered on loopback inside its container; giving up.`。
+
+- 根因是 libc 版本方向：runner 镜像是 Ubuntu 24.04（glibc 2.39），实验台镜像
+  `chaos-verify:local` 是 Debian bookworm（glibc 2.36）。2.39 上编出来的二进制要 `GLIBC_2.38`，
+  在 2.36 的容器里连加载都过不去；而写这条实验台的那台机器是 Ubuntu 22.04（glibc 2.35），产物实测
+  `objdump -T` 的 libc 上限只有 `GLIBC_2.34`，于是同一条命令在本地永远绿。把 `/bin/ls` 从
+  `ubuntu:24.04` 拷进 `chaos-verify:local` 执行即复现，与 Rust 无关。
+- 一句「量容器的话」量的其实是宿主，且两种失败在输出里长得一模一样（都是后端不应答），这是它能在本地
+  连续数周通过而没人察觉的全部原因。修法是让产物运行的那个镜像自己编译它：`cargo build` 变成一次
+  `${IMAGE}` 的 `docker run`，暖名卷复用 `scripts/verify-in-docker.sh` 已有的三个，本机暖编译 0.5 s；
+  宿主 libc 自此与结论无关。runner 上不再需要工具链，dotslash、protoc、rustup 与 cargo 缓存四步一并下线。
+- 光有「在镜像里编」还不够：部署点若仍指向别处，实验台照样能对着一份没人这次构建的旧二进制打满 41 或
+  130 个 `ok`。因此每个部署点都改为从 `${lab_root}/artifacts/` 取字节并逐一比对 sha256，
+  不一致即退（`chaos-web: the deployed artifact is X… but chaos-verify:local built Y…`）。
+  变异 W1 与 R1 就是被这一条当场拦下；W2（部署 24.04 的 `/bin/ls` 且同时让比对失效）复现出 CI 原文。
+- 同一分支的第二个缺陷是可诊断性：后端是 `docker exec -d` 起在 `sleep infinity` 容器里的，输出重定向到
+  `/work/backend.log`，而失败分支打的是 `docker logs --tail 20` —— 那是 `sleep` 的输出，永远为空。
+  CI 那句读不懂的失败不是措辞问题，是脚本读错了文件。
+
+完整过程与三段变异见 `docs/verification/docker-lab-glibc-2026-10-06.log`。
+
+**判据：实验台必须在产物将要运行的那个镜像里编译产物 —— 宿主与镜像不同源时，宿主上的绿不构成镜像里的绿，
+而「产物载不起来」与「产物行为不对」在只看应答与否的探测里无法区分。同理，`docker exec -d` 起的进程其
+输出不属于 `docker logs`，失败分支要读脚本自己写下的那个日志文件：读错文件的失败信息比没有失败信息更贵，
+它把可查的现场换成了与现场无关的一句话。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

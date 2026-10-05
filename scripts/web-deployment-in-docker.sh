@@ -9,8 +9,9 @@
 # backend has never seen from a test. Those headers are the whole deployment
 # risk, and no router test can produce them.
 #
-# This script builds the real `chaos-web` binary, runs it inside a container on
-# loopback, puts stock nginx in the same network namespace as the proxy (which
+# This script builds the real `chaos-web` binary inside the image that will run
+# it, runs it inside a container on loopback, puts stock nginx in the same
+# network namespace as the proxy (which
 # is what "the proxy can reach a loopback-only backend" means), terminates TLS
 # with a lab CA, and then asks the questions M-1.4/M0.4/M5.3 leave open:
 #
@@ -45,7 +46,7 @@
 #   scripts/web-deployment-in-docker.sh --keep      # leave containers + dir
 #
 # Environment:
-#   IMAGE        image running the backend (default chaos-verify:local)
+#   IMAGE        image that compiles and runs the backend (default chaos-verify:local)
 #   PROXY_IMAGE  nginx image (default nginx:1.27-alpine)
 #   WORK_DIR     where the lab root lives (default: a fresh mktemp dir)
 #   CARGO_ARGS   extra args for the build (default: --offline --locked)
@@ -257,10 +258,43 @@ expect_header() { # label, needle
 # Build, then lay out the deployment: certificates, nginx, the two containers.
 # --------------------------------------------------------------------------------
 
-log "building the Web host on this machine"
-(cd "${repo_root}" && cargo build --bin chaos-web ${CARGO_ARGS}) >/dev/null
-cp "${repo_root}/target/debug/chaos-web" "${lab_root}/bin/chaos-web"
-say "the container runs this binary: $(du -h "${lab_root}/bin/chaos-web" | cut -f1)"
+log "building the Web host inside ${IMAGE}"
+# The image that runs the binary has to be the image that compiled it. Building
+# on this machine and mounting the result only works while the host's libc is not
+# newer than the image's: the CI runner is Ubuntu 24.04 at glibc 2.39 while this
+# image is Debian bookworm at 2.36, so the mounted binary died at load time with
+# "version \`GLIBC_2.38' not found" and the only thing the scheduled run
+# 37297270032 printed was a readiness probe that never answered. The warm caches
+# are the named volumes scripts/verify-in-docker.sh uses, so one machine does not
+# pay for two dependency builds.
+mkdir -p "${lab_root}/artifacts"
+if ! docker run --rm --init --workdir /src \
+  --volume "${repo_root}:/src" \
+  --volume "${lab_root}:/lab" \
+  --volume chaos-verify-cargo-registry:/usr/local/cargo/registry \
+  --volume chaos-verify-cargo-git:/usr/local/cargo/git \
+  --volume chaos-verify-target:/src/target \
+  --env PYTHONDONTWRITEBYTECODE=1 \
+  --env GIT_CONFIG_COUNT=1 \
+  --env GIT_CONFIG_KEY_0=safe.directory \
+  --env GIT_CONFIG_VALUE_0=/src \
+  "${IMAGE}" bash -c "set -euo pipefail
+    cargo build --bin chaos-web ${CARGO_ARGS}
+    cp target/debug/chaos-web /lab/artifacts/chaos-web
+    sha256sum /lab/artifacts/chaos-web | cut -d' ' -f1 > /lab/artifacts/chaos-web.sha256"; then
+  echo "the build inside ${IMAGE} failed; nothing was deployed." >&2
+  exit 1
+fi
+cp "${lab_root}/artifacts/chaos-web" "${lab_root}/bin/chaos-web"
+# The bytes that get mounted must be the bytes just built: a stale path here would
+# otherwise let the lab interrogate whatever an earlier run left in ${lab_root}.
+want_sha="$(cat "${lab_root}/artifacts/chaos-web.sha256")"
+got_sha="$(sha256sum "${lab_root}/bin/chaos-web" | cut -d' ' -f1)"
+if [ "${want_sha}" != "${got_sha}" ]; then
+  echo "chaos-web: the deployed artifact is ${got_sha:0:12}… but ${IMAGE} built ${want_sha:0:12}…" >&2
+  exit 1
+fi
+say "the container runs this binary: $(du -h "${lab_root}/bin/chaos-web" | cut -f1) (sha256 ${got_sha:0:12}…, built by ${IMAGE})"
 
 log "issuing a lab CA and a certificate for ${public_name}"
 # A real chain, not a self-signed leaf: the client is told to trust only the CA,
@@ -582,7 +616,13 @@ say "backend address on the shared network: ${web_ip}:${backend_port}"
 
 if ! start_backend; then
   echo "the backend never answered on loopback inside its container; giving up." >&2
-  docker logs --tail 20 "${web_container}" >&2 || true
+  # The backend was started with `docker exec -d`, so its output is in the log
+  # file the script itself chose, not in `docker logs` (that is `sleep infinity`).
+  # Printing the wrong one is what made CI run 37297270032 unreadable: the binary
+  # had refused to load, and the only evidence of that sat in /work/backend.log.
+  echo "--- /work/backend.log ---" >&2
+  on_web 'tail -n 40 /work/backend.log' >&2 || true
+  echo "--- end of /work/backend.log ---" >&2
   exit 1
 fi
 say "the backend listens on loopback only, and nginx shares that namespace"

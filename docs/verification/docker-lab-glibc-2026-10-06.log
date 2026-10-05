@@ -1,0 +1,192 @@
+# The runner's libc was newer than the image's, so both Docker labs were measuring the runner (2026-10-06)
+
+`scripts/web-deployment-in-docker.sh` and `scripts/remote-acceptance-in-docker.sh` are the two
+acceptance labs that compile this tree and then interrogate the resulting program inside a
+container that has never seen the repository. Until today they compiled it **on the host that
+started them** and copied the binary in. Scheduled run 37297270032 went red because of that,
+and the more uncomfortable fact is that the labs had been green for weeks on the one machine
+whose libc is older than the image's: a verdict about a container was really a verdict about
+whoever happened to type the command.
+
+This batch compiles inside the image that runs the artifact, refuses to deploy bytes it cannot
+tie to that build, and stops the TLS lab from printing a log file that cannot contain the
+failure it is reporting.
+
+== 0. What is in this batch
+
+    scripts/web-deployment-in-docker.sh       cargo build inside ${IMAGE}; sha256 guard on the
+                                              deployed bytes; readiness failure now dumps the
+                                              backend's own log instead of `docker logs`
+    scripts/remote-acceptance-in-docker.sh    same build inside ${IMAGE} for `-p chaos-engine
+                                              --bins`, five deploy sites now copy from
+                                              ${lab_root}/artifacts and each is digest-checked
+    .github/workflows/docker-labs.yml         drops the dotslash, protoc, rustup/toolchain and
+                                              rust-cache steps: nothing compiles on the runner
+                                              any more, so the runner needs no toolchain
+
+== 1. The scheduled run, verbatim
+
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:38:39.0176006Z    the container runs this binary: 20M
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:38:39.0176809Z
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:38:39.0177208Z == issuing a lab CA and a certificate for chaos.test
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:38:39.6375506Z    chain verifies: Oct  7 10:38:39 2026 GMT
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:38:39.6403989Z
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:38:40.5199787Z    backend address on the shared network: 172.18.0.2:8787
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:39:17.4907102Z the backend never answered on loopback inside its container; giving up.
+    web TLS deployment and M4 remote acceptance  2026-10-05T10:39:17.8604184Z ##[error]Process completed with exit code 1.
+
+Thirty-seven seconds of readiness polling, then a sentence that names no cause. The line above
+the failure, `the container runs this binary: 20M`, is the old script announcing the size of the
+binary it had just built on the runner and copied in. It printed a size and no digest, so the
+run cannot even be asked which bytes were deployed.
+
+The remote lab never got to run: both labs are steps in the same job and the TLS lab exits 1.
+
+== 2. Why it was green on the machine that wrote it
+
+Measured today on the three systems involved:
+
+    host (Ubuntu 22.04, where the labs have been run by hand)   glibc 2.35
+    ubuntu:24.04 (what actions' ubuntu-latest image is)         glibc 2.39
+    chaos-verify:local (docker/verify.Dockerfile, bookworm)     glibc 2.36
+
+and the highest libc symbol version the host-built binary actually asks for:
+
+    objdump -T target/debug/chaos-web | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+        GLIBC_2.34
+
+2.34 is satisfiable by 2.36, so the mounted binary loads in the image when it was built on this
+host, on any box at 2.35 or 2.36, and fails to load when it was built on 2.39. That is the whole
+mechanism: the labs were green on every machine that ran them by hand and red only on the runner,
+and nothing in the lab's own output could distinguish "the deployed program is broken" from "the
+deployed program was built for a newer libc than this container has".
+
+== 3. The proof, run today
+
+A binary from the runner's userspace, executed inside the image the labs deploy into:
+
+    docker run --rm -v "$PWD/glibc:/x" ubuntu:24.04 cp /bin/ls /x/ls-2404
+    docker run --rm -v "$PWD/glibc:/x:ro" chaos-verify:local /x/ls-2404 /x
+
+    /x/ls-2404: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /x/ls-2404)
+    rc=1
+
+`/bin/ls` is not a lab artifact and no Rust code is involved. Anything the 24.04 runner compiled
+hit the same wall, which is what `chaos-web` did in section 1.
+
+== 4. The fix: compile where the artifact runs, and prove the bytes came from there
+
+Both labs now run their build as a `docker run` of `${IMAGE}` over the repository, writing the
+binaries into the lab directory together with their sha256, and every deploy site copies from
+that directory and is checked against it before anything is launched:
+
+    chaos-web: the deployed artifact is ${got:0:12}… but ${IMAGE} built ${want:0:12}…
+
+The digest guard is not decoration for the build step. Without it, replacing the copy source with
+anything else -- a stale path, a host build, an earlier run's leftovers in the lab root -- leaves
+a lab that still prints 41 or 130 `ok` lines about a program nobody built in this run. Section 6
+measures that.
+
+The build reuses the same named volumes `scripts/verify-in-docker.sh` already warms
+(`chaos-verify-cargo-registry`, `chaos-verify-cargo-git`, `chaos-verify-target`), so a developer
+box does not pay for two dependency graphs. On the runner those volumes start empty, which is why
+the workflow still passes `CARGO_ARGS: "--locked"` rather than the labs' local default of
+`--offline --locked`.
+
+Because nothing compiles on the runner now, the workflow's dotslash, protoc, rustup toolchain and
+`Swatinem/rust-cache` steps were removed along with the apt packages that fed them. The runner
+needs `ca-certificates`, `git`, `socat` (the remote lab's tunnel) and `openssl` (the lab CA).
+
+== 5. The second defect: the lab printed a log that could not contain the failure
+
+The readiness branch used to end in `docker logs --tail 20 "${web_container}"`. That container is
+started with `sleep infinity` as its PID 1, and the backend is launched into it with
+`docker exec -d`, redirecting to `/work/backend.log`. So `docker logs` of that container is the
+output of `sleep`, always empty. The one sentence CI had to go on was the only sentence it could
+not have improved, because the evidence of the load failure sat in a file the script never read.
+
+The branch now dumps the file it did write:
+
+    the backend never answered on loopback inside its container; giving up.
+    --- /work/backend.log ---
+    /lab/bin/chaos-web: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /lab/bin/chaos-web)
+    --- end of /work/backend.log ---
+
+That transcript is not from the runner. It is W2 below: the old behaviour, reproduced on this
+machine by deploying a 24.04 binary with the digest guard made vacuous.
+
+== 6. Mutations
+
+Three single-anchor edits, each applied to the working tree, run, and reverted; the driver prints
+`restore byte-identical=True` and it held for all three. Baselines before each run were the green
+labs of section 7, and the driver refuses to start on a red baseline.
+
+W1 -- web lab, the deployed artifact pointed back at the host build. Caught:
+
+    == building the Web host inside chaos-verify:local
+        Finished `dev` profile [unoptimized] target(s) in 0.50s
+    chaos-web: the deployed artifact is a05422e83788… but chaos-verify:local built 0e5d40adb4f4…
+    ### lab rc = 1
+
+W2 -- web lab, deploy the `ubuntu:24.04` `/bin/ls` with the digest guard made vacuous, i.e. the
+pre-fix situation as the runner saw it. Caught, and now self-explaining:
+
+    == building the Web host inside chaos-verify:local
+        Finished `dev` profile [unoptimized] target(s) in 0.51s
+       the container runs this binary: 140K (sha256 2726eb358646…, built by chaos-verify:local)
+    ...
+       backend address on the shared network: 172.19.0.2:8787
+    the backend never answered on loopback inside its container; giving up.
+    --- /work/backend.log ---
+    /lab/bin/chaos-web: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /lab/bin/chaos-web)
+    --- end of /work/backend.log ---
+    ### lab rc = 1
+
+    Note the asymmetry: the header line still says `built by chaos-verify:local`, because W2 also
+    edited the line that produces that claim. The readiness dump is the half of the fix that does
+    not depend on the guard being intact, which is the reason both halves went in.
+
+R1 -- remote lab, the CLI deployed into the dev container replaced with the host's `/bin/ls`.
+Caught, before any container was launched:
+
+    == building the artifacts inside chaos-verify:local
+        Finished `dev` profile [unoptimized] target(s) in 0.41s
+    chaos-remote: /tmp/chaos-remote-lab.mbDTUw/run-1829647/dev/bin/chaos-remote is f32928d24284… but chaos-verify:local built 3600c1c9bba2…
+    ### lab rc = 1
+
+== 7. Both labs after the fix, on this machine
+
+The web lab built in-image and passed every check:
+
+    == building the Web host inside chaos-verify:local
+       the container runs this binary: 20M (sha256 0e5d40adb4f4…, built by chaos-verify:local)
+    ...
+    all 41 TLS deployment checks passed against nginx:1.27-alpine + chaos-verify:local
+
+The remote lab likewise, across its five topologies (host, dev, disk-full, noexec, and the
+tunnel-dropping pair):
+
+    == building the artifacts inside chaos-verify:local
+    ...
+       ok  a WebSocket handshake completes through the forward
+       ok  and the port is gone once the session that used it is over
+
+    == summary
+    all 130 M4 acceptance checks passed against chaos-verify:local
+
+Warm-cache rebuilds inside the image finish in half a second (the 0.41s/0.50s/0.51s lines above),
+so compiling where the artifact runs costs a developer nothing on a warm tree; only the first run
+on a cold runner pays, and that is the run whose verdict is the point.
+
+== 8. What this still does not prove
+
+- The green runs above are on a bookworm image on a 22.04 host. The fix removes the host from the
+  question, but the runner leg itself is only re-proven once a scheduled or dispatched run of
+  `Docker acceptance labs` goes green on `ubuntu-latest`; that verdict is appended to this file,
+  not assumed here.
+- `chaos-verify:local` is Debian bookworm. The release artifacts shipped to users are built
+  elsewhere; nothing in this file is evidence about the libc floor of a shipped binary. That floor
+  is a release question this batch does not open.
+- The remote lab still runs both its machines from one daemon on one host. It has always been a
+  single-host lab with two containers, and the ledger row for it in `scripts/ci/docker-labs.tsv`
+  says so.
