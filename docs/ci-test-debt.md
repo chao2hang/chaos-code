@@ -1916,6 +1916,29 @@ run、`status=completed` 配 `conclusion=in_progress`、一份 HTTP 200 且内�
 个 project 重跑。遮挡类失败必须用 `elementFromPoint` 这类真实命中量出来归因，先分清是界面错了还是测试假设了不存在的
 用法，再决定改哪一侧；顺序依赖之类的解释要先用「单跑一次」证伪，不要留着它当结论。**
 
+## 2026-10-06：账本里「设置改了当前 engine 即时生效」这条从来没有接口能支持，它是从「存下来了」推出来的
+
+比对 web 端与 ZCode 时要写一条「模型/端点不可切换」的差距行，需要先确认 Chaos 现状。子代理的取证包照抄了
+`TODO.md` 里 M3.1 那条已有行的说法 —— 「Base URL/model 更新在当前 engine 内即时生效」。这句话若抄进新的取证文档，
+差距行就会被判定为「已实现一半」，而差距本身就消失了。动手写之前去看了被引用的那个接口：
+`crates/codegen/chaos-engine/src/lib.rs:33` 的 `PromptAdapter::run_prompt(&self, prompt: &str)` 只有 prompt 一个入参，
+两个调用点（同文件 `lib.rs:2616` 的正常轮次、`lib.rs:2814` 的提交信息生成）也只传 prompt；真正决定发给谁的
+`HttpPromptAdapter` 把 `chat_endpoint`、`models_endpoint`、`model` 存成构造期字段（`crates/codegen/chaos-engine/src/provider.rs:47`），
+由 `provider.rs:153` 的 `from_env` 在进程启动时填好，装配点在 `crates/codegen/xai-grok-web/src/main.rs:16`。
+`GuiSettings.model` / `base_url` 的读写只出现在 `lib.rs:3062`（GetSettings）、`lib.rs:3085`（UpdateSettings）与
+`ValidateProvider` 那一条腿上。也就是说「改完能存住、GetSettings 读得回来、进程重启后新值在用」是真的，
+「这一轮对话就换了模型」在源码里没有任何承载它的地方。
+
+- 这条断言的成因不是笔误而是推理：行内另外一半（持久化）有测试与实现支撑，于是「生效」被当作同一件事的下一半
+  顺手写了进去。凡是形如「X 改了会生效」的账本行，生效那半必须有把值带到执行处的接口，否则只能写「X 改了会存下来」。
+- 账本不是信源。同一批次里已有的行会被子代理当既有事实引用，再被引用进取证文档与差距判定，一处夸大就会沿链条扩散成
+  一处「不用做」。重新引用即重新核对，核对到接口签名为止。
+- 处理方式是不删行、只把断言改回它撑得住的范围，并就地写下反证行号；该行保持 `[~]`（持久化那一半确实完成），
+  撤回同时记进 `docs/architecture/todo-open-item-classification.md` 的当日段落，让下一个读到老结论的人看得见它被推翻过。
+
+**判据：账本行里「改了会生效」这类关于运行时行为的半句，只能由把值送到执行处的那个接口来支持，接口签名里没有的
+参数就不算生效；引用一条已有的账本行等于重新对它负责，要当场对签名复核，不得当作信源转抄。**
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI

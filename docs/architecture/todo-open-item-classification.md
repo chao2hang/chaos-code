@@ -126,7 +126,7 @@ whose own body shows nothing platform-specific. Both numbers are down from the
 than editing rows: the two interpreter-probe tests in the LSP mock-server fixtures
 lost their `#[cfg(unix)]` (the stub is now built from the host interpreter rather
 than from a `chmod 755` script), so the test for the Microsoft Store alias failure
-now runs on the platform that has the alias. M1 has no unchecked row left: the last one was the
+now runs on the platform that has the alias. M1 had no unchecked row left as of 2026-10-03: the last one was the
 phone drawer's missing focus trap -- at 390px the sidebar is an overlay drawer whose scrim
 only stops pointer input, so keyboard Tab still reached the conversation behind it -- and it
 closed on 2026-10-03 behind two independent gates (`inert` on the covered regions plus a Tab
@@ -179,12 +179,40 @@ language review, screen-reader testing or platform acceptance.
 |---|---:|---:|
 | M-1 | 1 | 5 |
 | M0 | 0 | 11 |
-| M1 | 0 | 16 |
-| M2 | 0 | 24 |
-| M3 | 5 | 12 |
+| M1 | 8 | 16 |
+| M2 | 4 | 24 |
+| M3 | 7 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
 | Maintenance items / §8 | 5 | 19 |
+
+The M1/M2/M3 unchecked increase dated 2026-10-06 all comes from one event: the
+user tested the Web front end on a real machine and reported that 「web 端和 zcode
+项目的差异还是较大」. Comparing the two product surfaces item by item produced 14
+new open rows (two under M1.1, three under M1.2, two under M1.3, one under M1.4,
+one under M2.1, one under M2.2, two under M2.5, one under M3.1, one under M3.3),
+with evidence and reproduction commands in
+`docs/verification/zcode-capability-gap-2026-10-06.md` and the verdict table in
+section 2.2 of `TODO.md`. These rows are classified differently from the rest of
+this document on purpose: they are not blocked by an external owner or by a
+missing environment. The M-1 licensing and attribution gates block copying ZCode's
+schema and assets, not the capabilities themselves -- enumerating sessions, real
+streaming, a selectable model, usage accounting. Two of them have an explicit
+technical predecessor: the M3.3 data-contract row gates the three workflow/subagent
+display rows, and the M2.5 budget row depends on both the M1.1 asynchronous event
+stream and the usage tables in the same group. Treating those as four unrelated
+small features is exactly what this registration is meant to prevent. The same
+pass also retracted a false claim that this file and `TODO.md` both carried:
+changing the model in the settings panel does not take effect in the running
+engine. `PromptAdapter::run_prompt` takes a prompt and nothing else, the model name
+is fixed when the adapter is built from the environment, and `GuiSettings.model` is
+only ever read back by the echo, write and validate handlers (see the correction in
+the M3.1 row of `TODO.md`). Two things were checked and deliberately left out of the
+list: the "whiteboard" evidence on the ZCode side turns out to come from a bundled
+Feishu SDK, and this machine has no ZCode client at all, so the whole comparison
+rests on data contracts and protocol vocabulary and reaches no conclusion about
+any user interface.
+
 
 ## Locally delivered in this audit pass
 

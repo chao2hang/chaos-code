@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### 改进：web 端与 ZCode 的差距第一次按「表与事件名」量出来，14 条新开放行，以及一条被推翻的「模型即时生效」
+
+用户实测 web 端之后的判断是「差异还是较大」。要把这句话变成能修的东西，先得承认取证边界：这台机器上的 ZCode 只有
+`/home/chaos/.zcode/{cli,server,v2}`，客户端 UI 不在本机（9.6 MB 的服务端 bundle 里 `BrowserWindow`、`webContents`、
+`ipcMain`、`index.html` 全部 0 命中，因此也不声称它是 Electron），所以对比不落在像素与交互上，只落在两份真实
+SQLite DDL 与服务端协议的词汇表上。上一轮截图里那几张「ZCode 桌面图」经核是本仓库自己的界面，本批不再引用。
+
+- 取证口径写死在文档里：ZCode 愿意为一张表建索引、愿意为一个事件命名，说明那条能力是它真实交付的功能。据此把
+  `tasks`（含 `idx_tasks_workspace_pinned_updated` 这类 `WHERE deleted = 0` 的部分索引）、`automations` 与
+  `automation_runs`、`off_peak_tasks` 及其四个 `/api/v1/off-peak/...` 端点、`cli/db/db.sqlite` 里的
+  `session` / `session_target` / `session_input` / `workflow_*` / `todo` / `local_setting` / `*_usage`，连同
+  `thoughtLevel`(283)、`pty`(985)、`automation`(407)、`offPeak`(174)、`turn.steerQueued`、`checkpoint.created`
+  这些命中计数，逐条对到 Chaos 侧的 `文件:行`。
+- 两处负面发现先砍自己：§2 对比表里「Whiteboard、Treemapping」那两行的依据是错的 —— 28 处 `whiteboard` 全部来自
+  bundle 里打进来的飞书开放 API SDK（注释指向 `open.feishu.cn` 的 board/whiteboard.node），`treemap` 与 `treeMap`
+  0 命中。两行依据就地标注作废，而不是留着继续替一个不存在的差距作证。
+- 落账 14 条新开放行：M1.1×2（会话还不是对象：`create_session` 会覆盖 `last_session_id`；engine 无服务端推送，
+  `Engine::handle` 同步、`Engine::subscribe` 无人使用、取消打断不了执行中的轮次、无 steering 队列）、M1.2×3
+  （工具卡片只有一张通用卡且没有适配器、消息级复制/重试/编辑重发/重新生成缺失、无 reasoning 事件与计划面）、
+  M1.3×2（授权不可记忆 —— `approve` 只带 `request_id`，是 §5.3 措辞的硬前置；拒绝原因在前端写死）、M1.4×1
+  （无检查点/回退）、M2.1×1（侧栏是工作区列表不是会话列表）、M2.2×1（列举只下一层、搜索是子串、无文件监听）、
+  M2.5×2（用量数字是拼出来的、无目标与 token 预算层）、M3.1×1（三个写死的模式胶囊，无 `list_models` 与
+  思考档位）、M3.3×1（无 workflow/子代理数据契约，它是三条已有展示行的前置）。§2.2 另立 19 行判定表。
+- 分类文档计数改为 M1 8/16、M2 4/24、M3 7/12（开放行合计 155），并写下依赖链：M3.3 的数据契约先于三条展示行，
+  M2.5 的预算行依赖 M1.1 的事件流与用量表。判定结论是差距在**产品外壳**而不在安全边界：授权与两次确认那套是真的，
+  缺的是会话作为对象、工具卡片的真实渲染、可记忆的授权、回退、按会话的侧栏、用量与预算、模型/模式/档位的选择。
+- 顺带推翻一条已有账本行的断言：M3.1 那句「Base URL/model 更新在当前 engine 内即时生效」在源码里没有承载处 ——
+  `PromptAdapter::run_prompt(&self, prompt: &str)` 只有 prompt 一个入参。行改回它撑得住的范围（持久化那一半确实
+  完成，保持 `[~]`），教训与判据记进 `docs/ci-test-debt.md`。
+- 这份清单明确不支持三种说法：不据以推 ZCode 的界面布局、不据以推它用了 Electron、也不构成「照抄它的 schema」；
+  复现命令（python 只读打开 SQLite、`grep -aoE` 提协议事件名）写在取证文档第 5 节。
+
+（2026-10-06；`TODO.md`、`docs/verification/zcode-capability-gap-2026-10-06.md`、`docs/architecture/todo-open-item-classification.md`、`docs/verification/todo-open-items.tsv`、`docs/ci-test-debt.md`）
+
 ### 门禁：44 格全量扫描红的时候说不出谁红了 —— 完整闸门输出落盘，每个红测试挂在它自己的 target 下面
 
 第二次全量扫描以 `cargo test` 一格退出码 101 收场，汇总里跟这次失败有关的只有三行，其中 `running 0 tests`
