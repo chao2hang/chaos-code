@@ -1,0 +1,281 @@
+# The page that sent nothing: `crypto.randomUUID` in an insecure context, and the second silent drop behind it (2026-10-05)
+
+== 1. How the defect surfaced
+
+The user asked for the web front end on `0.0.0.0` so they could click through it themselves. Three processes were
+started for that: `chaos-web` (by design it binds loopback only), the Vite dev server on `0.0.0.0:5174`, and a
+self-signed TLS front on `0.0.0.0:5175` that proxies to Vite. The TLS front was a workaround for the defect below,
+is not part of the repository, and is not the fix.
+
+Opened over the routable address with plain HTTP, the page connected, completed the protocol handshake, drew the
+whole shell, and then refused to do anything: the header badge stayed at 正在创建工作区 and every prompt was
+ignored. Opened over `127.0.0.1` on the same server, the identical build worked. The difference was not the host,
+the port, the proxy or the backend. It was one browser API.
+
+== 2. The mechanism, measured rather than assumed
+
+`crypto.randomUUID` exists only in a secure context. A page served over `http://` from a routable address is not a
+secure context, so the property is `undefined`, and `crypto.randomUUID()` throws `TypeError: crypto.randomUUID is
+not a function`. `crypto.getRandomValues` has no such restriction and is available in insecure contexts too.
+
+`apps/chaos-ui` minted its `client_msg_id` with that one API at 35 call sites: 32 in `src/main.tsx` and 3 in
+`src/session.ts`. The id is generated in the argument list of the send call, so the throw happened *before*
+`send()` ran -- the message never reached the socket, and nothing in the UI reported it. The measured three origins:
+
+| origin | `isSecureContext` | `typeof crypto.randomUUID` | `typeof crypto.getRandomValues` | behaviour before this batch |
+| --- | --- | --- | --- | --- |
+| `http://127.0.0.1:5174` | true | function | function | works |
+| `http://localhost:5174` | true | function | function | works |
+| `http://172.16.2.253:5174` | false | **undefined** | function | every send throws, UI stuck at 正在创建工作区 |
+
+`172.16.2.253` is the host's own LAN address, i.e. exactly what the deployment documentation tells a person to open
+from another machine. The two origins where the defect could not exist are the two origins the existing Playwright
+legs run on, which is why the suite was green.
+
+== 3. The fix: pick the id source by capability, not by assumption
+
+`apps/chaos-ui/src/transport.ts` gained `newMessageId(source = globalThis.crypto)`, used at all 35 sites:
+
+1. use `crypto.randomUUID()` when it is a function, and fall through if calling it throws, because an embedder
+   (privacy extension, hardened build) can define the method and then refuse it;
+2. otherwise fill 16 bytes with `crypto.getRandomValues` and format them as a v4 UUID, rejecting an all-zero result,
+   because a stubbed WebCrypto that hands back zeros would mint one id forever and duplicate ids are how a host
+   answers a later message with an earlier turn's reply;
+3. otherwise stamp a time-plus-sequence value into the same v4 shape, which is unique within the page for hosts that
+   stub a bare `crypto` (test runners, tooling) and is explicitly not unique across processes.
+
+`IdSource` types the two methods separately for the same reason the code probes them separately. Its `getRandomValues`
+parameter is typed `Uint8Array<ArrayBuffer>` rather than `Uint8Array`: TypeScript 7's DOM lib declares the real
+method over `Exclude<BufferSource, ArrayBuffer>`, and the looser spelling failed `npm run typecheck` on the default
+argument (`Type 'Crypto' is not assignable to type 'IdSource'`).
+
+== 4. The second silent failure, found because the first one was being probed
+
+With ids fixed, the frame capture showed a different hole: `send()` was
+
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
+
+so a message attempted while the socket was connecting, closing or closed was dropped without a trace, and `submit()`
+appended the prompt to the transcript *before* sending, so the page showed a message the host never received. A
+composer submit with no session yet took the same silent path.
+
+`transport.ts` now exposes `dropReasonFor(readyState)` -- `null` when the socket can take the message, otherwise the
+wording for 尚未连接 / 正在连接 / 连接已断开, all suffixed 消息未发送. The spec-fixed `readyState` numbers are spelled
+out locally so the helper works in a host with no `WebSocket` global. `send()` reports the reason on the badge;
+`submit()` checks reachability *before* the optimistic append, so a prompt that never left the page is not added to
+the transcript, not filed into the prompt history, and not cleared from the draft -- it can be sent again, and the
+badge says why the first attempt did not go.
+
+== 5. The durable tests
+
+`src/transport.test.ts` (Vitest, 12 tests in the file, 132 across the suite) pins the capability ladder: it prefers
+`randomUUID`, patches the version and variant bits into whatever `getRandomValues` returned (exact string
+`01020304-0506-4708-890a-0b0c0d0e0f10`), mints 500 distinct ids from a `getRandomValues`-only source, 200 distinct
+ids from an origin with neither method, rejects an all-zero stub, survives a `randomUUID` that throws, and works with
+the default argument. `dropReasonFor` is pinned across open / connecting / closing / closed / absent.
+
+Two Playwright specs, registered in `playwright.config.ts` (so the `check-e2e-registration` guard covers them):
+
+* `e2e/insecure-origin.pw.ts` -- 127.0.0.1 is a secure context, so the missing method is manufactured with
+  `addInitScript` shadowing `Crypto.prototype.randomUUID` with an own `undefined` before any page script runs. It
+  asserts `typeof globalThis.crypto.randomUUID === 'undefined'` inside the page first, so the fixture cannot rot into
+  a test of the happy path. Three cases: no `randomUUID`; a `randomUUID` that throws; neither WebCrypto method.
+  Each asserts the boot frames really reached the socket with v4-shaped ids and that a prompt is answered.
+* `e2e/offline-send.pw.ts` -- routes `/ws` and refuses it (or holds the first leg and closes it) and asserts a refused
+  send is visible: the badge sequence must contain a reason, `.user p` must stay empty, and the draft must survive.
+  Transient badge states are read through the shared `recordStatusBadge` / `statusSequence` helper, now exported from
+  `e2e/support/shell.ts` (extracted from `reconnect-snapshot.pw.ts`, which imports it unchanged).
+
+Both viewports, 16 tests green:
+
+    ✓  1 [desktop-chromium] › e2e/insecure-origin.pw.ts:33:1 › a page with no crypto.randomUUID still sends the prompt and settles the turn (555ms)
+    ✓  2 [desktop-chromium] › e2e/insecure-origin.pw.ts:63:1 › a randomUUID that exists but throws still delivers the message (497ms)
+    ✓  3 [desktop-chromium] › e2e/insecure-origin.pw.ts:84:1 › a host with neither WebCrypto method still sends distinct ids (798ms)
+    ✓  4 [desktop-chromium] › e2e/offline-send.pw.ts:42:1 › a prompt sent while the host has no session for the page is refused out loud (511ms)
+    ✓  5 [desktop-chromium] › e2e/offline-send.pw.ts:51:1 › a prompt sent after the socket drops says the message did not go (523ms)
+    ✓  6 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:93:1 › a dropped browser socket reconnects and restores the transcript from a server snapshot (1.8s)
+    ✓  7 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:136:1 › a resume the host cannot answer is refused visibly and leaves a usable session behind (1.4s)
+    ✓  8 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:176:1 › a real Web host restart reconnects, reports the lost session and becomes usable again (1.9s)
+    ... the same eight under mobile-chromium ...
+    16 passed (17.9s)
+
+Read section 10 before trusting the line above. That run is genuine but it predates a later edit to
+`e2e/offline-send.pw.ts`, and the mobile leg of one of these tests was never re-run after that edit.
+
+== 6. Mutation matrix: five cells, every one caught, sources restored byte-identically
+
+`{SCRATCH}/implementer/b26/mutate-web.py` puts back the exact spelling this batch removed, one cell at a time, and
+refuses to run unless both specs are green first. Verbatim:
+
+    baseline insecure-origin: 3 passed, red=none
+    baseline offline-send: 2 passed, red=none
+    W1 一次发送回到 crypto.randomUUID(): spec=insecure-origin exit=1 verdict=0 passed, red=['a page with no crypto.randomUUID still sends the prompt and settles the turn (5.4s)', 'a randomUUID that exists but throws still delivers the message (5.5s)', 'a host with neither WebCrypto method still sends distinct ids (5.5s)'] => CAUGHT
+    W2 randomUUID 抛错不再兜底: spec=insecure-origin exit=1 verdict=2 passed, red=['a randomUUID that exists but throws still delivers the message (5.4s)'] => CAUGHT
+    W3 submit 恢复静默早退: spec=offline-send exit=1 verdict=0 passed, red=['a prompt sent while the host has no session for the page is refused out loud (10.5s)', 'a prompt sent after the socket drops says the message did not go (5.7s)'] => CAUGHT
+    W4 send 恢复静默丢弃: spec=offline-send exit=1 verdict=1 passed, red=['a prompt sent after the socket drops says the message did not go (10.6s)'] => CAUGHT
+    W5 未发出的 prompt 仍先写进转录: spec=offline-send exit=1 verdict=0 passed, red=['a prompt sent while the host has no session for the page is refused out loud (5.7s)', 'a prompt sent after the socket drops says the message did not go (5.7s)'] => CAUGHT
+    restore=ok (sha256 verified for every touched file)
+    control insecure-origin after restore: exit=0 3 passed, red=none
+    control offline-send after restore: exit=0 2 passed, red=none
+    control green
+
+W2 and W4 each reddened exactly the one test that guards that behaviour, which is what makes them useful: a broader
+mutation that reddens everything proves only that the browser was open.
+
+The first pass of this matrix was discarded and re-run. `offline-send.pw.ts` was missing the `headerTab` import, so
+one of its tests was red for an unrelated reason and three cells were contaminated; `npm run typecheck` named it
+(`error TS2304: Cannot find name 'headerTab'`), and the driver now aborts on a non-green baseline so that mistake
+cannot be reported as evidence again.
+
+== 7. The same asymmetry, driven in a real browser rather than inferred
+
+Over the routable plain-HTTP origin, one boot call reverted to `crypto.randomUUID()`, then both origins, then the
+restore (`{SCRATCH}/implementer/web/mutate-uuid.py`). This is the measurement that shows why the defect survived: the
+identical mutation leaves the loopback origin completely green.
+
+    MUTATED http://172.16.2.253:5174
+      frames sent during boot: 0 ->  | submit frame reached the socket: NO | page/console errors:
+    MUTATED http://127.0.0.1:5174
+      frames sent during boot: 2 -> list_workspaces,create_session | submit frame reached the socket: yes id=9cf3a26a-1679-41b6-9e40-173a2862acc2 | page/console errors: none
+    baseline=b6aa1fe78c329373 restore=b6aa1fe78c329373 restore_ok=True
+    RESTORED http://172.16.2.253:5174
+      frames sent during boot: 2 -> list_workspaces,create_session | submit frame reached the socket: yes id=2cf2412a-9474-429d-b004-89f43ba263ef | page/console errors: none
+    RESTORED http://127.0.0.1:5174
+      frames sent during boot: 2 -> list_workspaces,create_session | submit frame reached the socket: yes id=b33b5f17-24bb-445b-9874-6c462ea7a022 | page/console errors: none
+
+And after the fix, the full user path on the origin that used to be broken -- a typed prompt reaching the host and the
+answer coming back, with no console error:
+
+    origin=http://172.16.2.253:5174 isSecureContext=false randomUUID=undefined getRandomValues=function
+    status after boot: "会话已创建"
+    frames sent during boot: 2 -> list_workspaces,create_session
+    ids look like uuid v4: true distinct=2/2
+    submit frame reached the socket: yes id=bf56fb98-5aa7-46f5-9003-44c574aeec65
+    prompt visible and turn settled: true
+    status after reply: "会话已创建"
+    transcript tail: "... 第 1 轮 只回复两个字：收到 演示响应：只回复两个字：收到 ..."
+    page/console errors: none
+
+`http://127.0.0.1:5174` and `https://172.16.2.253:5175` produce the same transcript, with `randomUUID=function` in
+both, confirming the preferred path did not regress.
+
+== 8. Running the Playwright config by hand needs the dev origin
+
+`playwright.config.ts` starts its own `chaos-web` and Vite. Pointed at ephemeral ports it produced ten failures whose
+only visible symptom was a badge stuck at 连接断开，正在重连: the host refused the WebSocket upgrade because the page
+origin was not in its allowlist. `dev_origins()` in `crates/codegen/xai-grok-web/src/lib.rs` is a static list plus one
+optional dynamic entry, and that entry is honoured only when `CHAOS_WEB_ALLOW_DYNAMIC_DEV_ORIGIN=1` **and** the binary
+is a debug build. `e2e-runner.mjs` supplies both; a direct `npx playwright test` must supply the same pair:
+
+    CHAOS_E2E_BACKEND_PORT=$BP CHAOS_E2E_UI_PORT=$UP \
+    CHAOS_E2E_ORIGIN="http://127.0.0.1:$UP" CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN=1 \
+    npx playwright test -c playwright.config.ts insecure-origin offline-send
+
+That is a harness fact, not a product defect: refusing an unknown origin is the behaviour the TLS/reverse-proxy
+contract asks for. It is recorded here because the failure it produces looks exactly like the product bug this log is
+about.
+
+== 9. A count corrected, in the same direction as the last two
+
+The row that opened this said 34 call sites, 31 in `main.tsx` and 3 in `session.ts`. Those are *line* counts. Measured
+by occurrence after the replacement, `main.tsx` held 32 (one line carried two calls) and `session.ts` 3, so the true
+total was 35. Third batch in a row in which a per-line grep under-counted the thing being counted; the durable
+correction is that the number quoted in prose must come from a command that counts occurrences.
+
+== 10. The "both viewports green" sentence was false on the committed tree
+
+Sections 5 and 6 above were written on the day the fix landed, and section 5 ends with a run in which all 16 tests
+passed under both viewports. On the committed tree, one of those 16 failed every single time under
+`mobile-chromium`:
+
+    ✘  2 [mobile-chromium] › e2e/offline-send.pw.ts:51:1 › a prompt sent after the socket drops says the message did not go (30.2s)
+            - <div class="panel-section">…</div> from <aside aria-label="工具面板" class="rightbar-col" data-shell-column="details">…</aside> subtree intercepts pointer events
+
+It was found by opening the committed build in a browser and using it. The host sweep had nothing to say -- the
+Playwright suite is not one of its 44 gates -- but the push would have been caught too: `.github/workflows/ci.yml`
+installs Chromium and runs `npm run test:e2e` with `CI: true`, which covers every project including
+`mobile-chromium`, and this failure is deterministic, so one retry would not have hidden it. The commit was never
+green; it was never run.
+
+Why the evidence above did not catch it. The second test in `offline-send.pw.ts` had one more step added after the run
+quoted in section 5: it clicks the 文件 tab, because a page opening the file tree asks the host for a directory
+listing, and that request travels over the same dead socket -- a second refused send worth asserting on. The step sits
+inside the second test, so the test's start line stays 51 and the run output still "matches". Every Playwright run
+after that step came from `{SCRATCH}/implementer/b26/mutate-web.py`, whose command is pinned to one project:
+
+    subprocess.run(['npx', 'playwright', 'test', '-c', 'playwright.config.ts', spec, '--project=desktop-chromium', '--workers=1'], ...)
+
+so the mobile leg of that test ran zero times between the edit and the commit. Nothing was wrong with the 16-passed
+transcript; the wrong thing was carrying its conclusion forward as if it described the file that got committed.
+
+Four independent reproductions of the pre-fix spec at 390x844 (`{SCRATCH}/implementer/b26/order-probe.sh`, which
+restores `git show 3a571407:apps/chaos-ui/e2e/offline-send.pw.ts` into the worktree, records both sha256 values and
+puts the fixed file back at the end -- `restore sha 26d246d0… ok=True`):
+
+    A: offline-send alone, 2 tests            -> 1 failed, 1 passed    (so it is not test ordering)
+    B: its real prefix in the full suite      -> 1 failed, 11 passed   (attachment-upload, approved-workspace-ops,
+                                                                        diff-undo, insecure-origin)
+    C: diff-undo + offline-send               -> 1 failed, 4 passed
+    D: approved-workspace-ops + offline-send  -> 1 failed, 2 passed
+
+The ordering hypothesis was worth testing and did not survive: the failure reproduces with the spec run by itself, on
+four different backend/UI port pairs. It is deterministic, which is also why it is not one of the intermittent
+failures filed separately.
+
+The geometry, measured with `elementFromPoint` at the centre of the submit button rather than reasoned about
+(`{SCRATCH}/implementer/b26/layout-probe.mjs`, three probes in one phone-sized page):
+
+    ### chat tab, details panel as shipped
+      panel:  x 0, y 0, w 0, h 0, position fixed,  zIndex 100, display none
+      hit:    tag BUTTON, cls btn-submit-circle, testid composer-submit, insidePanel false, isSubmit true
+    ### after opening the 文件 tab
+      panel:  x 0, y 52, w 390, h 844, position fixed, zIndex 100, display flex
+      hit:    tag BUTTON, cls file-item-btn, testid null, insidePanel true, isSubmit false
+    ### desktop width, 文件 tab still open
+      panel:  x 1020, y 0, w 420, h 1000, position static, zIndex auto, display flex
+      hit:    tag BUTTON, cls btn-submit-circle, testid composer-submit, insidePanel false, isSubmit true
+
+Under `@media (max-width: 768px)` the details column becomes a fixed full-viewport drawer at `z-index: 100`, so after
+that tab is opened the composer is behind it and the tap a finger could make lands on a file row. At desktop width the
+same tab is a static 420px column beside the composer and nothing is covered.
+
+The verdict is on the spec, not on the product. The phone shell offers two ways back to the composer -- the 对话 header
+tab and 关闭侧栏 -- and that is the interaction a person on a phone actually has; the drawer covering the composer is
+what a full-screen panel is for. Only the left sidebar drawer sets `inert` (`drawerCoversShell` in `main.tsx`), and
+that asymmetry is deliberate. So the helper now goes back to 对话 and asserts the drawer is gone before it types:
+
+    await headerTab(page, '💬 对话').click()
+    await expect(page.locator('[data-shell-column="details"]')).toBeHidden()
+    await page.getByTestId('composer-input').fill(marker)
+
+The hidden-assertion is part of the fix, not decoration: without it a future change that keeps the drawer open would
+turn this back into a 30-second timeout whose message names a panel instead of naming the intent.
+
+Re-verified after the fix, on the committed tree with only that spec changed:
+
+    offline-send alone, both viewports            4 passed (3.9s)
+    default config (playwright.config.ts)         85 passed, 6 skipped, exit 0
+    git config (playwright.git.config.ts)         14 passed, exit 0
+
+The git config matters here because `recordStatusBadge` / `statusSequence` moved into `e2e/support/shell.ts` in this
+batch, and six specs import that file -- `workspace-flow`, `phone-shell`, `reconnect-snapshot`, `offline-send`,
+`commit-message`, `commit-message-safe-mode` -- two of which only exist in the git config. All six ran inside the two
+lines above.
+
+== 11. What is deliberately not claimed
+
+* The sequenced id in the third tier is unique within one page load only. It exists so that a host with no WebCrypto
+  at all still gets distinguishable messages; it is not a substitute for a real UUID across tabs or processes.
+* `chaos-web` still binds loopback. Nothing here widens that; the public face remains whatever reverse proxy or dev
+  server the operator puts in front, and the operator still has to decide whether plain HTTP over a LAN is
+  acceptable. This batch makes the page honest about the environment it was given, not safe in it.
+* The self-signed TLS front on `0.0.0.0:5175` used to give the user a secure context during manual testing lives in
+  `{SCRATCH}`, is not wired into the repository, and does not substitute for the fix.
+* No gate was added for "never call `crypto.randomUUID()` directly". A grep gate over one browser API would be a
+  whack-a-mole rule; the durable protection is that the only id factory in `apps/chaos-ui` is capability-branched and
+  that its specs manufacture the missing API instead of trusting the origin.
+* Likewise, nothing now checks that a claim about a viewport was produced by a run that covered that viewport. The
+  driver that produced the stale claim in section 5 was a throwaway in `{SCRATCH}` and it pinned
+  `--project=desktop-chromium`; deleting it deletes the bug in it. What is durable is `npm run test:e2e`, which runs
+  both Playwright configs with all projects on free ports, and the rule of thumb recorded in `docs/ci-test-debt.md`:
+  a spec edited after a dual-viewport run has not passed the second viewport.

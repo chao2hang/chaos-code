@@ -1,3 +1,4 @@
+import { newMessageId } from './transport'
 import type { ClientMessage, DiffPreview, HostInfo, MarketplaceEntry, ServerMessage as ProtocolServerMessage, TimelineMessage } from './generated/protocol'
 
 export type Message = TimelineMessage
@@ -202,14 +203,14 @@ const commitSuggestionFailureCodes = ['session_not_found', 'workspace_unavailabl
 
 export function sessionLossRecoveryMessage(state: SessionState, message: ServerMessage): ClientMessage | null {
   if (message.type !== 'error' || !lostSessionErrorCodes.includes(message.code)) return null
-  return { type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: activeWorkspaceIdOrNull(state.activeWorkspaceId) }
+  return { type: 'create_session', client_msg_id: newMessageId(), workspace_id: activeWorkspaceIdOrNull(state.activeWorkspaceId) }
 }
 
 export function workspaceReconnectMessage(state: SessionState): ClientMessage {  const workspaceId = activeWorkspaceIdOrNull(state.activeWorkspaceId)
   if (state.sessionId && workspaceId) {
-    return { type: 'resume', client_msg_id: crypto.randomUUID(), session_id: state.sessionId, workspace_id: workspaceId }
+    return { type: 'resume', client_msg_id: newMessageId(), session_id: state.sessionId, workspace_id: workspaceId }
   }
-  return { type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId }
+  return { type: 'create_session', client_msg_id: newMessageId(), workspace_id: workspaceId }
 }
 
 export function applyServerMessage(state: SessionState, message: ServerMessage): SessionState {

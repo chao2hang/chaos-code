@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { applyServerMessage, appendLocalPrompt, commitDraftAcceptsSuggestion, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
-import { webSocketUrl } from './transport'
+import { dropReasonFor, newMessageId, webSocketUrl } from './transport'
 import type { ClientMessage } from './generated/protocol'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
 import { COMPACT_VIEWPORT_QUERY, defaultLayoutState, loadLayoutState, resolveFocusWrap, resolveSidebarVisibility, saveLayoutState, type LayoutState } from './layout'
@@ -229,15 +229,20 @@ function App() {
    * forgets a field the host needs is a button that does nothing, and the
    * compiler is a cheaper place to find that than a browser. */
   const send = useCallback((message: ClientMessage) => {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
-  }, [])
+    const socketForMessage = socket.current
+    const dropped = dropReasonFor(socketForMessage?.readyState)
+    if (!dropped) { socketForMessage?.send(JSON.stringify(message)); return }
+    // The host cannot answer a message it never got, so the connection badge has to stop
+    // claiming otherwise the moment a send is attempted and refused.
+    updateSession((current) => ({ ...current, status: dropped }))
+  }, [updateSession])
 
   // The spelling of `Mod` in the settings panel. Outside a browser there is no
   // platform to ask, and `formatShortcut` falls back to the non-Apple spelling.
   const platform = typeof navigator === 'undefined' ? '' : navigator.platform
 
   function fetchHostInfo() {
-    send({ type: 'get_host_info', client_msg_id: crypto.randomUUID() })
+    send({ type: 'get_host_info', client_msg_id: newMessageId() })
   }
 
   // Entering a tab is where its data is fetched, so the keyboard shortcut and the
@@ -288,7 +293,7 @@ function App() {
     socket.current = ws
     ws.onopen = () => {
       updateSession((current) => ({ ...current, status: '已连接' }))
-      send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
+      send({ type: 'list_workspaces', client_msg_id: newMessageId() })
       send(workspaceReconnectMessage(sessionStateRef.current))
     }
     ws.onmessage = (event) => {
@@ -306,7 +311,7 @@ function App() {
       }
       if (message.type === 'attachment_validated' && uploadSourceRef.current) {
         const sessionId = sessionStateRef.current.sessionId
-        if (sessionId) send(beginAttachmentMessage(crypto.randomUUID(), sessionId, uploadSourceRef.current))
+        if (sessionId) send(beginAttachmentMessage(newMessageId(), sessionId, uploadSourceRef.current))
       }
       if (message.type === 'attachment_started' && uploadSourceRef.current) pumpUpload(message.upload_id)
       if (fileChangeAffectsVisibleDirectory(sessionStateRef.current, message)) {
@@ -353,28 +358,35 @@ function App() {
     if (session.workspaces.some((workspace) => workspace.id === workspaceId)) return
     if (workspaceListAskedFor.current === workspaceId) return
     workspaceListAskedFor.current = workspaceId
-    send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
+    send({ type: 'list_workspaces', client_msg_id: newMessageId() })
   }, [session.sessionId, session.activeWorkspaceId, session.workspaces, send])
 
   function createWorkspace() {
     const name = window.prompt('工作区名称')?.trim()
     if (!name) return
     updateSession((current) => ({ ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在创建工作区' }))
-    send({ type: 'create_workspace', client_msg_id: crypto.randomUUID(), name })
+    send({ type: 'create_workspace', client_msg_id: newMessageId(), name })
   }
   function switchWorkspace(workspaceId: string) {
     updateSession((current) => selectWorkspaceSession(current, workspaceId))
-    send({ type: 'switch_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
+    send({ type: 'switch_workspace', client_msg_id: newMessageId(), workspace_id: workspaceId })
   }
   function archiveWorkspace(workspaceId: string) {
     updateSession((current) => current.activeWorkspaceId === workspaceId
       ? { ...current, messages: [], approval: undefined, question: undefined, busy: false, toolActivities: [], turnOutcomes: {}, status: '正在归档工作区' }
       : current)
-    send({ type: 'archive_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
+    send({ type: 'archive_workspace', client_msg_id: newMessageId(), workspace_id: workspaceId })
   }
 
   function submit() {
-    const value = prompt.trim(); if (!value || session.busy || !session.sessionId) return
+    const value = prompt.trim(); if (!value || session.busy) return
+    // The composer stays usable while the host is still bringing a session up and while a
+    // dropped socket is being retried. A prompt that never left the page is not added to the
+    // transcript, not filed into the prompt history and not cleared from the draft, so it can
+    // be sent again; the badge says why this attempt did not go.
+    if (!session.sessionId) { updateSession((current) => ({ ...current, status: '会话尚未就绪，消息未发送' })); return }
+    const refused = dropReasonFor(socket.current?.readyState)
+    if (refused) { updateSession((current) => ({ ...current, status: refused })); return }
     const timeline = timelineRef.current
     if (timeline) {
       timelineAnchorRef.current = {
@@ -386,11 +398,11 @@ function App() {
     setPromptHistory((current) => recordPrompt(current, value))
     setPrompt('')
     setSuggestions([])
-    send({ type: 'submit', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, prompt: value })
+    send({ type: 'submit', client_msg_id: newMessageId(), session_id: session.sessionId, prompt: value })
   }
-  function cancel() { if (session.sessionId) send({ type: 'cancel', client_msg_id: crypto.randomUUID(), session_id: session.sessionId }) }
-  function resolveApproval(approved: boolean) { if (!session.approval) return; send(approved ? { type: 'approve', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId } : { type: 'reject', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId, reason: '用户拒绝' }); updateSession((current) => ({ ...current, approval: undefined })) }
-  function answerQuestion(answer: string) { if (!session.question || !answer.trim()) return; send({ type: 'respond_question', client_msg_id: crypto.randomUUID(), question_id: session.question.questionId, answer }); updateSession((current) => ({ ...current, question: undefined })) }
+  function cancel() { if (session.sessionId) send({ type: 'cancel', client_msg_id: newMessageId(), session_id: session.sessionId }) }
+  function resolveApproval(approved: boolean) { if (!session.approval) return; send(approved ? { type: 'approve', client_msg_id: newMessageId(), request_id: session.approval.requestId } : { type: 'reject', client_msg_id: newMessageId(), request_id: session.approval.requestId, reason: '用户拒绝' }); updateSession((current) => ({ ...current, approval: undefined })) }
+  function answerQuestion(answer: string) { if (!session.question || !answer.trim()) return; send({ type: 'respond_question', client_msg_id: newMessageId(), question_id: session.question.questionId, answer }); updateSession((current) => ({ ...current, question: undefined })) }
 
   function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing) return
@@ -495,16 +507,16 @@ function App() {
   // IDE Actions
   function refreshFiles(path = dirPath) {
     updateSession((current) => ({ ...current, filesLoading: true, filesError: undefined, files: undefined }))
-    send({ type: 'list_files', client_msg_id: crypto.randomUUID(), relative_path: path })
+    send({ type: 'list_files', client_msg_id: newMessageId(), relative_path: path })
   }
   function openFile(path: string) {
     updateSession((current) => ({ ...current, fileLoading: true, fileError: undefined, activeFile: undefined }))
-    send({ type: 'read_file', client_msg_id: crypto.randomUUID(), relative_path: path })
+    send({ type: 'read_file', client_msg_id: newMessageId(), relative_path: path })
   }
   function searchFiles() {
     if (!fileSearchQuery.trim()) return
     updateSession((current) => ({ ...current, searchLoading: true, searchError: undefined, searchResults: undefined }))
-    send({ type: 'search_files', client_msg_id: crypto.randomUUID(), query: fileSearchQuery.trim() })
+    send({ type: 'search_files', client_msg_id: newMessageId(), query: fileSearchQuery.trim() })
   }
 
   // The transfer is driven by the host's own answers (see ws.onmessage): validate
@@ -520,21 +532,21 @@ function App() {
     const bytes = new Uint8Array(await file.arrayBuffer())
     uploadSourceRef.current = { filename: file.name, contentType: file.type, bytes, targetPath: uploadTargetPath.trim() || file.name }
     updateSession((current) => ({ ...current, upload: { filename: file.name, byteLen: bytes.length, sentBytes: 0, status: 'validating' }, status: '正在校验附件' }))
-    send(validateAttachmentMessage(crypto.randomUUID(), uploadSourceRef.current))
+    send(validateAttachmentMessage(newMessageId(), uploadSourceRef.current))
   }
 
   function pumpUpload(uploadId: string) {
     const source = uploadSourceRef.current
     if (!source) return
-    for (const message of attachmentChunkMessages(uploadId, source.bytes, () => crypto.randomUUID())) send(message)
-    send(finalizeAttachmentMessage(crypto.randomUUID(), uploadId, source.targetPath))
+    for (const message of attachmentChunkMessages(uploadId, source.bytes, () => newMessageId())) send(message)
+    send(finalizeAttachmentMessage(newMessageId(), uploadId, source.targetPath))
     uploadSourceRef.current = null
   }
 
   function cancelUpload() {
     const uploadId = sessionStateRef.current.upload?.uploadId
     uploadSourceRef.current = null
-    if (uploadId) { send(cancelAttachmentMessage(crypto.randomUUID(), uploadId)); return }
+    if (uploadId) { send(cancelAttachmentMessage(newMessageId(), uploadId)); return }
     updateSession((current) => ({ ...current, upload: undefined, status: '上传已取消' }))
   }
   function openDirectory(entry: string) {
@@ -557,7 +569,7 @@ function App() {
     setWorkspaceWriteState('pending')
     send({
       type: 'propose_file_write',
-      client_msg_id: crypto.randomUUID(),
+      client_msg_id: newMessageId(),
       session_id: session.sessionId,
       relative_path: session.activeFile.path,
       contents: editingFileContent,
@@ -566,13 +578,13 @@ function App() {
 
   function refreshGitStatus() {
     updateSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
-    send({ type: 'get_git_status', client_msg_id: crypto.randomUUID() })
+    send({ type: 'get_git_status', client_msg_id: newMessageId() })
   }
   function requestCommitSuggestion() {
     if (!session.sessionId) return
     commitDraftAtRequest.current = gitArg
     updateSession((current) => ({ ...current, commitSuggesting: true, commitSuggestionError: undefined }))
-    send({ type: 'suggest_commit_message', client_msg_id: crypto.randomUUID(), session_id: session.sessionId })
+    send({ type: 'suggest_commit_message', client_msg_id: newMessageId(), session_id: session.sessionId })
   }
   function applyCommitSuggestion() {
     const suggestion = session.commitSuggestion
@@ -595,7 +607,7 @@ function App() {
     updateSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
     send({
       type: 'propose_git_mutation',
-      client_msg_id: crypto.randomUUID(),
+      client_msg_id: newMessageId(),
       session_id: session.sessionId,
       operation: gitOp,
       argument: gitArg.trim(),
@@ -607,19 +619,19 @@ function App() {
     updateSession((current) => ({ ...current, terminalLoading: true, terminalError: undefined }))
     send({
       type: 'propose_terminal',
-      client_msg_id: crypto.randomUUID(),
+      client_msg_id: newMessageId(),
       session_id: session.sessionId,
       command: terminalCmd.trim(),
     })
   }
 
   function fetchSettings() {
-    send({ type: 'get_settings', client_msg_id: crypto.randomUUID() })
+    send({ type: 'get_settings', client_msg_id: newMessageId() })
   }
   function saveSettings() {
     send({
       type: 'update_settings',
-      client_msg_id: crypto.randomUUID(),
+      client_msg_id: newMessageId(),
       base_url: settingsBaseUrl.trim() || null,
       model: settingsModel.trim() || null,
     })
@@ -627,7 +639,7 @@ function App() {
   function validateProvider() {
     send({
       type: 'validate_provider',
-      client_msg_id: crypto.randomUUID(),
+      client_msg_id: newMessageId(),
       base_url: settingsBaseUrl.trim(),
       model: settingsModel.trim(),
     })
@@ -636,29 +648,29 @@ function App() {
     if (!tuiSessionId.trim()) return
     send({
       type: 'import_tui_session',
-      client_msg_id: crypto.randomUUID(),
+      client_msg_id: newMessageId(),
       root: tuiRoot.trim() || '.',
       session_id: tuiSessionId.trim(),
     })
   }
 
   function scanMarketplace() {
-    send({ type: 'scan_marketplace', client_msg_id: crypto.randomUUID(), root: marketplaceRoot.trim() || '.' })
+    send({ type: 'scan_marketplace', client_msg_id: newMessageId(), root: marketplaceRoot.trim() || '.' })
   }
   function previewDiff(proposalId: string) {
     if (!proposalId.trim() || !session.sessionId) return
     updateSession((current) => ({ ...current, diffError: undefined }))
-    send({ type: 'preview_diff', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, proposal_id: proposalId.trim() })
+    send({ type: 'preview_diff', client_msg_id: newMessageId(), session_id: session.sessionId, proposal_id: proposalId.trim() })
   }
   function acceptDiff(proposalId: string) {
     if (!session.sessionId) return
     updateSession((current) => ({ ...current, diffError: undefined }))
-    send({ type: 'accept_diff', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, proposal_id: proposalId, summary: '来自差异面板' })
+    send({ type: 'accept_diff', client_msg_id: newMessageId(), session_id: session.sessionId, proposal_id: proposalId, summary: '来自差异面板' })
   }
   function rollbackDiff(proposalId: string) {
     if (!session.sessionId) return
     updateSession((current) => ({ ...current, diffError: undefined }))
-    send({ type: 'rollback_diff', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, proposal_id: proposalId })
+    send({ type: 'rollback_diff', client_msg_id: newMessageId(), session_id: session.sessionId, proposal_id: proposalId })
   }
 
   const activeWorkspace = session.workspaces.find((w) => w.id === session.activeWorkspaceId)
