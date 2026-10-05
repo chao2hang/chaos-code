@@ -518,6 +518,7 @@ async fn register(
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
+    use xai_grok_test_support::recv_wait::{RecvBounded, within_option};
 
     use super::*;
     use crate::cpu_profile::{ControlError, ControlErrorCode, ProfilerEngine};
@@ -1059,7 +1060,7 @@ mod tests {
         client.send(test_payload.into()).unwrap();
 
         // Receive it on server side; the ID is now namespaced with the client ID
-        let payload = handle.acp_rx.recv().await.unwrap();
+        let payload = handle.acp_rx.recv_bounded("payload").await;
         // Verify it's valid JSON with a namespaced ID (format: "clientId|originalIdJson")
         let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(json["method"], "test");
@@ -1075,7 +1076,7 @@ mod tests {
         handle.response_tx.send(response).unwrap();
 
         // Receive on client; the ID should be restored to the original
-        let received = client.recv().await.unwrap();
+        let received = within_option(client.recv(), "received").await;
         let received_json: serde_json::Value = serde_json::from_str(&received).unwrap();
         assert_eq!(received_json["id"], 1); // Original ID restored
 

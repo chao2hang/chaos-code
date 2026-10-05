@@ -2410,6 +2410,7 @@ mod tests {
     use super::*;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use xai_grok_test_support::recv_wait::RecvBounded;
     use xai_tool_types::ToolDescription;
 
     #[derive(Debug)]
@@ -3125,7 +3126,7 @@ mod tests {
             serde_json::json!({ "tool_call_id": "call-1" }),
         );
         dispatch_inbound_hook_request(&inbound_hook_request_frame(&perm), slot);
-        let received = rx.recv().await.expect("handler invoked");
+        let received = rx.recv_bounded("handler invoked").await;
         assert_eq!(received.hook_id.as_deref(), Some("hook-7"));
     }
 

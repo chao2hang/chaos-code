@@ -20,6 +20,8 @@
 //! - [`spawn_counting_server`]: Connection-counting HTTP/1.1 server for wire/pooling tests
 //! - [`uds_proxy::UdsProxy`]: Frame-aware fault-injection proxy for leader IPC sockets (unix)
 //! - [`ResourceSnapshot`]: RSS/threads/fds sampling for soak tests
+//! - [`recv_wait::RecvBounded`]: bounded `recv()` for tests, so a wait for an event that
+//!   never arrives fails the test instead of running the CI job out
 /// Multiply a harness timeout by `GROK_TEST_TIMEOUT_SCALE` (positive integer, default 1).
 /// CI lanes on shared runner pools raise it so pool load slows tests instead of failing them (see the Grok Build merge CI workflow).
 pub fn scaled(base: std::time::Duration) -> std::time::Duration {
@@ -39,6 +41,7 @@ mod inference_override;
 pub mod leader;
 pub mod mock_server;
 pub mod process;
+pub mod recv_wait;
 pub mod resources;
 pub mod sandbox;
 pub mod scripted;

@@ -6,6 +6,7 @@ use serial_test::serial;
 use tokio::sync::{mpsc, oneshot};
 use xai_acp_lib::{AcpAgentGatewaySender, AcpClientMessage};
 use xai_grok_paths::AbsPathBuf;
+use xai_grok_test_support::recv_wait::RecvBounded;
 use xai_grok_workspace::permission::types::{
     PatternMode, PermissionConfig, PermissionRule, RuleAction, ToolFilter,
 };
@@ -81,9 +82,8 @@ fn fake_gateway() -> (FakeGateway, tokio::task::JoinHandle<()>) {
         while let Some(msg) = gw_rx.recv().await {
             if let AcpClientMessage::RequestPermission(args) = msg {
                 let (option_id, meta) = script_rx
-                    .recv()
-                    .await
-                    .expect("test ran out of scripted responses");
+                    .recv_bounded("test ran out of scripted responses")
+                    .await;
                 let mut response = acp::RequestPermissionResponse::new(
                     acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
                         acp::PermissionOptionId::new(Arc::from(option_id.as_str())),

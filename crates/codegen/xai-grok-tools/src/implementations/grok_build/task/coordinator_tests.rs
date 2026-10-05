@@ -9,6 +9,7 @@ use crate::implementations::grok_build::task::types::{
     SubagentSnapshotStatus, SubagentWaitPromptDrainedRequest,
 };
 use tokio_util::sync::CancellationToken;
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 #[derive(Clone)]
 struct AdmissionGate {
@@ -374,11 +375,7 @@ async fn active_message_on_owned_pending_admits_after_promotion() {
     let (registered, _spawn) =
         spawn_noting_registration(backend.clone(), request("starting", true));
     registered.await.expect("background registration");
-    harness
-        .requests
-        .recv()
-        .await
-        .expect("runner received child");
+    harness.requests.recv_bounded("runner received child").await;
 
     let send = tokio::spawn({
         let backend = backend.clone();
@@ -451,7 +448,7 @@ async fn background_spawn_acks_when_pending_before_session_start() {
     let (registered, _spawn) =
         spawn_noting_registration(harness.backend.clone(), request("bg-start", true));
     registered.await.expect("background registration");
-    harness.requests.recv().await.expect("runner saw the child");
+    harness.requests.recv_bounded("runner saw the child").await;
     let snapshot = harness
         .backend
         .query("bg-start", false, None)
@@ -465,7 +462,7 @@ async fn background_spawn_acks_when_pending_before_session_start() {
     let _ = harness.start.send(());
     assert_eq!(harness.started.recv().await.as_deref(), Some("bg-start"));
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.backgrounded && disposition.should_surface);
     harness.actor.abort();
 }
@@ -482,7 +479,7 @@ async fn foreground_completion_is_delivered_inline() {
 
     let result = spawn.await.unwrap().unwrap();
     assert!(result.success);
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.foreground_delivered);
     assert!(!disposition.should_surface);
     harness.actor.abort();
@@ -522,7 +519,7 @@ async fn foreground_deadline_hands_off_without_stopping_child() {
     let running = harness.backend.query("slow", false, None).await.unwrap();
     assert!(running.is_running());
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.backgrounded);
     assert!(disposition.should_surface);
     harness.actor.abort();
@@ -544,7 +541,7 @@ async fn live_blocking_waiter_suppresses_async_surface() {
     let _ = harness.finish.send(());
 
     assert!(wait.await.unwrap().unwrap().status.is_terminal());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.waiter_delivered);
     assert!(!disposition.should_surface);
     let started = spawn.await.unwrap().unwrap();
@@ -568,7 +565,7 @@ async fn timed_out_waiter_does_not_suppress_later_completion() {
     assert!(snapshot.is_running());
 
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(!disposition.waiter_delivered);
     assert!(disposition.should_surface);
     let started = spawn.await.unwrap().unwrap();
@@ -608,7 +605,7 @@ async fn surviving_waiter_suppresses_after_peer_times_out() {
 
     let _ = harness.finish.send(());
     assert!(long.await.unwrap().status.is_terminal());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.waiter_delivered);
     assert!(!disposition.should_surface);
     let started = spawn.await.unwrap().unwrap();
@@ -633,7 +630,7 @@ async fn dropped_waiter_does_not_suppress_completion() {
     let _ = wait.await;
 
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(!disposition.waiter_delivered);
     assert!(disposition.should_surface);
     let started = spawn.await.unwrap().unwrap();
@@ -663,7 +660,7 @@ async fn pending_cancel_delivers_waiter_once() {
         snapshot.status,
         SubagentSnapshotStatus::Cancelled { .. }
     ));
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.waiter_delivered);
     assert!(disposition.explicitly_killed);
     assert!(!disposition.should_surface);
@@ -691,7 +688,7 @@ async fn caller_drop_during_initialization_does_not_drop_owned_run() {
     let _ = harness.start.send(());
     tokio::task::yield_now().await;
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(
         disposition.should_surface,
         "dropped foreground receiver becomes handle-only"
@@ -835,9 +832,8 @@ async fn drain_resolves_when_queued_spawn_is_cancelled() {
     });
     harness
         .requests
-        .recv()
-        .await
-        .expect("filler occupies the slot");
+        .recv_bounded("filler occupies the slot")
+        .await;
 
     let queued = tokio::spawn({
         let backend = harness.backend.clone();
@@ -878,7 +874,7 @@ async fn drain_resolves_when_pending_child_starts_background() {
         let backend = harness.backend.clone();
         async move { backend.spawn(blocking, None).await }
     });
-    harness.requests.recv().await.expect("bg-def admitted");
+    harness.requests.recv_bounded("bg-def admitted").await;
     assert_eq!(
         outstanding(&harness.backend, "prompt").await.live_ids,
         vec!["bg-def".to_owned()],
@@ -955,9 +951,8 @@ async fn drain_waits_for_deferred_terminalization_to_finalize() {
         }
     });
     admission_entered
-        .recv()
-        .await
-        .expect("child admitted the active message");
+        .recv_bounded("child admitted the active message")
+        .await;
 
     let _ = harness.finish.send(());
     assert_eq!(
@@ -1053,7 +1048,7 @@ async fn abandoned_foreground_caller_clears_outstanding() {
     assert!(running.is_running(), "child keeps running after ParentGone");
 
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.backgrounded);
     assert!(disposition.should_surface);
     harness.actor.abort();
@@ -1113,7 +1108,7 @@ async fn external_cancel_token_cancels_live_child() {
         .unwrap()
         .unwrap();
     assert!(result.cancelled);
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(!disposition.explicitly_killed);
     harness.actor.abort();
 }
@@ -1321,8 +1316,18 @@ async fn teardown_session_children_spares_other_sessions() {
     // it never receives it and stays pending.
     let _ = harness.start.send(());
     let mut started = std::collections::HashSet::new();
-    started.insert(harness.started.recv().await.unwrap());
-    started.insert(harness.started.recv().await.unwrap());
+    started.insert(
+        harness
+            .started
+            .recv_bounded("teardown_session_children_spares_other_sessions")
+            .await,
+    );
+    started.insert(
+        harness
+            .started
+            .recv_bounded("teardown_session_children_spares_other_sessions")
+            .await,
+    );
     assert!(started.contains("keep-active") && started.contains("kill-active"));
 
     let kill_pending = spawn_session_child(&mut harness, "kill-pending", "parent").await;
@@ -1789,7 +1794,7 @@ async fn cancel_parent_session_does_not_touch_foreign_session() {
     ));
     // Foreign child still running — finish it successfully.
     let _ = harness.finish.send(());
-    let disposition = harness.completions.recv().await.unwrap();
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.should_surface);
     let result = foreign_spawn.await.unwrap().unwrap();
     assert!(result.success, "{result:?}");
@@ -1924,9 +1929,8 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
     });
     let observed = harness
         .requests
-        .recv()
-        .await
-        .expect("nested active observed");
+        .recv_bounded("nested active observed")
+        .await;
     assert_eq!(observed.parent_session_id, "parent");
     assert_eq!(
         observed.owner.workflow_run_id(),
@@ -1947,9 +1951,8 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
     });
     let observed_pending = harness
         .requests
-        .recv()
-        .await
-        .expect("nested pending observed");
+        .recv_bounded("nested pending observed")
+        .await;
     assert_eq!(observed_pending.owner.workflow_run_id(), Some("run-1"));
 
     assert!(matches!(
@@ -1989,7 +1992,7 @@ async fn loop_tracking_covers_pending_active_and_nested_reparenting() {
         let backend = harness.backend.clone();
         async move { backend.spawn(outer_request, None).await }
     });
-    let observed_outer = harness.requests.recv().await.unwrap();
+    let observed_outer = harness.requests.recv_bounded("observed_outer").await;
     assert_eq!(observed_outer.parent_session_id, "parent");
     assert!(loop_unit_active(&harness.backend, "loop-task").await);
 
@@ -2006,7 +2009,7 @@ async fn loop_tracking_covers_pending_active_and_nested_reparenting() {
     nested_request.parent_session_id = "outer".to_owned();
     let (nested_registered, _nested_spawn) =
         spawn_noting_registration(harness.backend.clone(), nested_request);
-    let observed_nested = harness.requests.recv().await.unwrap();
+    let observed_nested = harness.requests.recv_bounded("observed_nested").await;
     assert_eq!(observed_nested.parent_session_id, "parent");
     assert!(!observed_nested.surface_completion);
     assert_eq!(
@@ -2478,7 +2481,7 @@ async fn spawns_past_the_concurrent_limit_queue_until_a_slot_frees() {
         .collect();
 
     for _ in 0..2 {
-        harness.requests.recv().await.expect("child started");
+        harness.requests.recv_bounded("child started").await;
     }
     await_queued(&harness.backend, 2).await;
     assert!(
@@ -2498,7 +2501,7 @@ async fn spawns_past_the_concurrent_limit_queue_until_a_slot_frees() {
 
     let _ = harness.finish.send(());
     for _ in 0..2 {
-        harness.requests.recv().await.expect("queued child started");
+        harness.requests.recv_bounded("queued child started").await;
     }
     let _ = harness.finish.send(());
     for _ in 0..4 {
@@ -2510,7 +2513,7 @@ async fn spawns_past_the_concurrent_limit_queue_until_a_slot_frees() {
     }
     // The launch-time concurrency count never exceeds the limit.
     for _ in 0..4 {
-        let (id, _, session_running) = harness.queue_waits.recv().await.expect("ran");
+        let (id, _, session_running) = harness.queue_waits.recv_bounded("ran").await;
         assert!(
             (1..=2).contains(&session_running),
             "{id} launched with session_running={session_running}, limit is 2"
@@ -2526,7 +2529,7 @@ async fn fail_mode_rejects_at_the_limit_and_recovers_when_a_slot_frees() {
         let backend = harness.backend.clone();
         async move { backend.spawn(request("held", true), None).await }
     });
-    harness.requests.recv().await.expect("first child started");
+    harness.requests.recv_bounded("first child started").await;
 
     let rejected = harness
         .backend
@@ -2545,7 +2548,7 @@ async fn fail_mode_rejects_at_the_limit_and_recovers_when_a_slot_frees() {
     );
     // The rejection surfaces like any failed background child and leaves a
     // failed record, so the id the model holds does not vanish.
-    let disposition = harness.completions.recv().await.expect("disposition");
+    let disposition = harness.completions.recv_bounded("disposition").await;
     assert!(disposition.should_surface);
     let snapshot = harness
         .backend
@@ -2569,9 +2572,8 @@ async fn fail_mode_rejects_at_the_limit_and_recovers_when_a_slot_frees() {
     });
     harness
         .requests
-        .recv()
-        .await
-        .expect("spawning succeeds again once a slot frees");
+        .recv_bounded("spawning succeeds again once a slot frees")
+        .await;
     let _ = harness.finish.send(());
     let _ = harness.completions.recv().await;
     let next = next.await.expect("join").expect("spawn round-trips");
@@ -2587,7 +2589,7 @@ async fn limit_notices_report_running_count_queue_depth_and_origin() {
         let backend = harness.backend.clone();
         async move { backend.spawn(request("held", true), None).await }
     });
-    harness.requests.recv().await.expect("first child started");
+    harness.requests.recv_bounded("first child started").await;
     assert!(
         notices.try_recv().is_err(),
         "an admitted spawn must not notify the sink"
@@ -2598,7 +2600,7 @@ async fn limit_notices_report_running_count_queue_depth_and_origin() {
         async move { backend.spawn(request("parked", true), None).await }
     });
     await_queued(&harness.backend, 1).await;
-    let notice = notices.recv().await.expect("queued notice");
+    let notice = notices.recv_bounded("queued notice").await;
     assert_eq!(notice.parent_session_id, "parent");
     assert_eq!(
         notice.decision,
@@ -2618,14 +2620,14 @@ async fn limit_notices_report_running_count_queue_depth_and_origin() {
         async move { backend.spawn(loop_request, None).await }
     });
     await_queued(&harness.backend, 2).await;
-    let notice = notices.recv().await.expect("loop-fire notice");
+    let notice = notices.recv_bounded("loop-fire notice").await;
     assert_eq!((notice.running, notice.queue_depth), (1, 2));
     assert_eq!(notice.origin, LimitedSpawnOrigin::SchedulerLoop);
 
     let _ = harness.finish.send(());
-    harness.requests.recv().await.expect("parked started");
+    harness.requests.recv_bounded("parked started").await;
     let _ = harness.finish.send(());
-    harness.requests.recv().await.expect("loop-fire started");
+    harness.requests.recv_bounded("loop-fire started").await;
     let _ = harness.finish.send(());
     for spawn in [held, parked, looped] {
         assert!(spawn.await.expect("join").expect("round-trips").success);
@@ -2641,7 +2643,7 @@ async fn a_rejected_spawn_notice_excludes_itself_from_queue_depth() {
         let backend = harness.backend.clone();
         async move { backend.spawn(request("held", true), None).await }
     });
-    harness.requests.recv().await.expect("first child started");
+    harness.requests.recv_bounded("first child started").await;
 
     let rejected = harness
         .backend
@@ -2649,7 +2651,7 @@ async fn a_rejected_spawn_notice_excludes_itself_from_queue_depth() {
         .await
         .expect("spawn round-trips");
     assert!(!rejected.success);
-    let notice = notices.recv().await.expect("rejected notice");
+    let notice = notices.recv_bounded("rejected notice").await;
     assert_eq!(
         notice.decision,
         SubagentLimitDecision::RejectedAtConcurrentLimit { limit: 1 }
@@ -2767,7 +2769,7 @@ async fn a_spawn_cancelled_while_queued_never_starts() {
         let backend = harness.backend.clone();
         async move { backend.spawn(request("held", true), None).await }
     });
-    harness.requests.recv().await.expect("first child started");
+    harness.requests.recv_bounded("first child started").await;
 
     let mut queued = request("queued", true);
     let cancel = CancellationToken::new();
@@ -2939,9 +2941,9 @@ async fn a_dequeued_spawn_keeps_spending_its_enqueue_await_budget() {
     let _ = harness.finish.send(());
     assert_eq!(harness.started.recv().await.as_deref(), Some("parked"));
 
-    let (id, queued_for, _) = harness.queue_waits.recv().await.expect("held ran");
+    let (id, queued_for, _) = harness.queue_waits.recv_bounded("held ran").await;
     assert_eq!((id.as_str(), queued_for), ("held", None));
-    let (id, queued_for, _) = harness.queue_waits.recv().await.expect("parked ran");
+    let (id, queued_for, _) = harness.queue_waits.recv_bounded("parked ran").await;
     assert_eq!(id, "parked");
     let queued_for = queued_for.expect("a dequeued spawn reports its time parked");
     assert!(
@@ -3113,7 +3115,7 @@ async fn workflow_spawns_bypass_the_session_concurrent_limit() {
         let backend = harness.backend.clone();
         async move { backend.spawn(request("task-child", true), None).await }
     });
-    harness.requests.recv().await.expect("task child started");
+    harness.requests.recv_bounded("task child started").await;
 
     let mut workflow = request("wf-child", true);
     workflow.owner = SubagentOwner::workflow("run-1");
@@ -3123,9 +3125,8 @@ async fn workflow_spawns_bypass_the_session_concurrent_limit() {
     });
     harness
         .requests
-        .recv()
-        .await
-        .expect("workflow child started with the session at the concurrent limit");
+        .recv_bounded("workflow child started with the session at the concurrent limit")
+        .await;
 
     let _ = harness.finish.send(());
     assert!(

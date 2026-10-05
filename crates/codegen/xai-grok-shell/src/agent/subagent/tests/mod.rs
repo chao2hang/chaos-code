@@ -23,6 +23,7 @@ use xai_grok_subagent_resolution::resolve_effective_overrides;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildCompletion, CompletionDisposition,
 };
+use xai_grok_test_support::recv_wait::{within_option_budget, RecvBounded};
 #[test]
 fn canonical_total_tokens_does_not_double_count_reasoning() {
     let totals = xai_chat_state::UsageTotals {
@@ -377,7 +378,15 @@ async fn usage_not_applied_mark_falls_back_to_coordinator_when_parent_is_starved
         Some("prompt-1".to_string()),
     );
     let coordinator = async {
-        let event = event_rx.recv().await.expect("coordinator fallback event");
+        // The clock is paused, so tokio jumps to the shortest armed timer: this bound
+        // has to sit above the PARENT_ACK_TIMEOUT the mark waits on before it falls
+        // back, or it fires first and blames production for the test's own budget.
+        let event = within_option_budget(
+            10 * PARENT_ACK_TIMEOUT,
+            event_rx.recv(),
+            "coordinator fallback event",
+        )
+        .await;
         let SubagentEvent::MarkUsageNotApplied(req) = event else {
             panic!("expected MarkUsageNotApplied");
         };
@@ -407,7 +416,7 @@ async fn usage_not_applied_mark_skips_coordinator_when_parent_acks() {
         Some("prompt-1".to_string()),
     );
     let parent = async {
-        match parent_cmd_rx.recv().await.expect("parent mark command") {
+        match parent_cmd_rx.recv_bounded("parent mark command").await {
             SessionCommand::MarkSubagentUsageNotApplied { respond_to, .. } => {
                 let _ = respond_to.send(());
             }
@@ -432,7 +441,7 @@ async fn usage_not_applied_mark_goes_straight_to_coordinator_without_parent() {
         Some("prompt-1".to_string()),
     );
     let coordinator = async {
-        let event = event_rx.recv().await.expect("coordinator fallback event");
+        let event = event_rx.recv_bounded("coordinator fallback event").await;
         let SubagentEvent::MarkUsageNotApplied(req) = event else {
             panic!("expected MarkUsageNotApplied");
         };

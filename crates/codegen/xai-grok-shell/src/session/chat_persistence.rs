@@ -94,6 +94,7 @@ impl ChatPersistence for ChannelChatPersistence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[tokio::test]
     async fn channel_persistence_sends_chat_messages() {
@@ -101,7 +102,7 @@ mod tests {
         let mut persistence = ChannelChatPersistence::new(tx);
         let item = ConversationItem::user("test");
         persistence.persist_message(&item);
-        let msg = rx.recv().await.unwrap();
+        let msg = rx.recv_bounded("msg").await;
         assert!(matches!(msg, PersistenceMsg::Chat(_)));
     }
 
@@ -111,7 +112,7 @@ mod tests {
         let mut persistence = ChannelChatPersistence::new(tx);
         let item = ConversationItem::working_directory_switch("moved", 1);
         let ack = persistence.persist_working_directory_switch_and_ack(&item);
-        let msg = rx.recv().await.unwrap();
+        let msg = rx.recv_bounded("msg").await;
         let PersistenceMsg::AppendCwdSwitchAndAck {
             item: persisted,
             respond_to,
@@ -135,7 +136,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut persistence = ChannelChatPersistence::new(tx);
         persistence.replace_history(&[ConversationItem::system("compacted")]);
-        let msg = rx.recv().await.unwrap();
+        let msg = rx.recv_bounded("msg").await;
         assert!(matches!(msg, PersistenceMsg::ReplaceChatHistory(_)));
     }
 
@@ -144,7 +145,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut persistence = ChannelChatPersistence::new(tx);
         let ack = persistence.replace_history_for_strip_and_ack(&[ConversationItem::system("s")]);
-        let msg = rx.recv().await.unwrap();
+        let msg = rx.recv_bounded("msg").await;
         let PersistenceMsg::ReplaceChatHistoryForStripAndAck { respond_to, .. } = msg else {
             panic!("expected acked strip rewrite, got {msg:?}");
         };
@@ -169,7 +170,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut persistence = ChannelChatPersistence::new(tx);
         persistence.flush();
-        let msg = rx.recv().await.unwrap();
+        let msg = rx.recv_bounded("msg").await;
         assert!(matches!(msg, PersistenceMsg::Flush));
     }
 
@@ -197,7 +198,7 @@ mod tests {
 
         persistence.persist_selective_compaction(&state);
 
-        match rx.recv().await.expect("a message must reach the actor") {
+        match rx.recv_bounded("a message must reach the actor").await {
             PersistenceMsg::SelectiveCompaction(received) => {
                 assert_eq!(&received, &state, "the state must arrive intact");
             }

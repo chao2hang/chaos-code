@@ -1,5 +1,6 @@
 use super::*;
 use crate::notification::ScheduledTaskRemovedReason;
+use xai_grok_test_support::recv_wait::{RecvBounded, within_option};
 
 fn removed(task_id: &str) -> ScheduledTaskRemoved {
     ScheduledTaskRemoved {
@@ -36,13 +37,13 @@ async fn acknowledged_removal_stays_in_fifo() {
     let batch = handle.send_scheduled_task_removed_acknowledged(removed("deleted"));
     handle.send_scheduled_task_created(created("after"));
 
-    let first = receiver.recv().await.unwrap();
+    let first = receiver.recv_bounded("first").await;
     assert_eq!(task_id(&first.notification), "before");
     assert!(first.acknowledgement.is_none());
-    let second = receiver.recv().await.unwrap();
+    let second = receiver.recv_bounded("second").await;
     assert_eq!(task_id(&second.notification), "deleted");
     second.acknowledgement.unwrap().send(Ok(())).unwrap();
-    let third = receiver.recv().await.unwrap();
+    let third = receiver.recv_bounded("third").await;
     assert_eq!(task_id(&third.notification), "after");
     assert!(third.acknowledgement.is_none());
 
@@ -61,19 +62,40 @@ async fn mixed_fanout_attempts_every_target_before_reporting_closed_dispatch() {
     let batch = handle.send_scheduled_task_removed_acknowledged(removed("deleted"));
     handle.send_scheduled_task_created(created("after"));
 
-    assert_eq!(task_id(&plain_rx.recv().await.unwrap()), "before");
-    assert_eq!(task_id(&plain_rx.recv().await.unwrap()), "deleted");
-    assert_eq!(task_id(&plain_rx.recv().await.unwrap()), "after");
-    let durable_before = durable_rx.recv().await.unwrap();
+    assert_eq!(
+        task_id(
+            &plain_rx
+                .recv_bounded("mixed_fanout_attempts_every_target_before_reporting_closed_dispatch")
+                .await
+        ),
+        "before"
+    );
+    assert_eq!(
+        task_id(
+            &plain_rx
+                .recv_bounded("mixed_fanout_attempts_every_target_before_reporting_closed_dispatch")
+                .await
+        ),
+        "deleted"
+    );
+    assert_eq!(
+        task_id(
+            &plain_rx
+                .recv_bounded("mixed_fanout_attempts_every_target_before_reporting_closed_dispatch")
+                .await
+        ),
+        "after"
+    );
+    let durable_before = durable_rx.recv_bounded("durable_before").await;
     assert_eq!(task_id(&durable_before.notification), "before");
-    let durable_removed = durable_rx.recv().await.unwrap();
+    let durable_removed = durable_rx.recv_bounded("durable_removed").await;
     assert_eq!(task_id(&durable_removed.notification), "deleted");
     durable_removed
         .acknowledgement
         .unwrap()
         .send(Ok(()))
         .unwrap();
-    let durable_after = durable_rx.recv().await.unwrap();
+    let durable_after = durable_rx.recv_bounded("durable_after").await;
     assert_eq!(task_id(&durable_after.notification), "after");
 
     assert_eq!(
@@ -89,11 +111,15 @@ async fn batch_distinguishes_dropped_and_rejected_acknowledgements() {
     let handle = ToolNotificationHandle::tee(vec![dropped, rejected]);
     let batch = handle.send_scheduled_task_removed_acknowledged(removed("deleted"));
 
-    drop(dropped_rx.recv().await.unwrap().acknowledgement);
+    drop(
+        dropped_rx
+            .recv_bounded("batch_distinguishes_dropped_and_rejected_acknowledgements")
+            .await
+            .acknowledgement,
+    );
     rejected_rx
-        .recv()
+        .recv_bounded("batch_distinguishes_dropped_and_rejected_acknowledgements")
         .await
-        .unwrap()
         .acknowledgement
         .unwrap()
         .send(Err("rejected".into()))
@@ -115,7 +141,14 @@ async fn bounded_channel_drops_newest_when_full() {
     handle.send_scheduled_task_created(created("kept"));
     handle.send_scheduled_task_created(created("dropped"));
 
-    assert_eq!(task_id(&receiver.recv().await.unwrap()), "kept");
+    assert_eq!(
+        task_id(
+            &receiver
+                .recv_bounded("bounded_channel_drops_newest_when_full")
+                .await
+        ),
+        "kept"
+    );
     assert!(receiver.try_recv().is_err());
 }
 
@@ -125,5 +158,14 @@ async fn capped_channel_evicts_lossy_event_for_terminal_event() {
     handle.send_scheduled_task_created(created("lossy"));
     handle.send(ToolNotification::ScheduledTaskRemoved(removed("terminal")));
 
-    assert_eq!(task_id(&receiver.recv().await.unwrap()), "terminal");
+    assert_eq!(
+        task_id(
+            &within_option(
+                receiver.recv(),
+                "capped_channel_evicts_lossy_event_for_terminal_event",
+            )
+            .await
+        ),
+        "terminal"
+    );
 }

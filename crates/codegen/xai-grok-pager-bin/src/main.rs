@@ -2735,6 +2735,7 @@ async fn signal_leaders_to_relaunch(installed_version: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_test_support::recv_wait::RecvBounded;
     #[test]
     fn embedded_agent_commands_heal_managed_policy_before_sandboxing() {
         for args in [
@@ -3332,11 +3333,11 @@ mod tests {
         let (leader_tx, mut leader_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string())
                 .unwrap();
-            let load = leader_rx.recv().await.unwrap();
+            let load = leader_rx.recv_bounded("load").await;
             assert!(load.contains("session-A"), "unexpected replay: {load}");
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":2,"result":{}}"#.to_string())
@@ -3412,16 +3413,16 @@ mod tests {
         let (leader_tx, mut leader_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string())
                 .unwrap();
-            let load1 = leader_rx.recv().await.unwrap();
+            let load1 = leader_rx.recv_bounded("load1").await;
             assert!(load1.contains("sess-1"), "expected sess-1 first: {load1}");
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":2,"result":{}}"#.to_string())
                 .unwrap();
-            let load2 = leader_rx.recv().await.unwrap();
+            let load2 = leader_rx.recv_bounded("load2").await;
             assert!(load2.contains("sess-2"), "expected sess-2 second: {load2}");
             let load2_json: serde_json::Value = serde_json::from_str(&load2).unwrap();
             assert_eq!(load2_json["id"].as_str(), Some(REPLAY_LOAD_REQUEST_ID));
@@ -3462,18 +3463,18 @@ mod tests {
         let (leader_tx, mut leader_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string())
                 .unwrap();
-            let _bad = leader_rx.recv().await.unwrap();
+            let _bad = leader_rx.recv_bounded("bad").await;
             response_tx
                 .send(
                     r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Invalid params","data":"unknown session id"}}"#
                         .to_string(),
                 )
                 .unwrap();
-            let good = leader_rx.recv().await.unwrap();
+            let good = leader_rx.recv_bounded("good").await;
             assert!(good.contains("sess-good"));
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":3,"result":{}}"#.to_string())
@@ -3518,11 +3519,11 @@ mod tests {
         );
         let state = state_mutex.lock().unwrap().clone();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string())
                 .unwrap();
-            let _load = leader_rx.recv().await.unwrap();
+            let _load = leader_rx.recv_bounded("load").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1"}}"#.to_string())
                 .unwrap();
@@ -3561,7 +3562,7 @@ mod tests {
         );
         let state = state_mutex.lock().unwrap().clone();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(
                     r#"{"jsonrpc":"2.0","method":"x.ai/leader/version_mismatch","params":{}}"#
@@ -3571,7 +3572,7 @@ mod tests {
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":7,"result":{}}"#.to_string())
                 .unwrap();
-            let _load = leader_rx.recv().await.unwrap();
+            let _load = leader_rx.recv_bounded("load").await;
             for i in 0..3 {
                 response_tx
                     .send(
@@ -3625,11 +3626,11 @@ mod tests {
         );
         let state = state_mutex.lock().unwrap().clone();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string())
                 .unwrap();
-            let _load = leader_rx.recv().await.unwrap();
+            let _load = leader_rx.recv_bounded("load").await;
             response_tx
                 .send(
                     r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Invalid params","data":"unknown session id"}}"#
@@ -3664,11 +3665,11 @@ mod tests {
         );
         let state = state_mutex.lock().unwrap().clone();
         let responder = tokio::spawn(async move {
-            let _init = leader_rx.recv().await.unwrap();
+            let _init = leader_rx.recv_bounded("init").await;
             response_tx
                 .send(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string())
                 .unwrap();
-            let load = leader_rx.recv().await.unwrap();
+            let load = leader_rx.recv_bounded("load").await;
             let load_json: serde_json::Value = serde_json::from_str(&load).unwrap();
             assert_eq!(
                 load_json["id"].as_str(),

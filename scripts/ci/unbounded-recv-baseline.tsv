@@ -1,0 +1,5 @@
+# unbounded `.recv().await.expect(...)`/`.unwrap()` waits in test code, per crate,
+# from scripts/ci/check-unbounded-recv.py. Lower the number when a batch converts
+# more sites; the guard refuses a crate that sits under its own row as well, so a
+# converted site cannot leave the ceiling behind.
+TOTAL	0

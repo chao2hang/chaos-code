@@ -31,23 +31,40 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 `--check-baseline scripts/ci/ignored-tests-baseline.tsv`; its source-by-source
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
-`scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 3/17
-(unchecked/partial), summing to 137. Two unchecked rows were opened on
+`scripts/ci/classify-open-todos.py` after the next edit. The per-group counts (unchecked/partial)
+live in the table further down this file and nowhere else: `--check-doc` verifies that
+table, and this paragraph used to carry its own copy of the same numbers, which drifted once
+(it read maintenance 3/17 while the checked table said 2/18, with nothing red anywhere).
+Four unchecked rows were opened on
 2026-10-05. The first came with the poisoned-lock consolidation: the 28 call sites that
 treated poisoning as a panic now recover through one shared trait, and
 the mutation matrix that proved the change named 21 sites whose coverage
 did not come with it, because reaching them needs a live session actor
 that has published a prompt id before the guard is poisoned. That row
 records the missing seam rather than describing it as unreachable. The
-second carries the 69 `.recv().await.expect(` sites still left in test
-code after `session/workflow/manager.rs` had its own 15 bounded, together
-with the CI stall whose root cause the pass did not establish. The file
-that already ships its own `await_with_timeout` helper is itself one of
-the offenders, so most of what is left is routing the last few lines back
-into a helper the file already has; the row states the tracing route for
-the stall instead of filing it as an environment problem. Three
-unchecked rows were opened on 2026-10-04 while the
+second opened as "69 `.recv().await.expect(` sites are still unbounded in
+test code"; the batch that bounded them re-measured the figure over the
+module graph and found 232 sites in 33 files across 8 crates, every one of
+them now waited on through a deadline, so what the row carries today is
+the half bounding did not settle: the CI stall whose root cause the pass
+did not establish, and the watchdog run that would produce a stack for it.
+The row keeps that open rather than filing it as an environment problem.
+The third records a scanner-attribution gap the same batch surfaced when it
+raised the panic ratchet for a crate no release artifact links: production
+status is decided by where a file sits, while "reaches a binary" is a fact
+about the crate graph, and the cheapest way to silence that noise --
+gating the helper behind `#[cfg(test)]` -- would break the 227 call sites
+the batch had just converted. The fourth is the sweep's own blindness: a failed
+gate prints only the last 40 lines of its output, so when the `cargo test` gate
+exited 101 on the second full sweep the summary said nothing more than
+"`-p xai-tty-utils --lib` failed" and every grep for a panic or a failure list
+came back empty. Re-running the identical command was green, and the test only
+got a name by looping the suite 30 times locally (round 23:
+`tests::armed_child_dies_when_parent_exits`). That row asks for the full output
+of a failed gate to be written to a file and named in the summary before it asks
+for any fix of the intermittent failure itself, because a fix aimed at an
+unnamed test is a guess.
+Three unchecked rows were opened on 2026-10-04 while the
 Docker acceptance labs were being re-run, and all three closed the same day: the installer's
 artifact fetch now has a rate floor with fixtures of its own, the reasons its mirror candidates
 gave are now printed on the success path too, and the container entry point now prints a
@@ -138,7 +155,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 3 | 17 |
+| Maintenance items / §8 | 4 | 18 |
 
 ## Locally delivered in this audit pass
 

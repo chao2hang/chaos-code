@@ -504,6 +504,7 @@ mod tests {
     use super::*;
     use crate::session::goal_role_tools::tests::{assert_no_tool_placeholders, summary_with};
     use std::sync::{Arc, Mutex};
+    use xai_grok_test_support::recv_wait::RecvBounded;
     use xai_grok_tools::types::tool::ToolKind;
 
     #[test]
@@ -590,7 +591,7 @@ mod tests {
                 .await;
         });
 
-        let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+        let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
             panic!("expected Spawn");
         };
         assert_eq!(wait_depth.depth(), 1);
@@ -1032,7 +1033,7 @@ mod tests {
                 .spawn_planner("plan-id", role_prompt("prompt"))
                 .await;
         });
-        let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+        let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
             panic!("expected Spawn");
         };
         assert_eq!(

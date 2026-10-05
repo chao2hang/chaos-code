@@ -2,6 +2,7 @@ use super::*;
 use crate::session::goal_role_tools::tests::{assert_no_tool_placeholders, summary_with};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 /// A `RoleRenderedPrompt` whose two renders are identical (the inherit / same-toolset case), for direct `spawn_classifier` test calls.
 fn role_prompt(p: &str) -> RoleRenderedPrompt {
@@ -38,7 +39,7 @@ async fn channel_spawner_request_is_harness_internal() {
             .await;
     });
 
-    let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+    let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
         panic!("expected Spawn");
     };
     assert!(
@@ -91,7 +92,7 @@ async fn channel_spawner_applies_per_index_model_to_request() {
             .await;
     });
 
-    let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+    let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
         panic!("expected Spawn");
     };
     assert_eq!(
@@ -148,7 +149,7 @@ async fn channel_spawner_inherit_index_leaves_model_none() {
             )
             .await;
     });
-    let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+    let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
         panic!("expected Spawn");
     };
     assert!(
@@ -3275,7 +3276,7 @@ async fn channel_spawner_blocks_until_subagent_result() {
     let release = Arc::new(Notify::new());
     let release_task = Arc::clone(&release);
     let coordinator = tokio::spawn(async move {
-        let SubagentEvent::Spawn(req) = event_rx.recv().await.expect("spawn event") else {
+        let SubagentEvent::Spawn(req) = event_rx.recv_bounded("spawn event").await else {
             panic!("expected SubagentEvent::Spawn");
         };
         let id = req.id.clone();

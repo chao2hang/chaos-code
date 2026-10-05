@@ -275,6 +275,7 @@ mod tests {
     use crate::types::tool_metadata::test_ctx_with_call_id;
     use std::sync::Arc;
     use std::time::Duration;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     fn make_ctx_with_version(
         call_id: &str,
@@ -641,7 +642,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_cancel(cancel_rx.recv().await.unwrap());
+            let req = unwrap_cancel(cancel_rx.recv_bounded("req").await);
             match &req.target {
                 SubagentCancelTarget::SubagentId(id) => assert_eq!(id, "sub-1"),
                 other => panic!("Expected SubagentId, got {:?}", other),
@@ -682,7 +683,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_cancel(cancel_rx.recv().await.unwrap());
+            let req = unwrap_cancel(cancel_rx.recv_bounded("req").await);
             req.respond_to
                 .send(SubagentCancelOutcome::AlreadyFinished {
                     status: "completed".to_string(),
@@ -721,7 +722,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_cancel(cancel_rx.recv().await.unwrap());
+            let req = unwrap_cancel(cancel_rx.recv_bounded("req").await);
             req.respond_to
                 .send(SubagentCancelOutcome::NotFound)
                 .unwrap();

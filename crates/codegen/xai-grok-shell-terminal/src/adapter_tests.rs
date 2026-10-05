@@ -1,6 +1,7 @@
 //! Wired into adapter.rs via `#[path = "adapter_tests.rs"] mod tests;` so the implementation there reads top-to-bottom.
 
 use super::*;
+use xai_grok_test_support::recv_wait::RecvBounded;
 use xai_grok_tools::notification::types::ToolNotificationHandle;
 
 fn make_tracked_task(command: &str) -> TrackedTask {
@@ -165,7 +166,7 @@ async fn run_background_records_snapshots_and_threads_task_kind() {
     assert_eq!(snapshot.owner_session_id.as_deref(), Some("owner-1"));
 
     let completed = loop {
-        match notifications.recv().await.expect("completion notification") {
+        match notifications.recv_bounded("completion notification").await {
             ToolNotification::TaskCompleted(snapshot) => break snapshot,
             _ => continue,
         }

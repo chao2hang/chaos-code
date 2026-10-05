@@ -539,6 +539,7 @@ mod tests {
     use crate::types::tool_metadata::test_ctx_with_call_id;
     use indexmap::IndexMap;
     use tokio::sync::mpsc;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     fn make_question(question: &str, labels: &[&str]) -> Question {
         Question {
@@ -793,7 +794,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.expect("should receive request");
+        let request = rx.recv_bounded("should receive request").await;
         assert_eq!(request.tool_call_id, "tc-1");
         assert_eq!(request.questions.len(), 1);
 
@@ -836,7 +837,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.unwrap();
+        let request = rx.recv_bounded("request").await;
         request
             .result_tx
             .send(Ok(UserQuestionResponse::Cancelled))
@@ -874,7 +875,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.unwrap();
+        let request = rx.recv_bounded("request").await;
         request
             .result_tx
             .send(Ok(UserQuestionResponse::Cancelled))
@@ -920,7 +921,7 @@ mod tests {
             }
         });
 
-        let _request = rx.recv().await.expect("should receive request");
+        let _request = rx.recv_bounded("should receive request").await;
         tokio::time::advance(std::time::Duration::from_secs(6)).await;
 
         let result = handle.await.unwrap().unwrap();
@@ -963,7 +964,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.expect("should receive request");
+        let request = rx.recv_bounded("should receive request").await;
         assert_eq!(request.questions.len(), 2);
         // Advance past the *effective* budget (honors env override if set).
         let wait = response_timeout();
@@ -999,7 +1000,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.expect("should receive request");
+        let request = rx.recv_bounded("should receive request").await;
         // Stay well under the effective timeout (env override or default budget).
         let advance = response_timeout()
             .checked_div(6)
@@ -1086,7 +1087,7 @@ mod tests {
             }
         });
 
-        let _request = rx.recv().await.expect("should receive request");
+        let _request = rx.recv_bounded("should receive request").await;
         tokio::time::advance(std::time::Duration::from_secs(6)).await;
 
         let result = handle.await.unwrap().unwrap();
@@ -1126,7 +1127,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.expect("should receive request");
+        let request = rx.recv_bounded("should receive request").await;
         // Far past both the default and any env-overridden budget.
         tokio::time::advance(RESPONSE_TIMEOUT.max(response_timeout()) * 4).await;
 
@@ -1169,7 +1170,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.unwrap();
+        let request = rx.recv_bounded("request").await;
         drop(request.result_tx);
 
         let err = handle.await.unwrap().unwrap_err();
@@ -1195,7 +1196,7 @@ mod tests {
             }
         });
 
-        let request = rx.recv().await.unwrap();
+        let request = rx.recv_bounded("request").await;
         request
             .result_tx
             .send(Err(UserQuestionError::TransportError(

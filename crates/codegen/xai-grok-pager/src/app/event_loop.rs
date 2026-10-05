@@ -4471,6 +4471,7 @@ fn process_effects(
 mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, KeyEventState};
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[test]
     fn typeahead_classification_keeps_text_drops_noise_and_control() {
@@ -4857,7 +4858,7 @@ mod tests {
             &progress_tx
         ));
 
-        let request = match acp_rx.recv().await.expect("session/new request") {
+        let request = match acp_rx.recv_bounded("session/new request").await {
             xai_acp_lib::AcpAgentMessage::NewSession(args) => args.request,
             other => panic!("expected session/new, got {other:?}"),
         };
@@ -4968,7 +4969,7 @@ mod tests {
 
         assert!(!result.should_quit);
         assert!(matches!(
-            acp_rx.recv().await.expect("session/new request"),
+            acp_rx.recv_bounded("session/new request").await,
             xai_acp_lib::AcpAgentMessage::NewSession(_)
         ));
         assert_eq!(

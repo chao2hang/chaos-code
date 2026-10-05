@@ -1094,6 +1094,7 @@ mod tests {
     use crate::types::tool_metadata::ToolMetadata;
     use crate::types::tool_metadata::test_ctx;
     use std::sync::Arc;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     // A blocking wait must never hold the turn for longer than the wait
     // cap, regardless of the model's requested `timeout_ms` (repro: an
@@ -2375,7 +2376,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_query(query_rx.recv().await.unwrap());
+            let req = unwrap_query(query_rx.recv_bounded("req").await);
             assert_eq!(req.subagent_id, "sub-done");
             req.respond_to
                 .send(Some(SubagentSnapshot {
@@ -2424,7 +2425,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_query(query_rx.recv().await.unwrap());
+            let req = unwrap_query(query_rx.recv_bounded("req").await);
             req.respond_to
                 .send(Some(SubagentSnapshot {
                     subagent_id: "sub-run".to_string(),
@@ -2475,7 +2476,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_query(query_rx.recv().await.unwrap());
+            let req = unwrap_query(query_rx.recv_bounded("req").await);
             req.respond_to.send(None).unwrap();
         });
 
@@ -2523,7 +2524,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_query(query_rx.recv().await.unwrap());
+            let req = unwrap_query(query_rx.recv_bounded("req").await);
             assert!(
                 req.block,
                 "waits must issue a blocking query; backends short-circuit already-terminal"
@@ -2563,7 +2564,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let req = unwrap_query(query_rx.recv().await.unwrap());
+            let req = unwrap_query(query_rx.recv_bounded("req").await);
             assert!(req.block);
             tokio::time::sleep(Duration::from_millis(150)).await;
             req.respond_to
@@ -2673,7 +2674,7 @@ mod tests {
             let (resources, mut query_rx) = resources_with_backend_query();
             let shared = resources.into_shared();
             let handle = tokio::spawn(async move {
-                let req = unwrap_query(query_rx.recv().await.unwrap());
+                let req = unwrap_query(query_rx.recv_bounded("req").await);
                 assert!(req.block);
                 req.respond_to.send(Some(snapshot)).unwrap();
             });
@@ -2706,7 +2707,7 @@ mod tests {
         let (resources, mut query_rx) = resources_with_backend_query();
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let req = unwrap_query(query_rx.recv().await.unwrap());
+            let req = unwrap_query(query_rx.recv_bounded("req").await);
             assert!(
                 !req.block,
                 "wait-all resolve must snapshot, not block, a terminal subagent"

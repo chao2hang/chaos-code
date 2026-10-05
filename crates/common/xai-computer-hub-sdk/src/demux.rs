@@ -485,6 +485,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tokio::sync::mpsc;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[tokio::test]
     async fn response_route_matches_waiter() {
@@ -853,7 +854,7 @@ mod tests {
         });
         let outcome = demux.route(frame);
         assert_eq!(outcome, RouteOutcome::Progress);
-        let progress = rx.recv().await.expect("progress frame");
+        let progress = rx.recv_bounded("progress frame").await;
         assert_eq!(progress.tool_call_id, call_id);
         assert_eq!(progress.kind, "log_chunk");
         assert_eq!(progress.body, json!({"text": "hello"}));
@@ -937,7 +938,7 @@ mod tests {
             },
         });
         assert_eq!(demux.route(frame), RouteOutcome::Progress);
-        let progress = rx_first.recv().await.expect("original receiver still live");
+        let progress = rx_first.recv_bounded("original receiver still live").await;
         assert_eq!(progress.body, json!({"text": "first"}));
     }
 

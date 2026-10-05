@@ -14,6 +14,7 @@ use xai_grok_shell::leader::{
     protocol::{ClientMessage, ServerMessage, read_message, write_message},
     spawn_leader_server,
 };
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 /// Pipe character used for ID namespacing (must match server.rs)
 const ID_NAMESPACE_SEP: char = '|';
@@ -148,7 +149,7 @@ async fn test_stdio_client_receives_response() {
     client.send(test_message.to_string()).unwrap();
 
     // Get the namespaced ID from the server's view
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     let namespaced_id = json["id"].as_str().unwrap().to_string();
 
@@ -205,8 +206,8 @@ async fn test_multiple_stdio_clients() {
         .unwrap();
 
     // Server receives both messages
-    let msg1 = acp_rx.recv().await.unwrap();
-    let msg2 = acp_rx.recv().await.unwrap();
+    let msg1 = acp_rx.recv_bounded("msg1").await;
+    let msg2 = acp_rx.recv_bounded("msg2").await;
 
     let json1: serde_json::Value = serde_json::from_str(&msg1).unwrap();
     let json2: serde_json::Value = serde_json::from_str(&msg2).unwrap();
@@ -302,9 +303,9 @@ async fn test_multiple_clients_same_message_ids() {
         .unwrap();
 
     // Collect all three messages from the server
-    let msg1 = acp_rx.recv().await.unwrap();
-    let msg2 = acp_rx.recv().await.unwrap();
-    let msg3 = acp_rx.recv().await.unwrap();
+    let msg1 = acp_rx.recv_bounded("msg1").await;
+    let msg2 = acp_rx.recv_bounded("msg2").await;
+    let msg3 = acp_rx.recv_bounded("msg3").await;
 
     let json1: serde_json::Value = serde_json::from_str(&msg1).unwrap();
     let json2: serde_json::Value = serde_json::from_str(&msg2).unwrap();
@@ -777,7 +778,7 @@ async fn test_session_based_routing() {
         r#"{"jsonrpc":"2.0","method":"session/start","id":1,"params":{"sessionId":"session-123"}}"#;
     client.send(test_message.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     assert_eq!(json["params"]["sessionId"], "session-123");
@@ -819,7 +820,7 @@ async fn test_stdio_client_receives_tool_result() {
     client.send(test_tool_call.to_string()).unwrap();
 
     // Server should receive the tool call (with namespaced ID)
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     assert_eq!(json["method"], "tool/call");
     assert_eq!(json["params"]["name"], "read_file");
@@ -872,7 +873,7 @@ async fn test_session_new_without_model_id_no_default() {
     client.send(session_new.to_string()).unwrap();
 
     // Server should forward it without injecting modelId
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     assert_eq!(json["method"], "session/new");
@@ -911,7 +912,7 @@ async fn test_session_new_yolo_mode_no_model() {
     let session_new = r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#;
     client.send(session_new.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     // yoloMode should be injected from capabilities
@@ -948,7 +949,7 @@ async fn test_session_new_empty_default_model_not_injected() {
     let session_new = r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#;
     client.send(session_new.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     let meta = &json["params"]["_meta"];
@@ -983,7 +984,7 @@ async fn test_session_new_valid_default_model_injected() {
     let session_new = r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#;
     client.send(session_new.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     // modelId should be injected from default_model
@@ -1017,7 +1018,7 @@ async fn test_session_ownership_from_response_routes_notifications() {
     client.send(session_new.to_string()).unwrap();
 
     // Server receives the request (with namespaced ID)
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     let namespaced_id = json["id"].as_str().unwrap().to_string();
 
@@ -1086,7 +1087,7 @@ async fn test_two_clients_session_isolation() {
     client1
         .send(r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/project-a","mcpServers":[]}}"#.to_string())
         .unwrap();
-    let msg1 = acp_rx.recv().await.unwrap();
+    let msg1 = acp_rx.recv_bounded("msg1").await;
     let json1: serde_json::Value = serde_json::from_str(&msg1).unwrap();
     let id1 = json1["id"].as_str().unwrap().to_string();
 
@@ -1094,7 +1095,7 @@ async fn test_two_clients_session_isolation() {
     client2
         .send(r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/project-b","mcpServers":[]}}"#.to_string())
         .unwrap();
-    let msg2 = acp_rx.recv().await.unwrap();
+    let msg2 = acp_rx.recv_bounded("msg2").await;
     let json2: serde_json::Value = serde_json::from_str(&msg2).unwrap();
     let id2 = json2["id"].as_str().unwrap().to_string();
 
@@ -1225,7 +1226,7 @@ async fn test_set_model_broadcasts_to_session_subscribers() {
             shared_sid
         ))
         .unwrap();
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     let setmodel_ns_id = json["id"].as_str().unwrap().to_string();
     assert_eq!(json["method"], "session/setModel");
@@ -1334,7 +1335,7 @@ async fn test_capabilities_not_injected_into_non_session_new() {
     let prompt = r#"{"jsonrpc":"2.0","id":10,"method":"session/prompt","params":{"sessionId":"sess-123","prompt":{"content":"hello"}}}"#;
     client.send(prompt.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     assert!(
@@ -1347,7 +1348,7 @@ async fn test_capabilities_not_injected_into_non_session_new() {
     let load = r#"{"jsonrpc":"2.0","id":11,"method":"session/load","params":{"sessionId":"sess-456","cwd":"/tmp","mcpServers":[]}}"#;
     client.send(load.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     assert!(
         json["params"]["_meta"].get("yoloMode").is_none(),
@@ -1387,7 +1388,7 @@ async fn test_yolo_mode_injection_preserves_explicit_false() {
     let session_new = r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[],"_meta":{"yoloMode":false}}}"#;
     client.send(session_new.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     // Per-session yoloMode=false must win over client default yolo_mode=true
@@ -1419,7 +1420,7 @@ async fn test_client_notification_forwarded_without_id_rewrite() {
     let cancel_notif = r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"sess-123","reason":"user"}}"#;
     client.send(cancel_notif.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     assert!(
@@ -1523,7 +1524,7 @@ async fn test_extension_method_roundtrip() {
     let ext_call = r#"{"jsonrpc":"2.0","id":50,"method":"_x.ai/search/fuzzy/open","params":{"sessionId":"sess-123","hidden":false}}"#;
     client.send(ext_call.to_string()).unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
 
     assert_eq!(json["method"], "_x.ai/search/fuzzy/open");
@@ -1575,7 +1576,7 @@ async fn test_error_response_routing() {
         )
         .unwrap();
 
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     let namespaced_id = json["id"].as_str().unwrap().to_string();
 
@@ -1671,7 +1672,7 @@ async fn test_session_ownership_cleanup_on_disconnect() {
         client
             .send(r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#.to_string())
             .unwrap();
-        let received = acp_rx.recv().await.unwrap();
+        let received = acp_rx.recv_bounded("received").await;
         let json: serde_json::Value = serde_json::from_str(&received).unwrap();
         let namespaced_id = json["id"].as_str().unwrap().to_string();
 
@@ -1695,7 +1696,7 @@ async fn test_session_ownership_cleanup_on_disconnect() {
     // The server sends an eviction notification for "sess-temp" when client1 disconnects
     // Drain it before client2's initialize to keep the channel in sync
     // Also verifies the eviction was actually sent
-    let eviction = acp_rx.recv().await.unwrap();
+    let eviction = acp_rx.recv_bounded("eviction").await;
     let eviction_json: serde_json::Value = serde_json::from_str(&eviction).unwrap();
     assert_eq!(eviction_json["method"], "_x.ai/internal/evict_sessions");
 
@@ -1713,7 +1714,9 @@ async fn test_session_ownership_cleanup_on_disconnect() {
     client2
         .send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_string())
         .unwrap();
-    let _ = acp_rx.recv().await.unwrap();
+    let _ = acp_rx
+        .recv_bounded("test_session_ownership_cleanup_on_disconnect")
+        .await;
 
     // Send a notification for the old session; it should be DROPPED, not forwarded to client2
     // The dead client's session entry is still in session_owners (for relay detection)
@@ -1767,7 +1770,7 @@ async fn test_code_nav_capable_client_gets_true_injected_into_session_new() {
     let session_new = r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/repo","mcpServers":[]}}"#;
     web_client.send(session_new.to_string()).unwrap();
 
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
 
     assert_eq!(json["method"], "session/new");
@@ -1803,7 +1806,7 @@ async fn test_non_code_nav_client_gets_false_injected_into_session_new() {
     let session_new = r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/repo","mcpServers":[]}}"#;
     tui_client.send(session_new.to_string()).unwrap();
 
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
 
     assert_eq!(json["method"], "session/new");
@@ -1855,12 +1858,12 @@ async fn test_leader_code_nav_client_isolation() {
 
     // Web client sends session/new first.
     web_client.send(session_new.to_string()).unwrap();
-    let web_fwd = acp_rx.recv().await.unwrap();
+    let web_fwd = acp_rx.recv_bounded("web_fwd").await;
     let web_json: serde_json::Value = serde_json::from_str(&web_fwd).unwrap();
 
     // TUI client sends session/new second.
     tui_client.send(session_new.to_string()).unwrap();
-    let tui_fwd = acp_rx.recv().await.unwrap();
+    let tui_fwd = acp_rx.recv_bounded("tui_fwd").await;
     let tui_json: serde_json::Value = serde_json::from_str(&tui_fwd).unwrap();
 
     // Each client's request must carry its own capability, with no cross-contamination
@@ -1901,7 +1904,7 @@ async fn test_code_nav_capability_injected_into_session_load() {
     let session_load = r#"{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"sessionId":"sess-abc","cwd":"/repo","mcpServers":[]}}"#;
     web_client.send(session_load.to_string()).unwrap();
 
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
 
     assert_eq!(json["method"], "session/load");
@@ -1938,7 +1941,7 @@ async fn test_code_status_ext_request_forwarded_to_agent() {
     let status_req = r#"{"jsonrpc":"2.0","id":42,"method":"extensions/ext","params":{"method":"x.ai/code/status","params":{"sessionId":"sess-web-1","cwd":"/repo"}}}"#;
     web_client.send(status_req.to_string()).unwrap();
 
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
 
     assert_eq!(json["method"], "extensions/ext");
@@ -2611,7 +2614,12 @@ async fn test_initialize_injected_when_not_first_message() {
     let first_non_init = r#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"sess-x","reason":"user"}}"#;
     client.send(first_non_init.to_string()).unwrap();
 
-    let fwd1: serde_json::Value = serde_json::from_str(&acp_rx.recv().await.unwrap()).unwrap();
+    let fwd1: serde_json::Value = serde_json::from_str(
+        &acp_rx
+            .recv_bounded("test_initialize_injected_when_not_first_message")
+            .await,
+    )
+    .unwrap();
     // Sanity: the notification must have been forwarded correctly.
     assert_eq!(fwd1["method"], "session/cancel");
     // And it must NOT have had any _meta or clientIdentifier added.
@@ -2621,7 +2629,12 @@ async fn test_initialize_injected_when_not_first_message() {
     let init_msg = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
     client.send(init_msg.to_string()).unwrap();
 
-    let fwd2: serde_json::Value = serde_json::from_str(&acp_rx.recv().await.unwrap()).unwrap();
+    let fwd2: serde_json::Value = serde_json::from_str(
+        &acp_rx
+            .recv_bounded("test_initialize_injected_when_not_first_message")
+            .await,
+    )
+    .unwrap();
     assert_eq!(fwd2["method"], "initialize");
 
     let client_id = fwd2
@@ -2676,7 +2689,7 @@ async fn test_leader_code_nav_isolation_end_to_end() {
 
     // Both clients send session/new; verify independent codeNavEnabled injection.
     web_client.send(session_new.to_string()).unwrap();
-    let web_fwd = acp_rx.recv().await.unwrap();
+    let web_fwd = acp_rx.recv_bounded("web_fwd").await;
     let web_json: serde_json::Value = serde_json::from_str(&web_fwd).unwrap();
     assert_eq!(
         web_json["params"]["_meta"]["codeNavEnabled"],
@@ -2684,7 +2697,7 @@ async fn test_leader_code_nav_isolation_end_to_end() {
     );
 
     tui_client.send(session_new.to_string()).unwrap();
-    let tui_fwd = acp_rx.recv().await.unwrap();
+    let tui_fwd = acp_rx.recv_bounded("tui_fwd").await;
     let tui_json: serde_json::Value = serde_json::from_str(&tui_fwd).unwrap();
     assert_eq!(
         tui_json["params"]["_meta"]["codeNavEnabled"],
@@ -2695,7 +2708,7 @@ async fn test_leader_code_nav_isolation_end_to_end() {
     let status_with_session = r#"{"jsonrpc":"2.0","id":10,"method":"extensions/ext","params":{"method":"x.ai/code/status","params":{"sessionId":"web-session","cwd":"/repo"}}}"#;
     web_client.send(status_with_session.to_string()).unwrap();
 
-    let status_fwd = acp_rx.recv().await.unwrap();
+    let status_fwd = acp_rx.recv_bounded("status_fwd").await;
     let status_json: serde_json::Value = serde_json::from_str(&status_fwd).unwrap();
     assert_eq!(status_json["params"]["method"], "x.ai/code/status");
     assert_eq!(status_json["params"]["params"]["sessionId"], "web-session");
@@ -2979,7 +2992,7 @@ async fn test_hung_agent_leaves_transport_healthy_and_forwards_cancel() {
     client
         .send(r#"{"jsonrpc":"2.0","id":7,"method":"session/prompt","params":{"sessionId":"sess-hung","prompt":[]}}"#.to_string())
         .unwrap();
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
     assert_eq!(json["method"], "session/prompt");
 
@@ -3003,7 +3016,7 @@ async fn test_hung_agent_leaves_transport_healthy_and_forwards_cancel() {
                 .to_string(),
         )
         .unwrap();
-    let cancel_fwd = acp_rx.recv().await.unwrap();
+    let cancel_fwd = acp_rx.recv_bounded("cancel_fwd").await;
     let cancel_json: serde_json::Value = serde_json::from_str(&cancel_fwd).unwrap();
     assert_eq!(cancel_json["method"], "session/cancel");
 
@@ -3039,7 +3052,7 @@ async fn test_sever_mid_rpc_orphans_response_and_replay_recovers() {
     )
     .await
     .unwrap();
-    let new_fwd = acp_rx.recv().await.unwrap();
+    let new_fwd = acp_rx.recv_bounded("new_fwd").await;
     let new_json: serde_json::Value = serde_json::from_str(&new_fwd).unwrap();
     let new_id = new_json["id"].as_str().unwrap().to_string();
     response_tx
@@ -3058,7 +3071,7 @@ async fn test_sever_mid_rpc_orphans_response_and_replay_recovers() {
     )
     .await
     .unwrap();
-    let prompt_fwd = acp_rx.recv().await.unwrap();
+    let prompt_fwd = acp_rx.recv_bounded("prompt_fwd").await;
     let prompt_json: serde_json::Value = serde_json::from_str(&prompt_fwd).unwrap();
     let prompt_id = prompt_json["id"].as_str().unwrap().to_string();
 
@@ -3067,7 +3080,7 @@ async fn test_sever_mid_rpc_orphans_response_and_replay_recovers() {
     drop(writer1);
 
     // The eviction notification on the agent channel is the deterministic signal that the server processed the disconnect
-    let evict = acp_rx.recv().await.unwrap();
+    let evict = acp_rx.recv_bounded("evict").await;
     let evict_json: serde_json::Value = serde_json::from_str(&evict).unwrap();
     assert_eq!(evict_json["method"], "_x.ai/internal/evict_sessions");
 
@@ -3094,7 +3107,7 @@ async fn test_sever_mid_rpc_orphans_response_and_replay_recovers() {
     )
     .await
     .unwrap();
-    let load_fwd = acp_rx.recv().await.unwrap();
+    let load_fwd = acp_rx.recv_bounded("load_fwd").await;
     let load_json: serde_json::Value = serde_json::from_str(&load_fwd).unwrap();
     assert_eq!(load_json["method"], "session/load");
     let load_id = load_json["id"].as_str().unwrap().to_string();
@@ -3143,7 +3156,7 @@ async fn test_cancel_severed_in_swap_window_reaches_agent_after_recovery() {
     client
         .send(r#"{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#.to_string())
         .unwrap();
-    let new_fwd = acp_rx.recv().await.unwrap();
+    let new_fwd = acp_rx.recv_bounded("new_fwd").await;
     let new_json: serde_json::Value = serde_json::from_str(&new_fwd).unwrap();
     let new_id = new_json["id"].as_str().unwrap().to_string();
     response_tx
@@ -3156,7 +3169,7 @@ async fn test_cancel_severed_in_swap_window_reaches_agent_after_recovery() {
 
     tx.send(r#"{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"sess-swap","prompt":[]}}"#.to_string())
         .unwrap();
-    let _prompt_fwd = acp_rx.recv().await.unwrap();
+    let _prompt_fwd = acp_rx.recv_bounded("prompt_fwd").await;
 
     // Leader dies; the cancel is composed while the connection is already dead (the swap window), so it is silently eaten today
     cancel.cancel();
@@ -3185,7 +3198,7 @@ async fn test_cancel_severed_in_swap_window_reaches_agent_after_recovery() {
     client2
         .send(r#"{"jsonrpc":"2.0","id":1,"method":"session/load","params":{"sessionId":"sess-swap","cwd":"/tmp","mcpServers":[]}}"#.to_string())
         .unwrap();
-    let load_fwd = acp_rx2.recv().await.unwrap();
+    let load_fwd = acp_rx2.recv_bounded("load_fwd").await;
     let load_json: serde_json::Value = serde_json::from_str(&load_fwd).unwrap();
     let load_id = load_json["id"].as_str().unwrap().to_string();
     response_tx2
@@ -3198,7 +3211,7 @@ async fn test_cancel_severed_in_swap_window_reaches_agent_after_recovery() {
     // Today nothing arrives and this times out
     let cancelled = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let fwd = acp_rx2.recv().await.expect("agent channel closed");
+            let fwd = acp_rx2.recv_bounded("agent channel closed").await;
             let json: serde_json::Value = serde_json::from_str(&fwd).unwrap();
             if json["method"] == "session/cancel" && json["params"]["sessionId"] == "sess-swap" {
                 return;
@@ -3233,7 +3246,7 @@ async fn test_driver_sever_mid_turn_viewer_sees_durable_terminal() {
     )
     .await
     .unwrap();
-    let new_fwd = acp_rx.recv().await.unwrap();
+    let new_fwd = acp_rx.recv_bounded("new_fwd").await;
     let new_json: serde_json::Value = serde_json::from_str(&new_fwd).unwrap();
     let new_id = new_json["id"].as_str().unwrap().to_string();
     response_tx
@@ -3254,7 +3267,7 @@ async fn test_driver_sever_mid_turn_viewer_sees_durable_terminal() {
     )
     .await
     .unwrap();
-    let load_fwd = acp_rx.recv().await.unwrap();
+    let load_fwd = acp_rx.recv_bounded("load_fwd").await;
     let load_json: serde_json::Value = serde_json::from_str(&load_fwd).unwrap();
     let load_id = load_json["id"].as_str().unwrap().to_string();
     response_tx
@@ -3274,7 +3287,7 @@ async fn test_driver_sever_mid_turn_viewer_sees_durable_terminal() {
     )
     .await
     .unwrap();
-    let prompt_fwd = acp_rx.recv().await.unwrap();
+    let prompt_fwd = acp_rx.recv_bounded("prompt_fwd").await;
     let prompt_json: serde_json::Value = serde_json::from_str(&prompt_fwd).unwrap();
     let prompt_id = prompt_json["id"].as_str().unwrap().to_string();
 

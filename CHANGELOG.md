@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### 门禁：测试里 232 处「等一个不会来的事件」全部有界，闸门两侧都不许动，而 `start_paused` 的时钟会把默认的 2 秒变成抢跑
+
+上一批把 `session/workflow/manager.rs` 的 15 处裸 `recv().await` 收进带期限的 `recv_spawn`，并留下一行 TODO：
+同类形状全库还剩 69 处。那个 69 是 `git grep` 单行匹配的数，按模块图重算之后是 **232 处**，分布在 33 个文件、
+8 个 crate —— 漏掉的三类都是同一种漏法：rustfmt 把 `.recv().await.unwrap()` 拆成四行、`src/**/*_tests.rs` 的后缀
+被当成整个文件名、以及同一行写了两次的 `.recv()`。分布（`scripts/ci/check-unbounded-recv.py` 对 HEAD 那棵树重算）：
+`xai-grok-tools` 101、`xai-grok-shell` 90、`xai-grok-pager-bin` 16、`xai-file-utils` 10、`xai-grok-mcp` 8、
+`xai-grok-pager` 3、`xai-computer-hub-sdk` 3、`xai-grok-shell-terminal` 1。
+
+- 232 处里 227 处改走新的 `xai_grok_test_support::recv_wait`：tokio 通道用 `rx.recv_bounded("what")`（`RecvBounded`
+  对 `mpsc::Receiver`、`mpsc::UnboundedReceiver`、`broadcast::Receiver` 各一份，返回的 future 显式写成
+  `impl Future + Send`，`async fn` 在公开 trait 里会悄悄抹掉 `tokio::spawn` 需要的那些 auto trait），自己实现
+  `recv()` 的 harness 类型用 `within_option(EXPR.recv(), "what")`，剩下 5 处接到 `parent_message_tests.rs` 本来就
+  有、全文 77 处在调的 `await_with_timeout(TEST_TIMEOUT)` 上 —— 那 5 处缺的从来不是新机制，是没接回去。期限到点
+  说的是「哪一个 wait 没来」，通道提前关闭说的是「通道关了」，这两件事以前都被 `.expect(..)` 里作者随手写的短语
+  混成一句。
+- 闸门 `scripts/ci/check-unbounded-recv.py`：基线 `scripts/ci/unbounded-recv-baseline.tsv` 是 `TOTAL 0`，且**两个
+  方向**都拒绝 —— 高于行是新增裸等待，低于行是台账没跟着收紧；口径复用 `panic-site-census.py` 的注释/字符串
+  空白化、`cfg(test)` 区间行走与 crate 归属，所以它与 panic 计数对「什么是测试代码」的判断不会各说各话。19 条
+  夹具，`ci.yml` 与 `scripts/verify-in-docker.sh` 的 `gates=()` 各一处（`check-guard-wiring.py` 盯着这种成对）。
+- **`start_paused` 让「有界」反过来咬人**：`#[tokio::test(start_paused = true)]` 下运行时不是慢，是快 —— 所有任务
+  都 pending 时 tokio 把时钟拨到**最短**的那个已上弦计时器。33 个文件里 12 处落在暂停时钟的测试里，其中 11 处等
+  的事件在计时器之前就发出来了，只有 1 处不是：`usage_not_applied_mark_falls_back_to_coordinator_when_parent_is_starved`
+  等的恰恰是生产在 `PARENT_ACK_TIMEOUT`（30 秒）之后才发的兜底事件，2 秒的界比它小，于是在 t=2s 抢跑，把一条
+  正常在跑的生产路径报成假超时（`finished in 0.00s` 就是它的指纹）。该位点改成
+  `within_option_budget(10 * PARENT_ACK_TIMEOUT, ..)`，并加一对测试把机制钉住：默认界必须抢跑、10 倍界必须看见。
+- 一条夹具在两个机制上同时成立，就等于没在任何一个机制上成立：`#[cfg(any())]` 那条夹具原先把死模块写在文件顶层，
+  于是它同时被「不在任何测试区间内」和「被死 cfg 减掉」两条规则救活，删掉死 cfg 减法的那一格变异体因此存活。改成
+  把死模块嵌进 `#[cfg(test)] mod` 之后，夹具在**未变异**的闸门上就红了 —— 顺带暴露闸门真有 bug：死 cfg 是按
+  「整段区间被包含」减的，嵌在测试区间里的死模块减不掉，只会多报不会漏报，但下一次谁写这么一个模块就会被 CI 判成
+  测试代码里的裸等待。改成按站点自己的偏移量做减法。
+- 变异矩阵 14 格（闸门 G1–G9、helper R1–R5），最终 `14 caught, 0 survived`；`R5` 就是把上面那个位点退回默认
+  的 2 秒，让假超时在原测试里重新长回来。三处第一轮的结果都不该被引用，也都记在案：`G3` 当时确实存活，问题在
+  夹具自己（上一条），`R1`（把 `within` 的超时分支整个删掉）等的是 `exit=124`，而 `timeout --signal=KILL` 让子
+  进程死于 SIGKILL、Python 看到的是 `-9`，判据换成 libtest 自己的 `has been running for over 60 seconds` 那一行
+  —— 它本来就是这场事故在 CI 日志里唯一留下的线索；还有一次中途把测试二进制缓存下来，于是 5 个 `R` 格跑的全是
+  **没被改过**的 binary、报出 5 个根本没被测过的 `MISSED`，改成每格重建，驱动的注释把这次错误留在原处。
+- 完整闸门扫描只红了一格，而红的正是该红的那一格：panic 位点棘轮报
+  `xai-grok-test-support: production sites grew [56, 40, 22, 7] -> [56, 40, 26, 7]`。那 4 个 `panic!` 就是
+  `recv_wait` 的四条失败路径（oneshot 通道关闭、等待期限到点、`mpsc` 提前关闭、`broadcast` 不可用），它们算
+  生产是因为这个模块不能挂 `#[cfg(test)]` —— 它是给**别的** crate 的测试构建链接的，那时消费者的 `cfg(test)`
+  并不成立，挂上之后 227 处调用点全部编译不过。涨行之前先把可达性量出来：`cargo tree -i
+  xai-grok-test-support -e normal --workspace` 唯一的非 dev 下游是 `xai-grok-pager-pty-harness`，而它自己只作为
+  `[dev-dependencies]` 挂在 `xai-grok-pager` 上，这条链出不了测试构建；全仓 18 处 manifest 引用里 14 处在
+  `[dev-dependencies]`。基线那一行第三列由 22 手工改成 26，并把 `--write-baseline` 的新输出写到别处与之 diff
+  —— 只差这一格这个数字，其余 96 行没漂。扫描器按**文件位置**判生产，而「会不会进用户跑的那个二进制」是
+  crate 图上的命题，这个缺口单独记了一行 TODO，因为最省事的降噪办法恰好是错的那一个。
+- 顺手清掉一处没人核对的数字副本：`docs/architecture/todo-open-item-classification.md` 的分组计数原本在开头散文
+  与下面的表里各写一份，而 `--check-doc` 只读表 —— 散文那份早就错了一格（写着 maintenance `3/17`，当天真值
+  `2/18`），全场绿灯。处置是删掉散文里那串数字，只留一句「数字在下面那张被检查的表里」，让真值只剩一处。
+- 第二遍全量扫描红在 `cargo test`，可汇总只留下一句 `-p xai-tty-utils --lib` 失败：`scripts/verify-gates.sh` 对
+  失败格只贴输出末尾 40 行，完整那一份随进程一起没了，对 `panicked`、`failures:`、`test result: FAILED` 三条
+  grep 全部落空。同一条命令直接重跑是 `EXIT=0`；名字是本机把这个 suite 串行跑 30 轮抓回来的 —— 第 23 轮红在
+  `tests::armed_child_dies_when_parent_exits`（`crates/codegen/xai-tty-utils/src/lib.rs:1611`，消息
+  `grandchild pid … outlived its parent despite kill_on_parent_death_std`），1/30。本批没碰 `xai-tty-utils`，
+  因此只记行不改；那 30 轮同时说明这不是预算太紧（轮询期限本来就是 10 秒，被超过意味着信号当时真的没到）。TODO
+  那行把「失败格完整输出落盘、并把路径打进汇总」排在「修那条测试」之前 —— 对着一个没有名字的测试动手就是猜。
+
+（2026-10-05；`crates/codegen/xai-grok-test-support/src/recv_wait.rs`、`scripts/ci/check-unbounded-recv.py`、`scripts/ci/test-check-unbounded-recv.py`、`scripts/ci/unbounded-recv-baseline.tsv`、`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、`scripts/ci/panic-site-baseline.tsv`、`docs/audit-followup-report.md`、`docs/architecture/todo-open-item-classification.md`、`scripts/verify-gates.sh`、`crates/codegen/xai-tty-utils/src/lib.rs`、`docs/verification/unbounded-test-recv-2026-10-05.log`、`docs/ci-test-debt.md`、`TODO.md`、`CHANGELOG.md`）
+
 ### 修复：一条等不到事件的 `await` 把整个 CI 作业安静地拖满 60 分钟，现在它 2 秒就报出自己的名字
 
 CI run 37259667663（`a8274d9f`）被判 `cancelled`，用掉的正是 `.github/workflows/ci.yml` 的

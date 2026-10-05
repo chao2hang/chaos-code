@@ -2,6 +2,7 @@ use super::super::types::{ActiveAgentMessageOutcome, ActiveAgentMessageRequest};
 use super::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -14,14 +15,14 @@ async fn await_with_timeout<T>(future: impl std::future::Future<Output = T>) -> 
 /// Helper: receive the next event, match the expected variant, or panic.
 macro_rules! recv_event {
     ($rx:expr, Spawn) => {{
-        let event = $rx.recv().await.unwrap();
+        let event = $rx.recv_bounded("event").await;
         match event {
             SubagentEvent::Spawn(inner) => inner,
             _ => panic!("Expected SubagentEvent::Spawn, got different variant"),
         }
     }};
     ($rx:expr, $variant:ident) => {{
-        let event = $rx.recv().await.unwrap();
+        let event = $rx.recv_bounded("event").await;
         match event {
             SubagentEvent::$variant(inner) => inner,
             _ => panic!(
@@ -544,7 +545,7 @@ async fn channel_backend_validate_type_round_trips_outcome() {
     let backend = ChannelBackend::new(tx);
 
     let handle = tokio::spawn(async move {
-        let event = rx.recv().await.unwrap();
+        let event = rx.recv_bounded("event").await;
         match event {
             SubagentEvent::ValidateType(req) => {
                 assert_eq!(req.subagent_type, "explore");
@@ -729,7 +730,10 @@ async fn channel_backend_describe_round_trips_summary() {
     let backend = ChannelBackend::new(tx);
 
     let handle = tokio::spawn(async move {
-        match rx.recv().await.unwrap() {
+        match rx
+            .recv_bounded("channel_backend_describe_round_trips_summary")
+            .await
+        {
             SubagentEvent::DescribeType(req) => {
                 assert_eq!(req.subagent_type, "explore");
                 assert_eq!(req.harness_agent_type.as_deref(), Some("cursor"));

@@ -359,6 +359,13 @@ gates=(
   # well-formed condition that simply never matches -- and `cargo test` cannot report text it
   # never compiled. This folds every predicate in `crates/` and `bin/` and refuses the FALSE ones.
   "dead cfg: python3 scripts/ci/test-check-dead-cfg.py && python3 scripts/ci/check-dead-cfg.py"
+  # One `.recv().await.expect(..)` inside one `#[tokio::test]` holds a CI job open until
+  # `timeout-minutes` kills it: the wait can report a closed channel but never a missing event,
+  # and libtest has no deadline of its own. Run 37259667663 lost 29 silent minutes that way and
+  # reported `cancelled` with nothing to point at, the other seven jobs green. 232 sites went
+  # through `xai_grok_test_support::recv_wait` in one batch; this refuses a crate that grows one
+  # back, and refuses a crate that drops under its own row so the ceiling cannot outlive the debt.
+  "unbounded test recv: python3 scripts/ci/test-check-unbounded-recv.py && python3 scripts/ci/check-unbounded-recv.py"
   # The census cannot see a Prometheus call whose label count is wrong, because the panic
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says
   # so. This pairs each label-value call with the labels its metric registration declares.

@@ -52,6 +52,9 @@ default-bazel = []
 
 
 [dev-dependencies]
+# `recv_wait::RecvBounded` bounds every test-side `recv()`, so a wait for an event that
+# never arrives fails the test instead of running the CI job out to `timeout-minutes`.
+xai-grok-test-support = { workspace = true }
 tempfile = { workspace = true }
 axum = { workspace = true, features = ["multipart"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "net", "time"] }

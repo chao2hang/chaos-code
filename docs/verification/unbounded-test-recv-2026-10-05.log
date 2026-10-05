@@ -1,0 +1,472 @@
+# 232 test-side `recv()` waits had no deadline: the bounded batch, a zero-tolerance gate, and a paused clock that fought back (2026-10-05)
+
+== 1. What this batch changes
+
+The previous batch bounded the 15 spawn waits in `session/workflow/manager.rs` and left a TODO row saying the
+same idiom still existed in 69 more places. It existed in **232** places, in 33 files across 8 crates. Every one
+of them is in test code -- a `#[tokio::test]`, a `#[cfg(test)] mod`, a `tests/` integration file, or a helper
+only those reach -- so no production path changed. 227 sites now wait through `xai_grok_test_support::recv_wait`;
+5 went back to the helper their own file already had (`await_with_timeout(TEST_TIMEOUT)` in
+`session/acp_session_impl/parent_message_tests.rs`, which the same file calls 77 other times).
+
+A new gate holds the line: `scripts/ci/check-unbounded-recv.py`, with its own fixtures and a baseline of
+`TOTAL 0`, wired into `.github/workflows/ci.yml` and into the `gates=()` mirror in `scripts/verify-in-docker.sh`.
+
+== 2. The count, recomputed: 69 was a grep artifact
+
+The row said 69 because that is what `git grep -c '\.recv()\.await\.expect('` counts: one hit per line matching
+one spelling. Recomputed over the module graph -- the same verdict `scripts/ci/panic-site-census.py` produces,
+reused here rather than re-derived -- the number is 232. Three classes were invisible to the single-line match:
+
+  * rustfmt splitting the chain, so `.recv()` and `.await .unwrap()` land on different lines (3 sites);
+  * `src/**/*_tests.rs` files being matched as whole file names instead of by suffix, which dropped the test
+    helper functions at the top of those files (5 sites);
+  * one line carrying the idiom twice.
+
+The distribution, re-measured by the gate against a copy of the pre-batch tree:
+
+    $ python3 scripts/ci/check-unbounded-recv.py --root {SCRATCH}/implementer/b24/pre-tree \
+          --baseline {SCRATCH}/implementer/b24/head-baseline.tsv --write-baseline
+    unbounded-recv: wrote {SCRATCH}/implementer/b24/head-baseline.tsv (232 sites)
+
+    crate                    sites
+    xai-grok-tools             101
+    xai-grok-shell              90
+    xai-grok-pager-bin          16
+    xai-file-utils              10
+    xai-grok-mcp                 8
+    xai-grok-pager               3
+    xai-computer-hub-sdk         3
+    xai-grok-shell-terminal      1
+    TOTAL                      232
+
+The shipped tree, after the batch:
+
+    $ python3 scripts/ci/check-unbounded-recv.py
+    unbounded-recv: 0 site(s), every crate at or under its recorded ceiling
+
+The per-crate rows in `scripts/ci/unbounded-recv-baseline.tsv` are all zero, and the gate refuses a crate that
+sits *under* its row as well as one above it. A ratchet that only grows is a ledger nobody reads: a converted
+site that leaves its ceiling behind makes the next regression invisible for that crate.
+
+== 3. The helper
+
+`crates/codegen/xai-grok-test-support/src/recv_wait.rs`, five entry points:
+
+| Entry point | Used for | Failure text |
+|---|---|---|
+| `rx.recv_bounded("what")` | `mpsc::Receiver`, `mpsc::UnboundedReceiver`, `broadcast::Receiver` | `what: no event within 2s` / `what: channel closed before any event` |
+| `within(budget, wait, "what")` | any future: a `JoinHandle`, an `rx.changed()`, a helper call | same, with the caller's budget |
+| `within_option(wait, "what")` | a receiver the trait cannot cover, i.e. a harness type with its own `recv()` | value / deadline / closed channel |
+| `within_option_budget(budget, wait, "what")` | the same, where the bound has to outlive a production timer | same |
+| `oneshot(rx, "what")` | `oneshot::Receiver`, which yields its value by consuming itself | `what: oneshot closed (..)` |
+
+Two shape decisions are load-bearing and were not free:
+
+  * `RecvBounded::recv_bounded` is spelled `fn recv_bounded(&mut self, what: &str) -> impl Future<Output =
+    Self::Item> + Send` rather than `async fn`, because an `async fn` in a public trait erases the auto traits
+    and a converted call site is otherwise silently barred from holding the wait across `tokio::spawn`. The
+    test `the_wait_can_be_moved_into_another_task` pins that.
+  * Every deadline goes through one `hit_deadline` and one `closed_channel`, so a converted suite cannot invent
+    its own wording for the same event. The unbounded form had collapsed "the sender dropped" and "the event
+    never came" into whatever phrase the author passed to `.expect(..)`, which for most of the 232 read like a
+    timeout.
+
+`cargo test -q -p xai-grok-test-support --lib recv_wait` on the shipped tree:
+
+    $ cargo test -q -p xai-grok-test-support --lib recv_wait
+    running 19 tests
+    i..................
+    test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 86 filtered out; finished in 2.00s
+
+The ignored test is the `GROK_TEST_TIMEOUT_SCALE` worker: `the_scale_factor_reaches_the_deadline` re-runs this
+same binary twice at scale 1 and scale 2 and asserts the 60 ms budget misses a 90 ms send at one and covers it
+at the other, which only proves anything from a child process with the variable set per run.
+
+Nothing in CI sets `GROK_TEST_TIMEOUT_SCALE`, so the shipped default is 1 and these budgets are what CI runs.
+
+== 4. The gate
+
+`scripts/ci/check-unbounded-recv.py` matches `\.recv\s*\(\s*\)\s*\.\s*await\s*\.\s*(?:expect|unwrap)\s*\(` over
+text that has had comments and string literals blanked offset-for-offset, so a rustfmt-split chain is still a
+site and is reported at the line its `recv()` sits on, which is where a reader would look for it.
+
+"Test code" is not re-invented here. The gate loads `panic-site-census.py` by path and reuses its blanking, its
+`cfg(test)` span walk, its `#[cfg(any())]` detection, its `is_test_by_location` and its crate attribution, so
+the two gates cannot disagree about whether a byte is a test site or a production site. Production is out of
+scope on purpose: an unbounded `recv()` in a long-lived actor is the design.
+
+`os.walk` prunes `target/`, `node_modules/`, `third_party/` and `__pycache__` on the way down. The first
+version used `rglob("*.rs")`, which walked a built `target/` and took over two minutes for a gate that runs on
+every CI job; it now runs in about three seconds.
+
+Fixtures, 19 of them, each a temp workspace built by `make_tree` and scanned by a real subprocess:
+
+    $ python3 scripts/ci/test-check-unbounded-recv.py
+    Ran 19 tests in 14.818s
+
+    OK
+
+They cover: a bounded wait passing (and proving the tree was read), `.expect` failing with file, line and
+phrase, `.unwrap` failing too, a four-line broken chain found at the `recv()` line, the same call in a plain
+`impl` not being reported, `tests/` counting, the `_tests.rs` **suffix** counting (the regression named in
+section 2), a never-compiled module not counting, strings and comments not counting with the same file then
+made to count by turning one mention into live code, `third_party/` and `target/` being pruned, the ratchet in
+both directions, `--write-baseline` round-tripping, per-crate rows, a malformed baseline row, exit 2 on a root
+with no Rust, the verbose summary at zero sites, and the shipped tree being clean.
+
+== 5. The paused clock: the bound pre-empted the production timer
+
+One converted site failed, deterministically, not under load:
+
+`agent::subagent::tests::usage_not_applied_mark_falls_back_to_coordinator_when_parent_is_starved` is a
+`#[tokio::test(start_paused = true)]` test. Under a paused clock the runtime is not slow, it is fast: when every
+task is pending, tokio advances the clock to the **shortest** armed timer. The production call it waits for
+first waits out `PARENT_ACK_TIMEOUT` (30 s, `agent/subagent/handle_request.rs:26`) before it emits the fallback
+event; the 2 s bound is also an armed timer, and being smaller, it won. The deadline fired at t=2s of the
+test's own clock and blamed production for a path that was behaving exactly as designed.
+
+An audit of all 33 converted files for sites whose enclosing `#[tokio::test]` carries `start_paused` found 12.
+Eleven of them wait for an event the production code publishes before any timer runs, so no timer is armed to
+compete and the default bound is fine. The twelfth was this one. The fix is at the call site and is expressed in
+the production constant it has to outlive:
+
+    // The clock is paused, so tokio jumps to the shortest armed timer: this bound
+    // has to sit above the PARENT_ACK_TIMEOUT the mark waits on before it falls
+    // back, or it fires first and blames production for the test's own budget.
+    let event = within_option_budget(
+        10 * PARENT_ACK_TIMEOUT,
+        event_rx.recv(),
+        "coordinator fallback event",
+    )
+    .await;
+
+The same suite after the change:
+
+    $ RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-shell --lib usage_not_applied_mark
+    running 3 tests
+    ...
+    test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 6929 filtered out; finished in 0.00s
+
+The red side is not quoted from memory. Section 7 re-creates it as mutation cell `R5`: the call site is reverted
+to the default bound, the same binary is run, and the phantom deadline comes back with its own text. The
+mechanism is also pinned forward-looking by two tests in `recv_wait` itself -- one asserting that the default
+bound **does** pre-empt a 30 s producer on a paused clock, one asserting that a 10x budget sees the event on the
+same clock in the same zero elapsed time. `finished in 0.00s` is the fingerprint that separates this class of
+failure from a loaded machine.
+
+`xai-grok-shell`'s whole lib suite on the shipped tree:
+
+    $ RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-shell --lib
+    test result: ok. 6900 passed; 0 failed; 32 ignored; 0 measured; 0 filtered out; finished in 31.20s
+
+== 6. A fixture that passed for two reasons hid a real gate bug
+
+The first full matrix run reported `G3: MISSED`. `G3` deletes the `#[cfg(any())]` subtraction from the gate, so
+a site in a module no build compiles should then be counted and the fixture named
+`test_a_module_dropped_by_a_false_cfg_is_not_a_hang_risk` should go red. It stayed green.
+
+The fixture was vacuous. It parked the dead module at the **top level** of the file, so two independent rules
+each kept it out of the count: the site was inside no test range at all, *and* it was inside a dead range.
+Deleting one rule left the other standing. Re-parking the module inside `#[cfg(test)] mod tests` makes the
+dead-cfg subtraction the only thing that can save the site -- and that fixture then went red on the **unmutated**
+gate, which is how the real bug surfaced:
+
+    $ python3 scripts/ci/test-check-unbounded-recv.py
+      File ".../scripts/ci/test-check-unbounded-recv.py", line 306, in
+        test_a_never_cfg_module_hides_its_own_sites_but_nobody_elses
+        self.assertNotIn(f"{SRC}:{line_of(body, 'rx.recv().await.unwrap()')}: ", out)
+    AssertionError: 'crates/codegen/widget/src/lib.rs:8: ' unexpectedly found in
+      '  widget: crates/codegen/widget/src/lib.rs:8: rx.recv().await.unwrap();
+        widget: crates/codegen/widget/src/lib.rs:15: rx.recv().await.expect("a live event");
+      unbounded-recv: 2 test-side `.recv().await.expect/unwrap` site(s) in 1 crate(s); ...'
+
+The gate subtracted dead ranges only where a whole test range was *contained* in a dead one. A `#[cfg(any())]`
+module nested inside test code therefore stayed counted. The direction of that bug is over-reporting rather than
+under-reporting, so the shipped tree was never falsely clean -- but the first person to park a `#[cfg(any())]`
+spare module inside a `mod tests` would have been told their test code hangs CI, about code no build contains.
+`test_spans_for` now returns the test ranges and the dead ranges separately and the subtraction happens at each
+site's own offset, and the fixture keeps a live sibling test in the same file so that "reported nothing" can
+never again be confused with "read nothing".
+
+Lesson kept: a fixture must be constructed so that exactly one mechanism can make it pass, and the fixture suite
+has to be run against the unmutated gate before a green matrix means anything.
+
+== 7. Mutation matrix
+
+Non-vacuity here has two halves: the gate must actually catch a site, and the helper must actually enforce a
+deadline. 14 cells, each patching one shipped file, re-running the suite that is supposed to notice, and
+restoring the file byte-for-byte with the restore re-read and compared. A cell counts as CAUGHT only if that
+suite exits non-zero *and* names the test the cell was written to break.
+
+| Cell | Mutation | Suite that must notice |
+|---|---|---|
+| `G1` | site pattern narrowed to `.expect`, so `.unwrap` is invisible | fixture `test_unwrap_in_a_test_fails_too` |
+| `G2` | `TEST_FILE_NAME.search` -> `.match`, so an included test file not *starting* with the pattern is skipped | `test_a_site_in_an_included_tests_file_outside_any_cfg_item_counts` |
+| `G3` | the `#[cfg(any())]` subtraction removed (`dead` stays empty) | `test_a_module_dropped_by_a_false_cfg_is_not_a_hang_risk` |
+| `G4` | every file counted as test code end to end | `test_the_same_call_in_production_is_not_reported` |
+| `G5` | the "crate sits under its row" branch disabled | `test_ratchet_refuses_a_crate_below_its_row` |
+| `G6` | comments and strings no longer blanked before matching | `test_strings_and_comments_are_not_sites` |
+| `G7` | pattern stops tolerating whitespace inside the chain | `test_a_chain_broken_across_lines_is_found_at_the_recv_line` |
+| `G8` | `SKIP_DIRS` reduced to `__pycache__` | `test_third_party_and_target_are_not_scanned` |
+| `G9` | the "crate is above its row" branch disabled | `test_ratchet_refuses_a_crate_above_its_row` |
+| `R1` | `within` drops its `tokio::time::timeout` and awaits bare | `recv_wait` tests, via libtest's own watchdog |
+| `R2` | the deadline panic loses the `what` prefix | `a_wait_that_never_resolves_names_itself_inside_the_deadline` |
+| `R3` | `secs` renders nanoseconds where the message promises milliseconds | `an_explicit_budget_replaces_the_default` |
+| `R4` | `within_option_budget` ignores its budget and uses the default | `a_budget_above_the_production_timer_sees_it_on_a_paused_clock` |
+| `R5` | the subagent call site put back on the default 2 s bound | `usage_not_applied_mark_falls_back_to_coordinator_when_parent_is_starved` |
+
+`R5` is the failure from section 5 re-created on purpose: same test, same paused clock, default bound against the
+30 s production timer, and the evidence the cell demands is that phantom deadline's own text, `coordinator
+fallback event: no event within 2s`. `R1` is the one cell whose evidence is not a panic of ours: removing the
+timeout makes the suite hang, so the evidence is libtest's `has been running for over 60 seconds` line and the
+cell itself ends killed by signal 9 at the driver's own 150 s ceiling.
+
+The driver aborts before touching a file if any baseline is red, so a green matrix cannot be a matrix run against
+a broken tree. Two earlier attempts got through the driver and still do not deserve to be quoted, and both are
+worth recording:
+
+  * The first full run reported `G3: MISSED`, correctly. The fixture, not the gate, was the problem: that is
+    section 6, and the bug it exposed is the reason `G3` is in the matrix at all.
+  * A mid-run refactor cached each test binary after building it once. Every `R` cell then re-ran the
+    **unmutated** binary and reported five `MISSED`s for tests that had never been run against the change they
+    were written to break. A mutation exists only once its crate is recompiled; `binary_for` now takes a `fresh`
+    flag, every cell rebuilds, and the driver's own comment records the mistake rather than removing it.
+
+The run on the shipped tree, all 14 cells:
+
+    $ python3 {SCRATCH}/implementer/b24/mutate.py
+    baseline: guard fixtures green (Ran 19 tests in 14.737s; OK)
+    baseline: recv_wait tests green (test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 86 filtered out; finished in 2.00s)
+    baseline: subagent tests green ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6931 filtered out; finished in 0.00s']
+    G1: CAUGHT (exit 1) FAILED (failures=7)
+    G2: CAUGHT (exit 1) FAILED (failures=1)
+    G3: CAUGHT (exit 1) FAILED (failures=2)
+    G4: CAUGHT (exit 1) FAILED (failures=7)
+    G5: CAUGHT (exit 1) FAILED (failures=2)
+    G6: CAUGHT (exit 1) FAILED (failures=1)
+    G7: CAUGHT (exit 1) FAILED (failures=4)
+    G8: CAUGHT (exit 1) FAILED (failures=1)
+    G9: CAUGHT (exit 1) FAILED (failures=9)
+    R1: CAUGHT (killed by signal 9) test recv_wait::tests::the_scale_factor_reaches_the_deadline ... FAILED
+    R2: CAUGHT (exit 101) test recv_wait::tests::the_default_bound_preempts_a_production_timer_on_a_paused_clock - should panic ... FAILED
+    R3: CAUGHT (exit 101) test recv_wait::tests::an_explicit_budget_replaces_the_default - should panic ... FAILED
+    R4: CAUGHT (exit 101) test recv_wait::tests::a_budget_above_the_production_timer_sees_it_on_a_paused_clock ... FAILED
+    R5: CAUGHT (exit 101) test agent::subagent::tests::usage_not_applied_mark_falls_back_to_coordinator_when_parent_is_starved ... FAILED
+
+14 caught, 0 survived. The line each cell prints next to its verdict is the first failing line it saw, not the
+evidence the verdict was taken against: `R2` strips the `what` prefix and several `should_panic` messages lose
+it at once, so it names whichever test libtest happened to report first while the verdict is checked against the
+row's own test. The matrix driver is not committed; each cell above names an exact anchor in a shipped file and
+an exact replacement, so any of them can be re-applied by hand against the tree in the repository.
+
+== 8. Deadline headroom: does 2 s actually have room?
+
+The worry with a shared deadline is the opposite failure: turning a silent hang into a flake, which is worse,
+because a flake gets the test deleted. Rather than argue the number, the probe shrinks `DEFAULT_RECV_TIMEOUT`
+temporarily to 25 ms and runs the converted suites: any wait needing more than 25 ms fails and names itself.
+80x headroom is the claim being tested.
+
+    $ python3 {SCRATCH}/implementer/b24/probe-lean.py 25
+    DEFAULT_RECV_TIMEOUT = 25ms (probe only; restored at the end)
+    == xai-grok-tools: PASS (exit 0) 0 passed, 0 probe-timeout(s), 61s
+    == xai-grok-shell lib: PASS (exit 0) 0 passed, 0 probe-timeout(s), 130s
+    == xai-grok-shell leader stdio: PASS (exit 0) 0 passed, 0 probe-timeout(s), 5s
+    == xai-grok-shell mcp perms: PASS (exit 0) 0 passed, 0 probe-timeout(s), 3s
+
+Four suites, 191 of the 232 sites (101 in `xai-grok-tools`, 90 in `xai-grok-shell`'s lib, the rest in the two
+integration suites), green at 25 ms with zero waits needing the extra room. The remaining six crates were not
+probed: the run was stopped at its own wall-clock ceiling because each probe value recompiles `xai-grok-test-support`
+and relinks every dependent test binary, which is the whole cost. The count column printed `0 passed` because of
+a field-index bug in the probe's own parser (it read `ok.` where it wanted the number); the verdicts come from
+the exit codes and from grepping the panic text, both of which were correct, and the bug was fixed in the probe
+after the run rather than the run being re-done.
+
+One thing that probe run taught the wrong way: it restores the constant in a `finally`, but the wrapper killed it
+with a signal, and a `finally` does not run for an uncaught `SIGTERM`. The tree was left at 25 ms. It was caught
+by reading the file, restored, and the restore verified by diffing against a snapshot taken before the probe
+started -- the only line that ever differed is the constant itself. A probe that mutates a shipped file needs its
+"before" bytes outside the process that mutates it.
+
+== 9. The panic-site ratchet went up by four, and the measurement behind letting it
+
+The full sweep on this tree failed exactly one gate, and it was the gate that should fail:
+
+    $ bash scripts/verify-gates.sh --with-build
+    ...
+    FAIL  panic-site census (exit 1)
+        all census fixture checks passed
+        xai-grok-test-support: production sites grew [56, 40, 22, 7] -> [56, 40, 26, 7] (unwrap, expect, panic!, unsafe)
+
+        A crate gained a way to panic in code that ships. Remove it, or re-run `scripts/ci/panic-site-census.py --write-baseline scripts/ci/panic-site-baseline.tsv` having decided to keep it.
+
+Four `panic!` in `recv_wait.rs`, and all four are the point of the file:
+
+    $ python3 scripts/ci/panic-site-census.py --list xai-grok-test-support | grep recv_wait
+    crates/codegen/xai-grok-test-support/src/recv_wait.rs:93: panic!/unreachable!/todo!/unimplemented!
+    crates/codegen/xai-grok-test-support/src/recv_wait.rs:100: panic!/unreachable!/todo!/unimplemented!
+    crates/codegen/xai-grok-test-support/src/recv_wait.rs:107: panic!/unreachable!/todo!/unimplemented!
+    crates/codegen/xai-grok-test-support/src/recv_wait.rs:177: panic!/unreachable!/todo!/unimplemented!
+
+Those are the oneshot-closed, deadline, channel-closed and broadcast-unavailable paths. The census counts them as
+production because they sit outside any `cfg(test)` span, and they have to: the module is compiled into *other*
+crates' test builds, where the consumer's `cfg(test)` is not set, so gating it behind `#[cfg(test)]` would stop
+all 227 converted call sites from compiling. `docs/audit-followup-report.md` §2.5 already tells a reader to read
+this crate's production column as test code wearing production clothes; the ratchet has no such nuance, which is
+why the row is raised by a recorded decision rather than quietly.
+
+The decision rests on a measurement, not on that argument. Whether the four panics can reach a binary a user runs
+is a question the dependency graph answers:
+
+    $ cargo tree -i xai-grok-test-support -e normal --workspace
+    xai-grok-test-support v0.1.0 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-test-support)
+    └── xai-grok-pager-pty-harness v0.1.0 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager-pty-harness)
+
+    $ cargo tree -i xai-grok-pager-pty-harness --workspace
+    xai-grok-pager-pty-harness v0.1.0 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager-pty-harness)
+    [dev-dependencies]
+    └── xai-grok-pager v0.4.2 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-pager)
+
+One non-dev dependent, and that dependent attaches to `xai-grok-pager` only under `[dev-dependencies]`, so the
+chain never leaves a test build. Counting the manifests agrees: 18 mentions of the crate name across all
+`Cargo.toml` files, 14 of them under `[dev-dependencies]` (13 crates, `xai-grok-pager` twice), and the four
+remaining are the workspace member list, the workspace dependency table, that pty-harness `[dependencies]` line,
+and the crate's own `[package] name`. No release artifact links any of it.
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+
+The row was edited by hand instead of regenerated, and that is checkable rather than asserted: writing a fresh
+baseline to a scratch path and diffing it against the committed file differs in exactly one number, the third
+column of the `xai-grok-test-support` row. `--write-baseline` rewrites all 97 rows, so nothing else could have
+drifted without showing up in that diff.
+
+    $ cmp {SCRATCH}/implementer/b24/panic-baseline-new.tsv scripts/ci/panic-site-baseline.tsv && echo IDENTICAL
+    IDENTICAL
+
+The committed file is byte-for-byte what `--write-baseline` would write, which is the property that matters: the
+next person to regenerate the baseline gets no unrelated churn out of it.
+
+What this does not settle is recorded as a TODO row rather than absorbed: the census decides "production" by file
+location (`src/` minus `cfg(test)` spans), while "code that ships" is a statement about the crate graph. Every
+future test-support helper that panics loudly raises the same row for the same reason, and the cheapest way for
+the next person to silence that noise -- gating the module behind `#[cfg(test)]` -- would break 227 call sites.
+The missing piece is crate-level reachability from a shipped target, written up in `docs/audit-followup-report.md`
+§2.8.
+
+== 10. A sweep that failed on a test this batch did not touch, and what the runner kept
+
+The second full sweep got past the census and failed a different gate:
+
+    $ bash scripts/verify-gates.sh --with-build
+    FAIL  cargo test (exit 101)
+    ...
+        error: 1 target failed:
+            `-p xai-tty-utils --lib`
+    ...
+    FAILED gates: cargo test
+    43 gate(s) run, 0 skipped, 1 failed
+
+Which test, the log does not say. `verify-gates.sh` prints the last 40 lines of a failed gate's output and keeps
+the rest in a shell variable that dies with the process, and in this run those 40 lines were doctest results from
+the crates that come *after* `xai-tty-utils`:
+
+    $ grep -n "FAILED\|panicked\|failures:" {SCRATCH}/implementer/b24/sweep-final2.txt
+    88:FAILED gates: cargo test
+
+So the transcript named no test at all: the grep for a panic or a failure list returned the summary line and
+nothing else, and the only other clue was `error: 1 target failed`. Re-running the same command directly was
+green:
+
+    $ RUST_MIN_STACK=16777216 cargo test --workspace --locked --no-fail-fast
+    EXIT=0
+
+with 0 failures anywhere in the captured output. Nothing in this batch touches `xai-tty-utils`, so the verdict was
+"intermittent, load-related, unrelated" -- and that verdict was, at that point, unfalsifiable, because the one
+piece of evidence that would have confirmed or refuted it was a test name nobody had.
+
+The name came back from a loop. 30 sequential runs of the suite that had failed, keeping the output of any red
+round:
+
+    $ for i in $(seq 1 30); do out=$(RUST_MIN_STACK=16777216 cargo test -q -p xai-tty-utils --lib 2>&1)
+      code=$?
+      if [ $code -ne 0 ]; then
+        echo "ROUND $i FAILED exit=$code"
+        echo "$out" | tail -40 > {SCRATCH}/implementer/b24/ttyutils-round-$i.txt
+        echo "saved"
+      fi
+    done
+    ROUND 23 FAILED exit=101
+    saved
+    loop done
+
+    ---- tests::armed_child_dies_when_parent_exits stdout ----
+    thread 'tests::armed_child_dies_when_parent_exits' (601006) panicked at crates/codegen/xai-tty-utils/src/lib.rs:1611:9:
+    grandchild pid 601059 outlived its parent despite kill_on_parent_death_std (PR_SET_PDEATHSIG not effective)
+    ...
+    test result: FAILED. 61 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+That is 1 in 30 on an unloaded host running the suite back to back, so a sweep that runs the whole workspace
+under full parallelism is expected to hit it occasionally. The test spawns a second copy of itself, that copy
+spawns a grandchild armed with `PR_SET_PDEATHSIG`, the intermediate exits, and the driver polls `/proc/<pid>/stat`
+for up to **10 s** waiting for the kernel's SIGTERM. 10 s was exceeded, so this is not a budget that is too
+tight; the signal genuinely had not arrived, which is why the follow-up row refuses to accept a "just raise the
+deadline" answer and asks for the observability fix first.
+
+Nothing here is attributed to this batch, and nothing here is dismissed either: it is recorded as a TODO row with
+the name, the line, the message and the measured rate, and the row puts the runner fix (write the failed gate's
+full output to a file and name the file in the summary) ahead of the test fix, because a fix aimed at an unnamed
+test is a guess.
+
+== 11. What was run, and what was not
+
+Run on the tree as committed: `cargo fmt --all`; `cargo check --workspace --all-targets --locked`;
+`cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo test --workspace --locked
+--no-fail-fast`, which is where the suites of all eight converted crates run; the guard fixtures (19); the
+guard on the shipped tree; the mutation matrix (section 7); `xai-grok-test-support` lib run on its own; and
+`xai-grok-shell` lib run on its own (6900 passed, 0 failed, 32 ignored). Also:
+`scripts/ci/check-guard-wiring.py`;
+`scripts/ci/classify-open-todos.py --write-export` and `--check-doc`; `scripts/ci/panic-site-census.py
+--check-baseline` (section 9); the four reachability commands of section 9; and the full host sweep
+`bash scripts/verify-gates.sh --with-build`, three times, because the tree changed between the first two runs and
+the second run turned up section 10:
+
+  * run 1, before the panic-baseline decision: `FAILED gates: panic-site census`, `43 gate(s) run, 0 skipped,
+    1 failed`;
+  * run 2, after it: `FAILED gates: cargo test`, again 43 run / 1 failed, the failure being the `xai-tty-utils`
+    flake of section 10 and nothing in this batch;
+  * run 3, on the tree as committed:
+
+        $ bash scripts/verify-gates.sh --with-build
+        PASS  unbounded test recv
+        ...
+        PASS  GUI protocol types
+
+        all gates passed on the host (43 run, 0 skipped)
+        SWEEP_EXIT=0
+
+The count is 43 where the previous batch recorded 42: `unbounded test recv` is the gate this batch adds, present
+in both `ci.yml` and the `gates=()` mirror, and `check-guard-wiring.py` is what keeps those two in step.
+
+Not run here, and stated rather than smoothed over:
+
+  * the probe for the six crates outside `xai-grok-tools` and `xai-grok-shell` (section 8);
+  * any fix for the `xai-tty-utils` intermittent failure. It is named, located, measured at 1 in 30 and recorded
+    as a TODO row; nothing in this batch touches that crate, and shipping a guess at a fix for a signal that
+    arrives late under load would replace a known flake with an unknown one;
+  * the root cause of the CI stall in run 37259667663, which this batch does not claim to have found. It removes
+    the class of failure that stall belongs to -- after this batch no test-side wait in the workspace can hold a
+    job open past 2 s -- and the row that tracks it stays open for the forensic half: a watchdog around the
+    `xai-grok-shell` lib suite that captures `gdb -batch -ex 'thread apply all bt'` and then `SIGQUIT`s libtest
+    into printing its own line, both uploaded as artifacts.
+
+== 12. Reproduce it
+
+    $ python3 scripts/ci/test-check-unbounded-recv.py
+    python3 scripts/ci/check-unbounded-recv.py
+    cargo test -q -p xai-grok-test-support --lib recv_wait
+    RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-shell --lib usage_not_applied_mark
+    python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+
+The mutation matrix driver is not committed; each cell above can be applied by hand as a one-line edit, and the
+cell tables in section 7 name the exact anchor and the exact replacement.

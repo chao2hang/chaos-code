@@ -1,5 +1,6 @@
 use axum::{Json, Router, extract::State, routing::post};
 use serde_json::{Value, json};
+use xai_grok_test_support::recv_wait::RecvBounded;
 use xai_grok_tools::computer::local::{LocalFs, LocalTerminalBackend};
 use xai_grok_tools::computer::types::{AsyncFileSystem, TerminalBackend};
 use xai_grok_tools::notification::ToolNotificationHandle;
@@ -140,7 +141,7 @@ async fn web_search_uses_model_override_from_config_end_to_end() {
         result.err()
     );
 
-    let request = rx.recv().await.expect("mock server should receive request");
+    let request = rx.recv_bounded("mock server should receive request").await;
     assert_eq!(
         request.get("model").and_then(|v| v.as_str()),
         Some(web_search_model.as_str())

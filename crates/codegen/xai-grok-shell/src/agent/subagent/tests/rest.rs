@@ -4,6 +4,7 @@ use super::super::resume_window::resume_inherited_prefix_len;
 use crate::test_support::lsp_runtime::{ctx_with_toggle, test_gateway};
 use crate::upload::trace::SubagentSpawnedRef;
 use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
+use xai_grok_test_support::recv_wait::RecvBounded;
 #[test]
 fn normalize_forked_context_strips_project_layout() {
     use xai_grok_sampling_types::conversation::ConversationItem;
@@ -1388,7 +1389,7 @@ async fn reconcile_with_inspections(
     let backend = ChannelBackend::new(event_tx);
     let respond = async move {
         for _ in 0..expected {
-            let event = event_rx.recv().await.expect("inspection event");
+            let event = event_rx.recv_bounded("inspection event").await;
             let SubagentEvent::Inspect(request) = event else {
                 panic!("expected Inspect event");
             };

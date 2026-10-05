@@ -1,4 +1,5 @@
 use super::*;
+use xai_grok_test_support::recv_wait::RecvBounded;
 use xai_grok_tools::computer::types::TaskKind;
 use xai_grok_tools::types::TaskSnapshot;
 
@@ -1012,7 +1013,7 @@ async fn acknowledged_scheduler_removal_appends_before_ack_and_broadcast() {
         let PersistenceMsg::AppendUpdateDurablyAndAck {
             update: crate::session::storage::SessionUpdate::Xai(notification),
             respond_to,
-        } = persistence_rx.recv().await.expect("durable append")
+        } = persistence_rx.recv_bounded("durable append").await
         else {
             panic!("expected durable scheduler tombstone");
         };

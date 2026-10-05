@@ -50,7 +50,9 @@ async fn admit_steer(
         admission_response(await_with_timeout(response_rx).await),
         ActiveMessageAdmission::Admitted
     );
-    receipt_rx.recv().await.expect("typed receipt handed off")
+    await_with_timeout(receipt_rx.recv())
+        .await
+        .expect("typed receipt handed off")
 }
 
 async fn set_running(actor: &SessionActor, prompt_id: &str) {
@@ -148,7 +150,9 @@ async fn receipt_backpressure_waits_before_queue_commit() {
                 .is_empty(),
             "no queue row exists before receipt capacity is reserved"
         );
-        receipt_rx.recv().await.expect("occupied receipt");
+        await_with_timeout(receipt_rx.recv())
+            .await
+            .expect("occupied receipt");
 
         await_with_timeout(admission).await.expect("admission task");
         assert_eq!(
@@ -163,8 +167,7 @@ async fn receipt_backpressure_waits_before_queue_commit() {
             1
         );
         assert_eq!(
-            receipt_rx
-                .recv()
+            await_with_timeout(receipt_rx.recv())
                 .await
                 .expect("committed receipt")
                 .prompt_id,
@@ -338,7 +341,9 @@ async fn running_steer_projects_at_safe_point_with_agent_provenance() {
                 .len(),
             1,
         );
-        let receipt = receipt_rx.recv().await.expect("typed receipt handed off");
+        let receipt = await_with_timeout(receipt_rx.recv())
+            .await
+            .expect("typed receipt handed off");
         assert!(actor.drain_parent_messages_at_safe_point().await);
         let conversation = await_with_timeout(actor.chat_state_handle.get_conversation()).await;
         assert!(matches!(
@@ -852,7 +857,9 @@ async fn committed_delivery_queues_protected_fifo_row_with_typed_receipt_identit
             admission_response(await_with_timeout(response_rx).await),
             ActiveMessageAdmission::Admitted
         );
-        let receipt = receipt_rx.recv().await.expect("typed receipt handed off");
+        let receipt = await_with_timeout(receipt_rx.recv())
+            .await
+            .expect("typed receipt handed off");
         assert_eq!(receipt.prompt_id, "parent-message-queued");
         assert_eq!(receipt.telemetry.parent_ctx.session_id, "test-parent");
         assert_eq!(

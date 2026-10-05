@@ -729,6 +729,55 @@ unsafe 两列不变。所以 §2.6 表里「两处都修」那一行（300 / 594
 `--list` 从 203 条变 190 条，门禁基线 `scripts/ci/panic-site-baseline.tsv` 里唯一变动的就是
 这一行。
 
+### 2.8 2026-10-05 棘轮第一次为一个只被 dev-dependency 链接的 crate 涨行：4 个 panic 就是那段代码的全部职责
+
+b24（测试里 232 处裸 `recv().await` 收进 `xai_grok_test_support::recv_wait`）在完整主机闸门扫描里只 FAIL 了一
+格，而且恰好是该 FAIL 的那一格：
+
+```
+$ bash scripts/verify-gates.sh --with-build
+FAIL  panic-site census (exit 1)
+    xai-grok-test-support: production sites grew [56, 40, 22, 7] -> [56, 40, 26, 7] (unwrap, expect, panic!, unsafe)
+```
+
+四个新增 `panic!` 全在 `crates/codegen/xai-grok-test-support/src/recv_wait.rs` 的 93、100、107、177 行，逐条
+是 oneshot 通道关闭、等待期限到点、`mpsc` 提前关闭、`broadcast` 不可用 —— 删掉它们等于把这个 helper 删掉。
+
+**为什么它们算生产，而且没法不算。** 扫描器判生产的规则是"`src/` 之下、且不在任何 `cfg(test)` span 里"，这四
+个都不在。它们也不能在：这个模块要被**别的** crate 的测试构建链接，而那时生效的是消费者 crate 的 `cfg(test)`
+不成立、本 crate 的 `cfg(test)` 更不成立，给模块挂上 `#[cfg(test)]` 会让 227 处调用点直接编译不过。§2.5 那段
+早就写着这张表里 `xai-grok-test-support` 一行要按"生产形态的测试代码"读、不进 2.4 的治理优先级，但棘轮没有
+这个 nuance —— 它只看数字，所以这一行必须由一次有记录的决定来涨，而不是靠谁下次忘了看。
+
+**可达性是量出来的，不是论证出来的。** 这四个 panic 会不会进到用户跑的二进制里，依赖图能直接回答：
+
+```
+$ cargo tree -i xai-grok-test-support -e normal --workspace
+xai-grok-test-support v0.1.0 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-test-support)
+└── xai-grok-pager-pty-harness v0.1.0 (.../crates/codegen/xai-grok-pager-pty-harness)
+
+$ cargo tree -i xai-grok-pager-pty-harness --workspace
+xai-grok-pager-pty-harness v0.1.0 (.../crates/codegen/xai-grok-pager-pty-harness)
+[dev-dependencies]
+└── xai-grok-pager v0.4.2 (.../crates/codegen/xai-grok-pager)
+```
+
+非 dev 边的下游只有一个，而那个下游本身只在 `[dev-dependencies]` 里挂在 `xai-grok-pager` 上，链子出不了测试构
+建。逐 manifest 数同一件事：全仓 `Cargo.toml` 里 18 处提到这个名字，**14 处在 `[dev-dependencies]`**（13 个
+crate，`xai-grok-pager` 两处），剩下 4 处是 workspace 成员列表、workspace 依赖表、pty-harness 那条
+`[dependencies]`、以及本 crate 自己的 `[package] name`。没有任何发布产物链接它。
+
+**决定，以及决定怎么被验证。** 手工把基线那一行第三列从 22 改成 26，没有跑 `--write-baseline`（它会重写 97
+行），改成把新基线写到 scratch 再与提交的文件 diff —— 差的就是那一格的那个数字，别的 96 行没漂。改完之后
+`--check-baseline` 报 `baseline holds: 97 crates, 0 fewer production sites than recorded`。逐字输出、四行
+`--list` 明细与两条 `cargo tree` 都在 `docs/verification/unbounded-test-recv-2026-10-05.log` §9。
+
+**这次决定没解决的那一半记在 TODO。** 扫描器按**文件位置**判生产，而"会不会进二进制"是 **crate 图**上的命题：
+它已经会算文件级的"任意构建可达 / 生产可达"（§2.5 那条 uncompiled 台账用的就是它），但不会算"某个 workspace
+成员只通过 dev 边被链接"。后果是每一个未来会 panic 的测试基础设施 helper 都会同样地涨这一行，而最省事的降噪
+办法（挂 `#[cfg(test)]`）恰好是错的那一个。缺的是从被发布的 target 出发、沿非 dev 边做可达性；这一步要回答
+"哪些 target 算发布"，那是发布配置里的知识，不该由扫描器猜，所以留成一行而不是就地实现。
+
 ---
 
 ## 3. ignored 测试

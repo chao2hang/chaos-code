@@ -935,6 +935,7 @@ mod tests {
     use crate::types::resources::{Resources, WebCitationCounter};
     use std::sync::Arc;
     use tokio::sync::Mutex;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     macro_rules! notification {
         ($event:expr, $variant:ident) => {{
@@ -2637,7 +2638,10 @@ mod tests {
             })
             .await;
         response.await.unwrap().unwrap();
-        let created = notification!(notifications.recv().await.unwrap(), ScheduledTaskCreated);
+        let created = notification!(
+            notifications.recv_bounded("created").await,
+            ScheduledTaskCreated
+        );
         assert_eq!(created.revision, 1);
 
         let (reply, response) = tokio::sync::oneshot::channel();
@@ -2650,7 +2654,10 @@ mod tests {
             })
             .await;
         response.await.unwrap().unwrap();
-        let updated = notification!(notifications.recv().await.unwrap(), ScheduledTaskCreated);
+        let updated = notification!(
+            notifications.recv_bounded("updated").await,
+            ScheduledTaskCreated
+        );
         assert_eq!(updated.revision, 2);
         assert!(notifications.try_recv().is_err());
     }

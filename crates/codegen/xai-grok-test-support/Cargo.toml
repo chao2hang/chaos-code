@@ -28,6 +28,9 @@ xai-tty-utils = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
+# `test-util` enables `#[tokio::test(start_paused = true)]`, which the `recv_wait`
+# tests use to pin how a bound interacts with an auto-advancing clock.
+tokio = { workspace = true, features = ["test-util"] }
 [features]
 default = []
 default-bazel = []

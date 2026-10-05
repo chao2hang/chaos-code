@@ -258,6 +258,7 @@ pub(crate) fn bridge_channels(
 mod tests {
     use super::*;
     use xai_acp_lib::acp_send;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[tokio::test]
     async fn forward_outbound_line_delivers_on_live_channel() {
@@ -351,7 +352,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let fake_leader = tokio::spawn(async move {
-            let msg = fake_leader_rx.recv().await.expect("expected a message");
+            let msg = fake_leader_rx.recv_bounded("expected a message").await;
             let req: serde_json::Value =
                 serde_json::from_str(&msg).expect("invalid JSON from bridge");
             let id = req.get("id").expect("missing id").clone();

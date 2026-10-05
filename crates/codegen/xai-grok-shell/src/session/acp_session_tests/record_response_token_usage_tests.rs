@@ -3,6 +3,7 @@ use super::*;
 use xai_grok_sampling_types::{
     BackendToolCallItem, BackendToolKind, ConversationItem, ConversationResponse, TokenUsage, rs,
 };
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 fn response_with_usage(total_tokens: u32) -> ConversationResponse {
     ConversationResponse {
@@ -116,7 +117,7 @@ async fn response_reasoning_does_not_inflate_model_reported_context() {
                     None,
                 )
                 .await;
-            let notification = event_rx.recv().await.expect("notification queued");
+            let notification = event_rx.recv_bounded("notification queued").await;
             let SessionEvent::Notification(SessionNotification::Acp(notification)) = notification
             else {
                 panic!("expected ACP notification");

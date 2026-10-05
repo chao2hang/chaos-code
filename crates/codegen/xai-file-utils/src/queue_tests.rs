@@ -1,5 +1,6 @@
 use super::*;
 use crate::UploadMethod;
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 /// Mock credential resolver for tests.
 struct MockResolver;
@@ -402,7 +403,7 @@ async fn enqueue_copies_client_version_onto_item() {
         .await
         .unwrap();
 
-    let item = rx.recv().await.expect("item enqueued");
+    let item = rx.recv_bounded("item enqueued").await;
     assert_eq!(
         item.client_version.as_deref(),
         Some("0.1.42"),
@@ -462,7 +463,7 @@ async fn enqueue_bytes_blocking_returns_enqueued_on_happy_path() {
 
     assert_eq!(outcome, EnqueueOutcome::Enqueued);
     // The worker channel received exactly one item (durable hand-off).
-    let item = rx.recv().await.expect("item should be enqueued");
+    let item = rx.recv_bounded("item should be enqueued").await;
     assert_eq!(item.gcs_path, "sess/turn_0/before_changes.tar.gz");
     assert_eq!(stats.enqueued.load(Ordering::Relaxed), 1);
     assert_eq!(stats.enqueue_fallbacks.load(Ordering::Relaxed), 0);
@@ -548,7 +549,7 @@ async fn enqueue_dedups_identical_gcs_path_until_item_settles() {
     assert_eq!(temp_files, 2, "duplicate must not spill a second copy");
 
     // Dropping the buffered item un-marks it in-flight, as a worker terminal would.
-    let first_item = rx.recv().await.expect("first item buffered");
+    let first_item = rx.recv_bounded("first item buffered").await;
     assert_eq!(first_item.gcs_path, blob);
     drop(first_item);
 
@@ -926,7 +927,7 @@ async fn enqueue_bytes_blocking_writes_sidecar_manifest_alongside_tmp() {
         .clone();
     assert_eq!(sidecar_name, format!("{temp_name}{SIDECAR_SUFFIX}"));
 
-    let item = rx.recv().await.expect("item handed to the worker");
+    let item = rx.recv_bounded("item handed to the worker").await;
     assert_eq!(
         item.sidecar_path.as_ref().unwrap(),
         &queue_dir.join(&sidecar_name)
@@ -986,7 +987,7 @@ async fn enqueue_does_not_write_sidecar_legacy_fast_path() {
         !names[0].ends_with(SIDECAR_SUFFIX),
         "legacy enqueue must not write a .meta.json sidecar"
     );
-    let item = rx.recv().await.expect("item handed to the worker");
+    let item = rx.recv_bounded("item handed to the worker").await;
     assert!(
         item.sidecar_path.is_none(),
         "legacy enqueue item carries no sidecar path"
@@ -1374,7 +1375,7 @@ async fn enqueue_file_blocking_stores_plain_file_even_with_compress_true() {
     assert_eq!(queued.len(), content.len());
 
     // The item carries compress=true for the worker to act on.
-    let item = rx.recv().await.expect("item enqueued");
+    let item = rx.recv_bounded("item enqueued").await;
     assert!(item.compress);
 }
 
@@ -3713,7 +3714,7 @@ async fn reference_snapshot_immutable_to_source_mutation() {
         )
         .await
         .unwrap();
-    let item = rx.recv().await.expect("snapshot enqueued");
+    let item = rx.recv_bounded("snapshot enqueued").await;
     let snapshot_path = item.source.path().to_path_buf();
 
     // Mutate the source AFTER the snapshot was taken; CoW/copy keeps the
@@ -3826,7 +3827,7 @@ async fn reference_snapshot_content_matches_source() {
         )
         .await
         .unwrap();
-    let item = rx.recv().await.expect("snapshot enqueued");
+    let item = rx.recv_bounded("snapshot enqueued").await;
     assert_eq!(
         std::fs::read(item.source.path()).unwrap(),
         bytes,
@@ -4092,7 +4093,7 @@ async fn reference_enqueue_process_pending_bytes_round_trip() {
         .await
         .unwrap();
 
-    let item = rx.recv().await.expect("snapshot enqueued");
+    let item = rx.recv_bounded("snapshot enqueued").await;
     let disk_bytes = match &item.source {
         UploadSource::OwnedSnapshot { disk_bytes, .. } => *disk_bytes,
         other => panic!("expected OwnedSnapshot, got {:?}", other.path()),
@@ -4196,7 +4197,7 @@ async fn enqueue_file_reference_zero_byte_source_succeeds() {
         .await
         .unwrap();
 
-    let item = rx.recv().await.expect("0-byte snapshot enqueued");
+    let item = rx.recv_bounded("0-byte snapshot enqueued").await;
     assert!(matches!(item.source, UploadSource::OwnedSnapshot { .. }));
     assert_eq!(stats.reference_stale.load(Ordering::Relaxed), 0);
     assert_eq!(std::fs::metadata(item.source.path()).unwrap().len(), 0);

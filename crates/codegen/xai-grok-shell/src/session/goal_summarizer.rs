@@ -330,6 +330,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[test]
     fn prompt_render_resolves_tool_placeholders_and_inlines_inputs() {
@@ -631,7 +632,7 @@ mod tests {
                 .await;
         });
 
-        let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+        let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
             panic!("expected Spawn");
         };
         assert!(

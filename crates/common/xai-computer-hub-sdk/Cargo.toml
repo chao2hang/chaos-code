@@ -49,6 +49,9 @@ xai-tracing = { workspace = true }
 
 # Integration tests that need heavier backend deps live in a separate sibling crate to keep this dev-dep set minimal.
 [dev-dependencies]
+# `recv_wait::RecvBounded` bounds every test-side `recv()`, so a wait for an event that
+# never arrives fails the test instead of running the CI job out to `timeout-minutes`.
+xai-grok-test-support = { workspace = true }
 tokio = { workspace = true, features = ["full", "test-util"] }
 axum = { workspace = true, features = ["ws", "macros"] }
 chrono = { workspace = true }

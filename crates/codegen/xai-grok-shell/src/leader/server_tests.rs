@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use super::*;
 use tempfile::TempDir;
+use xai_grok_test_support::recv_wait::RecvBounded;
 
 /// Parse a raw payload for the parse-once helper APIs.
 /// Panics on invalid JSON: the routing loop parses once up front, so non-JSON payloads never reach the helpers (they forward or drop verbatim).
@@ -677,7 +678,7 @@ async fn acp_message_forwarding() {
     .unwrap();
 
     // Verify it was forwarded
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     assert_eq!(received, payload);
 
     cancel.cancel();
@@ -717,7 +718,7 @@ async fn initialize_gets_client_identifier_injected() {
     .unwrap();
 
     // Verify the forwarded message has clientIdentifier injected
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     assert_eq!(
         json["params"]["_meta"]["clientIdentifier"], "grok-tui",
@@ -762,7 +763,7 @@ async fn initialize_preserves_existing_client_identifier() {
     .unwrap();
 
     // Verify the forwarded message kept the original clientIdentifier
-    let received = acp_rx.recv().await.unwrap();
+    let received = acp_rx.recv_bounded("received").await;
     let json: serde_json::Value = serde_json::from_str(&received).unwrap();
     assert_eq!(
         json["params"]["_meta"]["clientIdentifier"], "grok-web",
@@ -2194,7 +2195,7 @@ async fn model_injected_after_set_model(response: Option<serde_json::Value>) -> 
     )
     .await
     .unwrap();
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
 
     if let Some(mut response) = response {
         let forwarded_id =
@@ -2218,7 +2219,7 @@ async fn model_injected_after_set_model(response: Option<serde_json::Value>) -> 
     .await
     .unwrap();
 
-    let forwarded = acp_rx.recv().await.unwrap();
+    let forwarded = acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
     json["params"]["_meta"]["modelId"]
         .as_str()
@@ -2792,7 +2793,7 @@ async fn agent_busy_set_when_request_forwarded() {
     .unwrap();
 
     // Read it from the server side so we know it's been processed
-    let forwarded = handle.acp_rx.recv().await.unwrap();
+    let forwarded = handle.acp_rx.recv_bounded("forwarded").await;
     assert!(forwarded.contains("test/ping"));
 
     assert!(
@@ -2836,7 +2837,7 @@ async fn agent_busy_cleared_when_response_received() {
     .unwrap();
 
     // Read the forwarded request and extract the namespaced ID
-    let forwarded = handle.acp_rx.recv().await.unwrap();
+    let forwarded = handle.acp_rx.recv_bounded("forwarded").await;
     let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
     let namespaced_id = json["id"].as_str().unwrap().to_string();
 
@@ -2904,8 +2905,8 @@ async fn agent_busy_tracks_multiple_pending_requests() {
     .unwrap();
 
     // Read both forwarded requests
-    let fwd1 = handle.acp_rx.recv().await.unwrap();
-    let fwd2 = handle.acp_rx.recv().await.unwrap();
+    let fwd1 = handle.acp_rx.recv_bounded("fwd1").await;
+    let fwd2 = handle.acp_rx.recv_bounded("fwd2").await;
     let id1 = serde_json::from_str::<serde_json::Value>(&fwd1).unwrap()["id"]
         .as_str()
         .unwrap()
@@ -3015,7 +3016,7 @@ async fn agent_busy_clears_when_client_disconnects_mid_request() {
         .unwrap();
 
         // Read the forwarded request to get the namespaced ID
-        let forwarded = acp_rx.recv().await.unwrap();
+        let forwarded = acp_rx.recv_bounded("forwarded").await;
         let json: serde_json::Value = serde_json::from_str(&forwarded).unwrap();
         let id = json["id"].as_str().unwrap().to_string();
 

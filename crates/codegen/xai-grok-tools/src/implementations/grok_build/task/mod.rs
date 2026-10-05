@@ -774,6 +774,7 @@ mod tests {
     use crate::types::tool_metadata::test_ctx;
     use std::sync::Arc;
     use tokio::sync::mpsc;
+    use xai_grok_test_support::recv_wait::RecvBounded;
     use xai_tool_types::SubagentCapabilityMode;
 
     /// Backend whose `ValidateType` events are auto-acked with `Ok`.
@@ -1007,7 +1008,7 @@ mod tests {
 
         // Spawn a task that will handle the request
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(request.subagent_type, "explore");
             assert_eq!(request.parent_session_id, "parent-session");
             assert_eq!(request.parent_prompt_id.as_deref(), Some("prompt-123"));
@@ -1071,7 +1072,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             request
                 .respond_with(|_| SubagentResult {
                     success: false,
@@ -1120,7 +1121,7 @@ mod tests {
 
         // Spawn a task that drops the result_tx without sending
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             drop(request.result_tx);
         });
 
@@ -2162,7 +2163,7 @@ mod tests {
 
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert!(
                 !request.fork_context,
                 "model-spawned task must not set fork_context"
@@ -2247,7 +2248,7 @@ mod tests {
 
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             request
                 .respond_with(|request| SubagentResult {
@@ -2309,7 +2310,7 @@ mod tests {
 
             let shared = resources.into_shared();
             let handle = tokio::spawn(async move {
-                let request = unwrap_spawn(rx.recv().await.unwrap());
+                let request = unwrap_spawn(rx.recv_bounded("request").await);
                 assert!(
                     request.resume_from.is_none(),
                     "sentinel {sentinel:?} must normalize to None, got {:?}",
@@ -2441,7 +2442,7 @@ mod tests {
 
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert!(
                 request.cwd.is_none(),
                 "empty cwd should normalize to None, got {:?}",
@@ -2491,7 +2492,7 @@ mod tests {
 
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert!(
                 request.cwd.is_none(),
                 "'null' cwd should normalize to None, got {:?}",
@@ -2541,7 +2542,7 @@ mod tests {
 
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert!(
                 request.cwd.is_none(),
                 "whitespace cwd should normalize to None, got {:?}",
@@ -2594,7 +2595,7 @@ mod tests {
 
         let shared = resources.into_shared();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert!(
                 request.cwd.is_none(),
                 "non-existent cwd should be cleared when worktree is set, got {:?}",
@@ -2687,7 +2688,7 @@ mod tests {
 
             let shared = resources.into_shared();
             let handle = tokio::spawn(async move {
-                let request = unwrap_spawn(rx.recv().await.unwrap());
+                let request = unwrap_spawn(rx.recv_bounded("request").await);
                 assert!(
                     request.cwd.is_none(),
                     "sentinel {sentinel:?} must normalize to None without worktree, got {:?}",
@@ -2745,7 +2746,7 @@ mod tests {
         let shared = resources.into_shared();
         let dir = existing_dir();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(request.cwd.as_deref(), Some(dir.as_str()));
             request
                 .respond_with(|request| SubagentResult {
@@ -2801,7 +2802,7 @@ mod tests {
         let shared = resources.into_shared();
         let dir = existing_dir();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(
                 request.cwd.as_deref(),
                 Some(dir.as_str()),
@@ -2858,7 +2859,7 @@ mod tests {
         let shared = resources.into_shared();
         let dir = existing_dir();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(request.cwd.as_deref(), Some(dir.as_str()));
             request
                 .respond_with(|request| SubagentResult {
@@ -2909,7 +2910,7 @@ mod tests {
         let resume_cwd = format!("{}/some-dir", std::env::temp_dir().display());
         let want_cwd = resume_cwd.clone();
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             // Both values are threaded through — coordinator decides precedence.
             assert_eq!(request.cwd.as_deref(), Some(want_cwd.as_str()));
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
@@ -2961,7 +2962,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(
                 request.runtime_overrides.model.as_deref(),
                 Some("test-model"),
@@ -3005,7 +3006,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert!(
                 request.runtime_overrides.model.is_none(),
                 "omitted model must stay None, got {:?}",
@@ -3055,7 +3056,7 @@ mod tests {
             let resources = resources_for_task(backend);
             let shared = resources.into_shared();
             let handle = tokio::spawn(async move {
-                let request = unwrap_spawn(rx.recv().await.unwrap());
+                let request = unwrap_spawn(rx.recv_bounded("request").await);
                 assert!(
                     request.runtime_overrides.model.is_none(),
                     "sentinel {sentinel:?} must normalize to None, got {:?}",
@@ -3096,7 +3097,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(
                 request.runtime_overrides.model.as_deref(),
                 Some("test-model"),
@@ -3130,7 +3131,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             assert!(
                 request.runtime_overrides.model.is_none(),
@@ -3176,7 +3177,7 @@ mod tests {
         let shared = resources.into_shared();
 
         let handle = tokio::spawn(async move {
-            let request = unwrap_spawn(rx.recv().await.unwrap());
+            let request = unwrap_spawn(rx.recv_bounded("request").await);
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             assert!(request.runtime_overrides.model.is_none());
             let id = request.id.clone();

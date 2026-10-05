@@ -139,6 +139,7 @@ pub(crate) async fn flush_replay_actor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[tokio::test(flavor = "current_thread")]
     async fn flush_replay_actor_acknowledges() {
@@ -149,7 +150,7 @@ mod tests {
                 let (event, rx) = SessionEvent::flush_with_ack();
                 event_tx.send(event).expect("event send should succeed");
 
-                let event = event_rx.recv().await.expect("event should arrive");
+                let event = event_rx.recv_bounded("event should arrive").await;
 
                 match event {
                     SessionEvent::FlushReplay { respond_to } => {

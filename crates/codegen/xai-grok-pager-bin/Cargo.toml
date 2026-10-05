@@ -83,6 +83,9 @@ serial_test = { workspace = true }
 # `clap::Parser` trait in scope).
 clap = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }
+# `recv_wait::RecvBounded` bounds every test-side `recv()`, so a wait for an event that
+# never arrives fails the test instead of running the CI job out to `timeout-minutes`.
+xai-grok-test-support = { workspace = true }
 
 [features]
 default = [

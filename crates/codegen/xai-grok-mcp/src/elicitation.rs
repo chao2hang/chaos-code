@@ -230,6 +230,7 @@ pub fn wire_mode_and_fields(params: &ElicitRequestParams) -> Option<WireElicitFi
 mod tests {
     use super::*;
     use rmcp::model::{ElicitationSchema, PrimitiveSchemaDefinition, StringSchema};
+    use xai_grok_test_support::recv_wait::within_option;
 
     fn url_fields(message: &str, url: &str, elicitation_id: &str) -> WireElicitFields {
         wire_mode_and_fields(&ElicitRequestParams::UrlElicitationParams {
@@ -279,7 +280,7 @@ mod tests {
         };
 
         let handle = tokio::spawn(async move {
-            let job = inbox.recv().await.expect("job");
+            let job = within_option(inbox.recv(), "job").await;
             assert_eq!(job.server_name, "srv");
             let _ = job.response_tx.send(accept_result(Some(serde_json::json!({
                 "email": "a@b.com"
@@ -305,7 +306,7 @@ mod tests {
             elicitation_id: "e1".into(),
         };
         let task = tokio::spawn(async move { bridge_elicit(&bridge, "srv", params).await });
-        let mut job = inbox.recv().await.expect("job");
+        let mut job = within_option(inbox.recv(), "job").await;
         task.abort();
         let _ = task.await;
         tokio::time::timeout(std::time::Duration::from_secs(1), job.response_tx.closed())
@@ -404,7 +405,7 @@ mod tests {
             })
             .expect("push second");
         assert_eq!(first.await.unwrap().action, ElicitationAction::Cancel);
-        let kept = inbox.recv().await.expect("kept");
+        let kept = within_option(inbox.recv(), "kept").await;
         assert_eq!(kept.server_name, "b");
     }
 

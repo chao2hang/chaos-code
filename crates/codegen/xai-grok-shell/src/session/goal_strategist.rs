@@ -535,6 +535,7 @@ fn record_fail_open(
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use xai_grok_test_support::recv_wait::RecvBounded;
 
     #[tokio::test]
     async fn channel_spawner_request_is_harness_internal() {
@@ -565,7 +566,7 @@ mod tests {
                 .await;
         });
 
-        let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+        let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
             panic!("expected Spawn");
         };
         assert!(
@@ -608,7 +609,7 @@ mod tests {
                 )
                 .await;
         });
-        let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+        let SubagentEvent::Spawn(request) = rx.recv_bounded("spawn event").await else {
             panic!("expected Spawn");
         };
         assert_eq!(

@@ -1,6 +1,7 @@
 use super::*;
 use rmcp::ServiceExt;
 use std::path::PathBuf;
+use xai_grok_test_support::recv_wait::{RecvBounded, within_option};
 
 #[tokio::test]
 async fn resilient_transport_skips_undecodable_line_and_keeps_stream_alive() {
@@ -2156,10 +2157,7 @@ async fn try_call_tool_mrtr_form_elicitation_round_trip() {
     client.set_elicitation_tx(Some(inbox.clone()));
 
     let answer = tokio::spawn(async move {
-        let job = inbox
-            .recv()
-            .await
-            .expect("elicitation job reaches the inbox");
+        let job = within_option(inbox.recv(), "elicitation job reaches the inbox").await;
         assert_eq!(job.server_name, "fake");
         assert_eq!(job.fields.message, "Please provide your email");
         assert!(
@@ -2251,10 +2249,7 @@ async fn try_call_tool_mrtr_round_survives_transport_recovery() {
     client.set_elicitation_tx(Some(inbox.clone()));
 
     let answer = tokio::spawn(async move {
-        let job = inbox
-            .recv()
-            .await
-            .expect("elicitation job reaches the inbox");
+        let job = within_option(inbox.recv(), "elicitation job reaches the inbox").await;
         let _ = job.response_tx.send(crate::elicitation::accept_result(Some(
             serde_json::json!({"email": "user@example.com"}),
         )));
@@ -2311,10 +2306,7 @@ async fn try_call_tool_mrtr_url_elicitation_with_state_only_round() {
     client.set_elicitation_tx(Some(inbox.clone()));
 
     let answer = tokio::spawn(async move {
-        let job = inbox
-            .recv()
-            .await
-            .expect("elicitation job reaches the inbox");
+        let job = within_option(inbox.recv(), "elicitation job reaches the inbox").await;
         let xai_grok_tools::mcp_elicitation::McpElicitModeFields::Url {
             url,
             elicitation_id,
@@ -3449,7 +3441,7 @@ async fn client_handler_routes_tools_changed() {
     handler.emit(McpClientEvent::ToolsChanged {
         server: handler.server_name.clone(),
     });
-    let ev = rx.recv().await.expect("event arrived");
+    let ev = rx.recv_bounded("event arrived").await;
     match ev {
         McpClientEvent::ToolsChanged { server } => assert_eq!(server, "test"),
         other => panic!("expected ToolsChanged, got {other:?}"),
@@ -3470,7 +3462,7 @@ async fn client_handler_observes_post_handshake_set_event_tx() {
     handler.emit(McpClientEvent::ToolsChanged {
         server: "test".to_string(),
     });
-    let ev = rx.recv().await.expect("event arrived");
+    let ev = rx.recv_bounded("event arrived").await;
     match ev {
         McpClientEvent::ToolsChanged { server } => assert_eq!(server, "test"),
         other => panic!("expected ToolsChanged, got {other:?}"),
