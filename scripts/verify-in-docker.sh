@@ -366,6 +366,10 @@ gates=(
   # through `xai_grok_test_support::recv_wait` in one batch; this refuses a crate that grows one
   # back, and refuses a crate that drops under its own row so the ceiling cannot outlive the debt.
   "unbounded test recv: python3 scripts/ci/test-check-unbounded-recv.py && python3 scripts/ci/check-unbounded-recv.py"
+  # 锁中毒的另一种读法：`.ok()` 把「持锁线程死了」读成「没有值」。它不像 `.unwrap()` 会再 panic，
+  # 所以静默——fail-closed 的判定就此打开，远端策略层被读成「没有意见」，本地配置层接管决定。
+  # 19 处站点（4 个 crate、7 把锁）已全部读穿中毒，这里不留基线，只认 0。
+  "lock poison: python3 scripts/ci/test-check-lock-poison.py && python3 scripts/ci/check-lock-poison.py"
   # The census cannot see a Prometheus call whose label count is wrong, because the panic
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says
   # so. This pairs each label-value call with the labels its metric registration declares.

@@ -8,6 +8,7 @@ use super::reasoning_effort::{
 use super::sampler_prewarm::spawn_sampler_transport_prewarm;
 use super::*;
 use crate::agent::session_metrics::SessionStartKind;
+use crate::util::shared_guard::LockOrRecover;
 /// Refusals resume must give verbatim, so a test cannot mistake some other `invalid_params` for the guard it is pinning.
 pub(super) const RESUME_REFUSES_CHAT: &str =
     "session/resume is not supported for chat sessions; use session/load";
@@ -1584,7 +1585,7 @@ impl MvpAgent {
         }
         if let Some(running_prompt_id) = self
             .resident_handle(&session_id)
-            .and_then(|h| h.current_prompt_id.lock().ok().and_then(|g| g.clone()))
+            .and_then(|h| h.current_prompt_id.lock_or_recover().clone())
         {
             response_meta_map.insert(
                 "x.ai/runningPromptId".to_string(),

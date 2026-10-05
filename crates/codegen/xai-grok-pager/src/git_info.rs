@@ -24,6 +24,19 @@ type CwdCacheEntry = (Option<CwdGitInfo>, Instant);
 static CWD_GIT_CACHE: LazyLock<Mutex<HashMap<PathBuf, CwdCacheEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// [`CWD_GIT_CACHE`] behind its lock, taken through poisoning.
+///
+/// Every access to this cache goes through here. Two of its writers run inside the lock
+/// ([`update_from_notification`] and `apply_cwd_git_refresh`), so poisoning is reachable, and
+/// swallowing it is not a miss-and-retry: [`cwd_git_info_lazy`] bails on a failed lock before
+/// reserving the slot or spawning a refresh, so no later frame ever repairs the entry and every
+/// agent loses its branch label for the rest of the session.
+fn lock_cache() -> std::sync::MutexGuard<'static, HashMap<PathBuf, CwdCacheEntry>> {
+    CWD_GIT_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Minimum interval between off-thread refreshes for the same cwd, so a per-frame caller can't spawn a storm of git lookups.
 const CWD_GIT_REFRESH_TTL: Duration = Duration::from_secs(5);
 
@@ -46,21 +59,20 @@ pub fn update_from_notification(
     main_repo: Option<String>,
     is_worktree: bool,
 ) {
-    if let Ok(mut cache) = CWD_GIT_CACHE.lock() {
-        let worktree_label = cache
-            .get(dir)
-            .and_then(|(info, _)| info.as_ref())
-            .and_then(|i| i.worktree_label.clone());
-        let is_worktree =
-            is_worktree || is_cwd_worktree(main_repo.as_deref(), worktree_label.as_deref());
-        let info = CwdGitInfo {
-            is_worktree,
-            branch: branch.map(str::to_string),
-            main_repo,
-            worktree_label,
-        };
-        cwd_cache_insert(&mut cache, dir.to_path_buf(), (Some(info), Instant::now()));
-    }
+    let mut cache = lock_cache();
+    let worktree_label = cache
+        .get(dir)
+        .and_then(|(info, _)| info.as_ref())
+        .and_then(|i| i.worktree_label.clone());
+    let is_worktree =
+        is_worktree || is_cwd_worktree(main_repo.as_deref(), worktree_label.as_deref());
+    let info = CwdGitInfo {
+        is_worktree,
+        branch: branch.map(str::to_string),
+        main_repo,
+        worktree_label,
+    };
+    cwd_cache_insert(&mut cache, dir.to_path_buf(), (Some(info), Instant::now()));
 }
 
 /// Eagerly warm [`CWD_GIT_CACHE`] for `cwd` off-thread, e.g. at pager startup and after a dashboard location change.
@@ -126,7 +138,7 @@ fn is_cwd_worktree(main_repo: Option<&str>, worktree_label: Option<&str>) -> boo
 ///
 /// Keyed per directory, so each agent shows the branch/worktree of its own location rather than the process cwd's.
 pub fn cwd_git_info_lazy(cwd: &Path) -> Option<CwdGitInfo> {
-    let mut cache = CWD_GIT_CACHE.lock().ok()?;
+    let mut cache = lock_cache();
     let (cached, needs_refresh) = match cache.get(cwd) {
         Some((info, ts)) => (info.clone(), ts.elapsed() >= CWD_GIT_REFRESH_TTL),
         None => (None, true),
@@ -158,9 +170,7 @@ fn spawn_cwd_git_refresh(cwd: PathBuf) {
         let info =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute_cwd_git_info(&cwd)))
                 .unwrap_or(None);
-        if let Ok(mut cache) = CWD_GIT_CACHE.lock() {
-            apply_cwd_git_refresh(&mut cache, cwd, info);
-        }
+        apply_cwd_git_refresh(&mut lock_cache(), cwd, info);
     });
 }
 
@@ -665,7 +675,7 @@ mod tests {
     fn update_from_notification_ors_cached_label_into_is_worktree() {
         let dir = PathBuf::from("/nonexistent-xai-notif-label-wt");
         {
-            let mut cache = CWD_GIT_CACHE.lock().expect("cache lock");
+            let mut cache = lock_cache();
             cwd_cache_insert(
                 &mut cache,
                 dir.clone(),
@@ -681,13 +691,59 @@ mod tests {
             );
         }
         update_from_notification(&dir, Some("main"), None, /* is_worktree */ false);
-        let cache = CWD_GIT_CACHE.lock().expect("cache lock");
+        let cache = lock_cache();
         let info = cache
             .get(&dir)
             .and_then(|(info, _)| info.clone())
             .expect("cache entry");
         assert!(info.is_worktree);
         assert_eq!(info.worktree_label.as_deref(), Some("my-label"));
+    }
+
+    /// A poisoned cache must keep serving the branch it holds and keep accepting updates.
+    /// Swallowing the error did the opposite, and worse than a blank frame: `cwd_git_info_lazy`
+    /// answered `None` *and* bailed before it reserved the slot or spawned a refresh, so the
+    /// first panic anywhere in the process took every agent's branch label off the status bar for
+    /// the rest of the session, with nothing left that could ever repair the entry.
+    ///
+    /// Poisoning is a process-wide flag rather than a fixture, so this clears it on the way out
+    /// and leaves the shared cache as it found it.
+    #[test]
+    fn a_poisoned_cwd_cache_still_serves_and_accepts_updates() {
+        let dir = PathBuf::from("/nonexistent-xai-git-info-poison");
+        let resolved = CwdGitInfo {
+            branch: Some("poison-branch".into()),
+            is_worktree: false,
+            main_repo: None,
+            worktree_label: None,
+        };
+        cwd_cache_insert(
+            &mut lock_cache(),
+            dir.clone(),
+            (Some(resolved), Instant::now()),
+        );
+
+        xai_grok_test_support::poison::mutex_through_a_panicking_thread(&CWD_GIT_CACHE);
+
+        assert_eq!(
+            cwd_git_info_lazy(&dir).and_then(|info| info.branch),
+            Some("poison-branch".to_string()),
+            "a dead holder must not blank a resolved branch"
+        );
+        // The write path is the other half: a `git_head_changed` notification is what re-labels
+        // the branch after a checkout, and it arrives after whatever panicked.
+        update_from_notification(&dir, Some("renamed"), None, /* is_worktree */ false);
+        assert_eq!(
+            cwd_git_info_lazy(&dir).and_then(|info| info.branch),
+            Some("renamed".to_string()),
+            "an update written through the poisoned lock must land"
+        );
+
+        CWD_GIT_CACHE.clear_poison();
+        assert!(
+            !CWD_GIT_CACHE.is_poisoned(),
+            "the next test must not be handed a lock this one poisoned"
+        );
     }
 
     #[test]

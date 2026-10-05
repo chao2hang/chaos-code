@@ -1,4 +1,5 @@
 use crate::util::config::RemoteSettings;
+use crate::util::shared_guard::ReadWriteOrRecover;
 use toml::Value as TomlValue;
 
 pub(crate) const ENV_AUTO_PERMISSION_MODE: &str = "GROK_AUTO_PERMISSION_MODE";
@@ -75,29 +76,29 @@ pub fn resolve_auto_permission_mode_enabled(
 
 /// Single source of truth for the remote settings `auto_mode` config at free-function call sites that don't hold a live `RemoteSettings`.
 /// Those sites are the gate launch decision, the pager kill-switch, and the classifier wiring.
+/// Both accessors read and write through poisoning: the cached table is the remote policy tier, and a reader that treated a dead holder's panic as "no remote table" would let the local config layer silently override a remote kill-switch.
 static REMOTE_AUTO_MODE_CONFIG: std::sync::RwLock<Option<crate::agent::config::AutoModeConfig>> =
     std::sync::RwLock::new(None);
 
 /// Call wherever `RemoteSettings` is applied.
 pub fn cache_remote_auto_mode(value: Option<serde_json::Value>) {
     let coerced = value.and_then(coerce_auto_mode_json);
-    if let Ok(mut guard) = REMOTE_AUTO_MODE_CONFIG.write() {
-        *guard = coerced;
-    }
+    *REMOTE_AUTO_MODE_CONFIG.write_or_recover() = coerced;
 }
 
 /// Update ONLY the gate `enabled` in the cached remote config (the pager kill-switch path carries just the bool).
 pub fn cache_remote_auto_permission_mode_enabled(value: Option<bool>) {
-    if let Ok(mut guard) = REMOTE_AUTO_MODE_CONFIG.write() {
-        guard.get_or_insert_with(Default::default).enabled = value;
-    }
+    REMOTE_AUTO_MODE_CONFIG
+        .write_or_recover()
+        .get_or_insert_with(Default::default)
+        .enabled = value;
 }
 
 fn cached_remote_auto_permission_mode_enabled() -> Option<bool> {
     REMOTE_AUTO_MODE_CONFIG
-        .read()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|c| c.enabled))
+        .read_or_recover()
+        .as_ref()
+        .and_then(|c| c.enabled)
 }
 
 /// One malformed field drops the whole table to `None` (warned).
@@ -180,9 +181,8 @@ pub(crate) fn resolve_auto_mode_config_from_disk() -> crate::agent::config::Auto
         Err(_) => crate::agent::config::AutoModeConfig::default(),
     };
     let remote = REMOTE_AUTO_MODE_CONFIG
-        .read()
-        .ok()
-        .and_then(|g| g.clone())
+        .read_or_recover()
+        .clone()
         .unwrap_or_default();
     merge_auto_mode_config(config, remote)
 }
@@ -232,6 +232,7 @@ pub(crate) fn auto_mode_classifier_defaults(
 mod auto_permission_mode_gate_tests {
     use super::*;
     use crate::agent::config::ConfigSource;
+    use crate::util::shared_guard::poison_rwlock_through_a_panicking_writer;
 
     // `GROK_AUTO_PERMISSION_MODE` is process-global; serialize every test that reads it (all of them, via `BoolFlag::env`)
     // Force it unset at the top of each so a developer's shell value can't make these flaky
@@ -582,8 +583,7 @@ mod auto_permission_mode_gate_tests {
         cache_remote_auto_permission_mode_enabled(Some(false));
         assert_eq!(cached_remote_auto_permission_mode_enabled(), Some(false));
         let stored = REMOTE_AUTO_MODE_CONFIG
-            .read()
-            .unwrap()
+            .read_or_recover()
             .clone()
             .expect("config still cached");
         assert_eq!(
@@ -593,5 +593,48 @@ mod auto_permission_mode_gate_tests {
         assert_eq!(stored.classifier_model.as_deref(), Some("remote-model"));
         assert_eq!(stored.classify_timeout_ms, Some(45_000));
         cache_remote_auto_mode(None);
+    }
+
+    /// The cached table IS the remote policy tier, and `merge_auto_mode_config` resolves
+    /// `enabled` as `config.enabled.or(remote.enabled)`. Read through `.ok()`, a poisoned lock
+    /// answered "the remote tier has no opinion", so one panic anywhere in the process handed the
+    /// auto-mode kill-switch to the local config layer -- and the classifier-wiring reader, which
+    /// ends in `unwrap_or_default()`, lost the whole table including the model and timeout.
+    #[test]
+    fn cached_remote_survives_a_poisoned_lock() {
+        let _g = guard();
+        cache_remote_auto_mode(Some(serde_json::json!({
+            "enabled": true,
+            "classifier_model": "remote-model",
+            "classify_timeout_ms": 45000
+        })));
+        let before = resolve_auto_mode_config_from_disk();
+        assert_eq!(before.classifier_model.as_deref(), Some("remote-model"));
+
+        poison_rwlock_through_a_panicking_writer(&REMOTE_AUTO_MODE_CONFIG);
+
+        assert_eq!(
+            cached_remote_auto_permission_mode_enabled(),
+            Some(true),
+            "a dead holder must not read as 'the remote tier has no opinion'"
+        );
+        let after = resolve_auto_mode_config_from_disk();
+        assert_eq!(
+            after.classifier_model, before.classifier_model,
+            "the classifier wiring must not lose the remote model to a poisoning it never sees"
+        );
+        assert_eq!(
+            after.classify_timeout_ms, before.classify_timeout_ms,
+            "nor the remote timeout"
+        );
+        assert_eq!(
+            after.enabled, before.enabled,
+            "nor the gate the merge resolves from this tier"
+        );
+        // The kill-switch writer path recovers through the same lock.
+        cache_remote_auto_permission_mode_enabled(Some(false));
+        assert_eq!(cached_remote_auto_permission_mode_enabled(), Some(false));
+        cache_remote_auto_mode(None);
+        REMOTE_AUTO_MODE_CONFIG.clear_poison();
     }
 }

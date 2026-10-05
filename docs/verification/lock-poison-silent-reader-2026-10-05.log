@@ -1,0 +1,337 @@
+# 19 places read "a holder died" as "there is nothing here": the silent lock-poison batch, a hard-zero gate, and a matrix that caught its own blind spot (2026-10-05)
+
+== 1. What this batch changes
+
+The previous batch (`docs/verification/lock-poison-consolidation-2026-10-05.log`) dealt with locks that *panic* on
+a poisoned guard: it installed `util::shared_guard` and moved 28 sites onto `lock_or_recover()` /
+`read_or_recover()` / `write_or_recover()`. That fixed the crash and left behind the worse half of the same idiom
+family: sites that swallow the poison error and carry on as if the data were simply absent. `.lock().ok()` does not
+mean "best effort"; after a panic elsewhere in the process it means "the value is gone", forever, because poisoning
+is a sticky flag on the lock rather than a property of one acquisition.
+
+19 sites in 14 files did that. Every one of them is on a path that keeps running after a panic: the live prompt id
+that stamps streaming updates, four remote configuration tiers, the telemetry mode gate, the doom-loop signal
+collector, the failed-response replay capture, the pager's per-directory git cache, and one error tee in the tool
+actor. All 19 now read through recovery, and a writer is never left behind when its reader is converted -- one lock,
+one policy.
+
+A new gate holds the line: `scripts/ci/check-lock-poison.py`, with its own fixtures, wired into
+`.github/workflows/ci.yml` and into the `gates=()` mirror in `scripts/verify-in-docker.sh`. It is the 44th gate in
+the host sweep. Unlike the ratchet gates around it it has **no baseline file and no test carve-out**: the tolerated
+count is zero, in production code and in test code alike.
+
+Diffstat, tracked files: 21 files, +577 / -137, plus three new files (`scripts/ci/check-lock-poison.py`,
+`scripts/ci/test-check-lock-poison.py`, `crates/codegen/xai-grok-test-support/src/poison.rs`).
+
+== 2. The count, recomputed: 11 was a grep artifact
+
+The row that started this said 6 sites, because that is what a person finds by grepping for the spelling on one
+line. The honest number came out of the gate itself, pointed at a throwaway worktree of the pre-batch commit:
+
+    $ grep -rnE '\.(lock|read|write)\(\s*\)\.ok\(\)' --include='*.rs' crates | wc -l      # at HEAD, via git grep
+    11
+    $ python3 - <<'PY'
+    # the gate's own scanner, run against a detached worktree of HEAD
+    spec = importlib.util.spec_from_file_location("clp", "scripts/ci/check-lock-poison.py")
+    ...
+    whole-file scan at HEAD: 19 site(s) in 14 file(s)
+
+Eight sites hide from a per-line match because rustfmt split the chain, so the acquisition and the `.ok()` land on
+different lines:
+
+    crates/codegen/xai-grok-sampler/src/doom_loop_recovery.rs:172
+            let mut captured = self.inner.as_ref()?.lock().ok()?;
+
+    crates/codegen/xai-grok-shell/src/session/acp_session_impl/updates.rs:295
+            let live_prompt_id = self
+                .current_prompt_id
+                .lock()
+                .ok();
+
+This is the second batch in a row where a line-oriented grep under-counted the thing it was counting (the previous
+log has the same shape for `.recv().await.expect(`). The inventory the batch worked from:
+
+| File | Sites | Lock |
+|---|---|---|
+| `xai-grok-pager/src/git_info.rs` | 1 | `CWD_GIT_CACHE` |
+| `xai-grok-sampler/src/actor/request_task.rs` | 1 | the error tee cell |
+| `xai-grok-sampler/src/doom_loop.rs` | 1 | the signal collector |
+| `xai-grok-sampler/src/doom_loop_recovery.rs` | 1 | `FailedResponseCapture` |
+| `xai-grok-shell/.../mvp_agent/acp_agent.rs` | 1 | `current_prompt_id` |
+| `xai-grok-shell/.../mvp_agent/session_setup.rs` | 1 | `current_prompt_id` |
+| `xai-grok-shell/.../acp_session_impl/run_loop.rs` | 2 | `current_prompt_id` |
+| `xai-grok-shell/.../acp_session_impl/turn.rs` | 1 | `current_prompt_id` |
+| `xai-grok-shell/.../acp_session_impl/updates.rs` | 2 | `current_prompt_id` |
+| `xai-grok-shell/.../config/resolve/auto_mode.rs` | 2 | `REMOTE_AUTO_MODE_CONFIG` |
+| `xai-grok-shell/.../config/resolve/crash_handler.rs` | 1 | `REMOTE_CRASH_HANDLER_ENABLED` |
+| `xai-grok-shell/.../config/resolve/prompt_suggest.rs` | 2 | `REMOTE_PROMPT_SUGGEST_CONFIG` |
+| `xai-grok-shell/.../config/resolve/tool_approvals.rs` | 1 | `REMOTE_REMEMBER_TOOL_APPROVALS` |
+| `xai-grok-telemetry/src/client.rs` | 2 | `TELEMETRY_CLIENT` |
+| | **19** | |
+
+== 3. The rule, and where it deliberately stops
+
+The gate matches one shape: a *synchronous* lock acquisition whose error is discarded by `.ok()`. It does not match
+the shapes that are decisions rather than accidents, and that boundary is asserted by fixture rather than asserted
+in prose:
+
+  * `try_lock()` -- the whole point of the call is that it may fail, and it also fails when the lock is merely busy;
+  * `if let Ok(guard) = lock.lock()` and `let Ok(g) = .. else { return }` -- an explicit branch on the error;
+  * `.read().await.ok()` on an async lock -- `tokio::sync` locks have no poisoning at all, so there is nothing to
+    lose;
+  * `read(&mut buf)` on a `&str` -- same spelling, entirely different method, which is why the receiver and the
+    argument list both have to be read before a site is reported.
+
+Two honest limits belong in this log rather than in a footnote. First, an equivalent-but-differently-spelled
+swallow is out of reach for any regex: HEAD's `doom_loop::take()` spelled it `match self.inner.lock() { Ok(..) =>
+.., Err(_) => Vec::new() }`, which is the same lie in different clothes. The gate cannot see it; test M3 exists
+because of it. Second, the branched-on acquisitions the gate allows are the same class one level down -- a dropped
+write instead of an invented absence -- and they are an open row, not a claim of this batch. That row needed a
+number, and a number anyone can only arrive at by hand once is not evidence, so the gate counts them itself:
+
+    $ python3 scripts/ci/check-lock-poison.py --inventory | head -3
+      if-let-Ok      prod-drop   14  prod-hold    0  test-drop    1  test-hold    0
+      let-Ok-else    prod-drop    4  prod-hold    0  test-drop    0  test-hold    0
+      match-Err-arm  prod-drop    0  prod-hold    9  test-drop    0  test-hold    2
+
+    $ python3 scripts/ci/check-lock-poison.py --inventory | tail -1
+    lock-poison inventory: 30 site(s) branch on the poison error instead of reading through it -- 19 drop the guard,
+    11 take it back with into_inner(); 27 of them in production code. Allowed by design; a reviewer decides per lock.
+
+The split is the useful part: an `if let Ok(guard) = ..lock()` or `let Ok(..) = .. else` binds nothing on the failure
+path, so the value is unreachable there by construction (19 sites, 18 of them in production code), while every
+`match ..lock()` arm in production already takes the guard back -- `status_line.rs:172` is the model, warning first
+and then using the last value, with a comment saying why one optional id cannot be left half-written by a panic
+elsewhere. An earlier draft of this log and of the open row carried **41** for that population. 41 cannot be
+reproduced by anything in the repository, so it has been replaced everywhere with the figure this command prints.
+The inventory can under-count and cannot over-count: `match-Err-arm` requires no brace between the `match` head and
+the `Err`, so an `Err` arm written after an arm with a block body is invisible to it.
+
+== 4. What each site actually did before the fix
+
+Read off `git show HEAD:<file>`, not off the new code. "Permanent" below means the condition never heals: the lock
+stays poisoned until the process exits, so the first panic anywhere in the process silently reconfigures the
+product.
+
+| Lock | Pre-fix behaviour after a poisoning |
+|---|---|
+| `current_prompt_id` (7 readers) | "no turn is live". Streaming updates lost their `promptId`, so the client could no longer group deltas into the running turn; `turn_running` reported false while a turn was running; `x.ai/runningPromptId` disappeared; and `mark_apply_miss_incomplete` failed *closed* -- an apply-miss landed against no prompt at all, so the ledger that is supposed to stain a broken turn stayed clean |
+| the four remote config tiers | the remote tier read as absent, so a lower layer answered: an operator kill-switch turning auto mode, prompt suggestion, remembered approvals or the remote crash handler **off** silently stopped working |
+| `TELEMETRY_CLIENT` | telemetry read as "off" in whichever direction each reader checked: product events stopped (`is_enabled`) or session lifecycle events stopped (`is_session_metrics_enabled`) |
+| doom-loop collector | `abort_triggers` said "nothing to act on", `disarm_abort` dropped the disarm, `take()` reported an empty drain -- the retry/abort machinery ran on an empty view of a collector that was still filling |
+| `FailedResponseCapture` | an armed capture recorded nothing and replayed nothing, so the failed turn lost the recovery it was armed for |
+| the tool-actor error tee | the first streaming error was dropped on the write side and the read side took nothing, so a failed stream reported success |
+| `CWD_GIT_CACHE` | `cwd_git_info_lazy` returned `None` *and* reserved no slot, so the header stayed empty and no refresh was ever scheduled; `update_from_notification` skipped the update it was handed |
+
+Writers were converted with their readers (`*REMOTE_AUTO_MODE_CONFIG.write_or_recover() = ..`, the collector's
+record/disarm/clear, `update_from_notification`, the tee's write arm), because converting only the reader leaves a
+lock whose writers can still park it in a state the readers were just told to survive.
+
+== 5. The gate
+
+`scripts/ci/check-lock-poison.py`. One regex for the site, then three things a naive version gets wrong:
+
+  * the *receiver* is reconstructed and printed, because `?.lock().ok()` names nothing a reader can act on;
+  * the window that the receiver is searched in is cut at `;`, `{` and `}` -- **not** at a newline, which is
+    precisely what rustfmt puts inside a long chain. The first version cut at newlines and printed `?` for every
+    wrapped site; that bug is fixture `test_a_wrapped_chain_reports_its_receiver_not_a_question_mark`;
+  * comments, string and char literals are blanked before matching, and `target/`, `node_modules/`, `third_party/`
+    and `__pycache__` are pruned -- with a fixture that keeps one clean file *outside* the pruned directories, so
+    the prune test cannot pass by having read nothing at all.
+
+Exit codes: `0` clean, `1` names each site as `crate: rel:line: recv.acq().ok()  |  <source line>`, `2` the root
+contains no Rust sources (a tree it cannot read is not a clean tree). `--verbose` prints the number of files
+scanned, which is what makes `0 site(s)` distinguishable from "scanned 0 files".
+
+    $ python3 scripts/ci/check-lock-poison.py --root . --verbose
+    lock-poison: scanned 2998 .rs file(s) under /home/chaos/hunt/dev/projects/chaos-code
+    lock-poison: 0 site(s); no lock error is read as an absent value
+
+Fixtures, `scripts/ci/test-check-lock-poison.py`, 11 cases: the four green shapes of section 3 stay green; each
+acquisition is named with its receiver; a `#[cfg(any())]` site is excluded while a live sibling is still reported;
+an idiom inside a string or comment is ignored and then flipped live to prove the blanking is not a silencer;
+`#[cfg(test)]` code *is* scanned; the vendored/build trees are pruned; a root with no sources exits 2; the shipped
+tree is clean.
+
+    $ python3 scripts/ci/test-check-lock-poison.py
+    Ran 11 tests in 12.999s
+
+    OK
+
+Two of those 11 hold the inventory honest, because an inventory that quietly counts the wrong things is how a wrong
+number reaches a TODO row. `test_the_inventory_buckets_the_allowed_branches` plants one site of each shape in one
+fixture and asserts all four bucket cells plus the totals, so the line numbers -- not the author's reading -- carry
+which `match` arm recovered and which invented absence. `test_the_inventory_counts_prose_only_once_it_becomes_code`
+is the same non-vacuity pair the gate uses: the fixture contains `if let Ok(guard) = CACHE.read()` inside a doc
+comment and must read 5 rows, and flipping that comment into a function must read 6.
+
+Both were then mutated, splicing the scanner rather than the Rust, and both cells failed the named test and restored
+byte-identically:
+
+      detected  I1 drops_the_guard always says drop  restore=ok  failing: test_the_inventory_buckets_the_allowed_branches
+      detected  I2 boundary widened to try_lock      restore=ok  failing: test_the_inventory_buckets_the_allowed_branches,
+                                                                           test_the_inventory_counts_prose_only_once_it_becomes_code
+
+      2/2 cells detected the broken scanner
+
+`I2` matters more than it looks: widening the acquisition to `try_lock` is the one edit that would make the inventory
+grow while every existing fixture stayed green, because "someone else holds it right now" and "the holder died" share
+the word lock and nothing else.
+
+Wiring is the pair the `check-guard-wiring` gate enforces (`.github/workflows/ci.yml` and the `gates=()` entry in
+`scripts/verify-in-docker.sh`):
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (89 files in scripts/ci/, 88 reachable, 80 run by scripts/verify-in-docker.sh, 8 recorded CI-only, 1 exempt)
+
+== 6. The tests
+
+Ten behavior tests, each poisoning the real lock through a thread that dies inside the guard and then driving the
+shipped reader:
+
+| Test | What it demands |
+|---|---|
+| `sampler::doom_loop::a_poisoned_collector_keeps_recording_and_aborting` | signals recorded before the death are still drained, and a disarm written after it still lands |
+| `sampler::doom_loop_recovery::a_poisoned_capture_still_replays_the_failed_turn` | an armed capture stays armed and replays both frames of the failed turn, reasoning before assistant |
+| `pager::git_info::a_poisoned_cwd_cache_still_serves_and_accepts_updates` | a poisoned cache still serves the known entry, still reserves a refresh slot, and still accepts a notification |
+| `telemetry::mode_readers_survive_a_poisoned_client_lock` | in `SessionMetrics`, the lifecycle gate stays open and `is_enabled` does not invent a mode that was never installed |
+| `telemetry::product_event_gate_survives_a_poisoned_client_lock` | in `Enabled`, the product-event gate stays open too (added by this batch -- see section 7) |
+| four `cached_remote_survives_a_poisoned_lock` | each remote tier still answers from what was installed; `auto_mode`'s copy also compares the resolved config before and after on three fields |
+| `shell::apply_miss_matching_pin_stains_prompt_through_a_poisoned_pin` | with the pin poisoned, an apply miss against a matching prompt still returns true and still stains both ledgers |
+
+Poisoning is process-wide, so a leaked poison panics an unrelated sibling test. Every test that touches a global
+lock therefore takes that module's existing serializer, restores the cached value in a `Drop` guard, and calls
+`clear_poison()`. Three test-side accessors were converted for the same reason -- two `CWD_GIT_CACHE.lock().expect(
+"cache lock")` calls and `auto_mode`'s `.read().unwrap()` -- and `xai-grok-telemetry` gained a `CLIENT_TEST_LOCK`
+because it had no serializer for the two tests that install the global client.
+
+One claim from the previous batch's open row did not survive this one. That row said these call sites could not be
+covered because "no test seam in this repository can construct the precondition" -- a live session actor that has
+published a prompt id, with its pin mutex then poisoned. It was written in good faith and it was wrong: the seam was
+twenty lines away, in `subagent_usage_fold_tests.rs`, whose existing `make_actor()` builds a real actor, and
+`apply_miss_matching_pin_stains_prompt_through_a_poisoned_pin` uses it exactly that way (publish the pin, poison the
+lock through a thread that dies inside the guard, then drive `mark_apply_miss_incomplete` and require both usage
+ledgers still get stained). The row has been rewritten as partial and now lists the 12 readers that remain, each with
+its file and line, instead of declaring them unreachable. It is worth recording why that sentence was expensive: a
+claim of impossibility in a ledger is not a caveat, it is a stop sign -- the next reader does not look for the seam.
+
+The poisoning machinery itself is now shared: `xai-grok-test-support::poison` exposes
+`mutex_through_a_panicking_thread` and `rwlock_through_a_panicking_writer`, each of which acquires with
+`unwrap_or_else(PoisonError::into_inner)` (so only the deliberate `panic!` poisons), wraps the call in
+`catch_unwind`, and asserts `is_poisoned()` afterwards. `util::shared_guard`'s two `#[cfg(test)]` helpers delegate
+to it instead of carrying their own copies; telemetry keeps a local 6-line copy because it deliberately does not
+dev-depend on a crate that links a PTY/WebSocket/HTTP server.
+
+== 7. Mutation matrix, and the cell that found this batch's own hole
+
+13 cells. Each splices the pre-fix text -- `git show HEAD:<file>`, verbatim wherever the pre-fix code fits the
+current control flow -- over one converted site, runs the single test written for it, restores the file from a byte
+copy and re-reads it to compare sha256. The driver aborts on a non-green baseline, so a green matrix cannot be a
+matrix run against a broken tree. Two cells note in their own text that HEAD wrapped the whole body in
+`if let Ok(..)`; there the pre-fix *semantic* ("skip the update") is reproduced rather than the exact text.
+
+The first run: **12 of 13**.
+
+    $ python3 {SCRATCH}/implementer/b25/mutation-driver.py
+    ...
+      detected  M7 telemetry is_session_metrics_enabled
+      MISSED  M8 telemetry is_enabled
+    ...
+      M7 telemetry is_session_metrics_enabled  detected   restore=ok  HEAD verbatim: session lifecycle emission stopped
+      M8 telemetry is_enabled                  MISSED     restore=ok  HEAD verbatim: product events stopped
+      M9 shell crash_handler reader            detected   restore=ok  HEAD verbatim: the remote tier read as absent
+      M10 shell tool_approvals reader          detected   restore=ok  HEAD verbatim: a lower layer decided persistence
+      M11 shell auto_mode reader               detected   restore=ok  HEAD verbatim: the kill-switch fell to the local layer
+      M12 shell prompt_suggest reader          detected   restore=ok  HEAD verbatim: same shape, the suggestion gate
+      M13 shell mark_apply_miss pin            detected   restore=ok  HEAD verbatim: fail-closed opened
+
+    12/13 cells detected the pre-fix code
+
+`M8` is right, and the reason is worth keeping: the telemetry test that was supposed to cover `is_enabled` installs
+`TelemetryMode::SessionMetrics`, and `is_enabled()` is only true in `Enabled`. In `SessionMetrics` both the pre-fix
+reader and the fixed one answer false, so the assertion could not tell a working reader from a broken one. The
+conversion was correct; the *test* was vacuous for that one gate, and nothing but the matrix would have said so.
+The fix is a second test installed in `Enabled` -- `product_event_gate_survives_a_poisoned_client_lock`, which also
+asserts `tokio::runtime::Handle::try_current().is_err()` so that a client reaching Mixpanel panics loudly instead of
+passing on nothing -- and `M8` was then re-pointed at it:
+
+    $ python3 {SCRATCH}/implementer/b25/mutation-driver.py --only telemetry
+    == restricted run: --only telemetry selects 2 cell(s) ==
+    == green baseline before any mutation ==
+      PASS  xai-grok-telemetry  mode_readers_survive_a_poisoned_client_lock
+      PASS  xai-grok-telemetry  product_event_gate_survives_a_poisoned_client_lock
+      detected  M7 telemetry is_session_metrics_enabled
+      detected  M8 telemetry is_enabled
+
+    2/2 cells detected the pre-fix code
+
+So the honest statement is 13/13 *after* one test was added in response to the matrix, not 13/13 on the first try.
+Every cell in both runs restored its file byte-identically (`restore=ok` in all 13 rows).
+
+== 8. What was run locally
+
+    $ cargo test -q -p xai-grok-sampler --lib doom_loop
+    test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 235 filtered out; finished in 0.00s
+
+    $ cargo test -q -p xai-grok-telemetry --lib client::
+    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 267 filtered out; finished in 0.06s
+
+    $ RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-pager --lib git_info::
+    test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 9207 filtered out; finished in 0.04s
+
+    $ RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-shell --lib cached_remote_survives_a_poisoned_lock
+    test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 6933 filtered out; finished in 0.00s
+
+    $ RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-shell --lib apply_miss_matching_pin_stains_prompt
+    test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 6935 filtered out; finished in 0.01s
+
+`cargo fmt --all` is clean and `cargo check -q --all-targets` covers all four touched crates. The panic-site ratchet
+moved by exactly two tokens, in `xai-grok-test-support` (26 -> 28 `panic!`), and those two are the mechanism: the
+deliberate `panic!("a holder dying inside the guard")` inside the two new poisoning helpers. `unwrap_or_else(
+PoisonError::into_inner)` counts as nothing, which is why the helpers, and everything in this batch, spell
+recovery that way rather than as `.unwrap()`.
+
+== 9. Remote CI could not be used as the reviewer of record
+
+This batch and the one before it would normally be signed off by the `CI` workflow. From this host that endpoint
+cannot be trusted, and the proof is not a timeout but ten readings of one run that cannot all be true. Run
+`37304357103`, workflow `CI`, `head_sha` `1da04e67`, started `2026-10-05T11:39:42Z`; the only non-instant job is
+`rust check / clippy / test`, id `111744342738`. All readings taken inside about 30 minutes with the same token.
+
+| # | Source | Reading |
+|---|---|---|
+| 1 | `gh run list --commit 1da04e67` | run `37282718918` `completed cancelled` (that id 404s and is absent from the last 100 runs) |
+| 2 | `gh api .../runs/37304357103` | `status=completed` with `conclusion=in_progress` |
+| 3 | `gh api .../runs/37304357103/jobs` | 8 jobs, all `completed`, all `success` |
+| 4 | same URL two minutes later | 7 jobs, `rust check / clippy / test` `in_progress` |
+| 5 | `/commits/1da04e67/check-runs` | 8 check runs, rust `in_progress`, 7 `success` |
+| 6 | `/actions/runs/37304357103/jobs`, 3 reads 5 s apart | job `111744342738` `in_progress`, first 12 steps `success` |
+| 7 | watcher on check-runs, 2 reads 90 s apart | rust job `completed` + `failure` |
+| 8 | `-L /actions/jobs/111744342738/logs` | HTTP 404 `BlobNotFound` (Azure timestamp `12:03:17Z`) |
+| 9 | same URL 13 s later | HTTP 200, body contained `all gates passed` |
+| 10 | the same file, read back immediately | 2 lines, `BlobNotFound`, Azure timestamp `12:03:30Z` |
+
+Readings 9 and 10 are the decisive pair: a finalized log blob does not revert to `BlobNotFound`, so the 200 in 9 was
+not a real GitHub response. Reading 8 also dates the job -- at `12:03Z` the log for a job that started at `11:39Z`
+does not exist yet, i.e. it was about 24 minutes into a run that needs about 40.
+
+What this batch therefore does: readings 3 and 7 are discarded and reported nowhere as a CI result; no monitor is
+armed on any Actions endpoint; the gate evidence of record is the host sweep plus the named local runs above, all of
+them reproducible without a network. **The CI verdict for `1da04e67` is unknown from this machine, and this batch's
+pushed commit should be read the same way until someone opens the run in a browser.** A durable row records it.
+
+== 10. Reproduce it
+
+    python3 scripts/ci/test-check-lock-poison.py            # the gate's fixtures
+    python3 scripts/ci/check-lock-poison.py --root . --verbose
+    python3 scripts/ci/check-lock-poison.py --inventory     # the shapes the gate allows, counted
+    python3 scripts/ci/check-guard-wiring.py                # both runners reach the gate
+    cargo test -q -p xai-grok-telemetry --lib client::      # both poisoning tests, both modes
+    cargo test -q -p xai-grok-sampler --lib doom_loop
+    RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-pager --lib git_info::
+    RUST_MIN_STACK=16777216 cargo test -q -p xai-grok-shell --lib cached_remote_survives_a_poisoned_lock
+
+To re-run the matrix, splice `git show HEAD:<file>`'s text back over the converted site and run the one test named
+for it in section 7, restoring from a byte copy and comparing hashes afterwards. The driver that automates that --
+including the baseline guard and the 13 cell descriptions -- lives outside the repository; the cell list it enforces
+is section 7's table.

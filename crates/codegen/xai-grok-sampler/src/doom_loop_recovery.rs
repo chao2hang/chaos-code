@@ -166,10 +166,16 @@ impl FailedResponseCapture {
         self.inner.is_some()
     }
 
-    /// Returns `None` when the capture is disarmed or its lock is poisoned.
+    /// Returns `None` when the capture is disarmed.
     /// A failed capture degrades to a reminder-only retry rather than failing the request.
+    /// The lock is read through poisoning, because [`Self::is_armed`] answers from `inner`
+    /// alone: swallowing the error here would leave a capture reported as armed while every
+    /// record and read against it silently did nothing.
     fn with<R>(&self, f: impl FnOnce(&mut CapturedResponse) -> R) -> Option<R> {
-        let mut captured = self.inner.as_ref()?.lock().ok()?;
+        let captured = self.inner.as_ref()?;
+        let mut captured = captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Some(f(&mut captured))
     }
 

@@ -1,6 +1,7 @@
 //! The session actor's main loop (`run_session`): command dispatch, the idle timer arms, and the free helpers only the loop consumes.
 #![allow(clippy::items_after_test_module)]
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 use xai_grok_telemetry::instrument_task;
 use xai_grok_telemetry::region::Parent;
 use xai_grok_telemetry::session_end::{self, Phase, SharedSessionEndTimer};
@@ -1263,13 +1264,8 @@ pub(super) async fn run_session(
                             prompt_id,
                             respond_to,
                         } => {
-                            let pid = prompt_id.or_else(|| {
-                                session
-                                    .current_prompt_id
-                                    .lock()
-                                    .ok()
-                                    .and_then(|g| g.clone())
-                            });
+                            let pid = prompt_id
+                                .or_else(|| session.current_prompt_id.lock_or_recover().clone());
                             let usage = match pid.as_deref() {
                                 Some(id) => session.error_path_usage_fallback(id).await,
                                 None => {
@@ -1994,9 +1990,7 @@ pub(super) async fn run_session(
                             // Buffered then, it would strand forever and silently drop the user's message; run it as its own prompt turn instead
                             let turn_running = session
                                 .current_prompt_id
-                                .lock()
-                                .ok()
-                                .and_then(|g| g.clone())
+                                .lock_or_recover()
                                 .is_some();
                             if turn_running {
                                 session.pending_interjections.push(PendingInterjection {

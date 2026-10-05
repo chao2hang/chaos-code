@@ -1,6 +1,7 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 #![allow(unused_imports)]
 use super::*;
+use crate::util::shared_guard::LockOrRecover;
 use xai_grok_telemetry::instrument_task;
 use xai_grok_telemetry::region;
 use xai_grok_telemetry::region::Parent;
@@ -2201,11 +2202,7 @@ impl acp::Agent for MvpAgent {
                 {
                     err
                 } else {
-                    let prompt_id = handle
-                        .current_prompt_id
-                        .lock()
-                        .ok()
-                        .and_then(|g| g.clone());
+                    let prompt_id = handle.current_prompt_id.lock_or_recover().clone();
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     let usage = if handle
                         .cmd_tx

@@ -663,6 +663,61 @@ async fn apply_miss_matching_pin_stains_prompt_and_session() {
         .await;
 }
 
+/// The same match, with the pin's holder dead: `.lock().ok()` answered "there is no live prompt"
+/// for a lock whose holder had panicked, which is the `(Some(pin), None)` arm, which returns
+/// `false`. A report whose subagent usage was never folded was therefore labelled complete --
+/// the fail-closed path this function documents opened instead, and nothing said why.
+#[tokio::test(flavor = "current_thread")]
+async fn apply_miss_matching_pin_stains_prompt_through_a_poisoned_pin() {
+    use crate::util::shared_guard::poison_mutex_through_a_panicking_thread;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let actor = make_actor().await;
+            *actor.current_prompt_id.lock().unwrap() = Some("p-1".into());
+            actor.chat_state_handle.record_model_call_usage(
+                Some("m".into()),
+                xai_grok_sampling_types::TokenUsage {
+                    prompt_tokens: 3,
+                    completion_tokens: 1,
+                    total_tokens: 4,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 0,
+                    cache_creation_prompt_tokens: 0,
+                },
+                None,
+                None,
+                None,
+            );
+
+            poison_mutex_through_a_panicking_thread(&actor.current_prompt_id);
+
+            assert!(
+                actor.mark_apply_miss_incomplete(Some("p-1")).await,
+                "a dead holder must not read as 'no live prompt' and let a fail-closed report through"
+            );
+            assert!(
+                actor
+                    .chat_state_handle
+                    .try_get_prompt_usage()
+                    .await
+                    .unwrap()
+                    .expect("prompt")
+                    .incomplete,
+                "the live prompt must still be stained"
+            );
+            assert!(
+                actor
+                    .chat_state_handle
+                    .try_get_session_usage()
+                    .await
+                    .unwrap()
+                    .incomplete
+            );
+            actor.current_prompt_id.clear_poison();
+        })
+        .await;
+}
+
 /// A sticky (session-only) reply is report-only on freeze: the session ledger stays complete.
 #[tokio::test(flavor = "current_thread")]
 async fn freeze_sticky_only_flags_report_not_ledgers() {

@@ -853,6 +853,14 @@ jobs:
           # refuses a crate that drops under its own row so the ceiling cannot outlive the debt.
           python3 scripts/ci/test-check-unbounded-recv.py
           python3 scripts/ci/check-unbounded-recv.py
+          # Poisoning has two readings and both lose the same fact. `.unwrap()` raises a second
+          # panic in a thread that only wanted to read (the census above ratchets those); `.ok()`
+          # is quieter and worse -- it reads "the holder died" as "there is no value", so a
+          # fail-closed check opens and a remote policy tier reads as having no opinion. 19 sites
+          # across 7 locks in 4 crates now read through the poisoning; this is a hard zero with no
+          # baseline file, because there is nothing left to ratchet down from.
+          python3 scripts/ci/test-check-lock-poison.py
+          python3 scripts/ci/check-lock-poison.py
           # The census above counts panic sites by the tokens that cause them, so it cannot
           # see a Prometheus metric call whose label count is wrong: `with_label_values`
           # unwraps inside the dependency (`prometheus-0.14.0/src/vec.rs:292`) and fails on a

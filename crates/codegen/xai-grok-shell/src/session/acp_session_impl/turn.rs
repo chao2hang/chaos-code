@@ -2,6 +2,7 @@
 use super::*;
 use crate::session::InputAuthority;
 use crate::util::dual_clock::DualClock;
+use crate::util::shared_guard::LockOrRecover;
 use tracing::Instrument;
 use xai_grok_tools::implementations::grok_build::LoopFireMode;
 use xai_grok_tools::implementations::grok_build::task::types::{
@@ -1712,7 +1713,7 @@ impl SessionActor {
     pub(super) async fn mark_subagent_usage_not_applied(&self, prompt_id: Option<&str>) -> bool {
         let resolved = prompt_id
             .map(str::to_owned)
-            .or_else(|| self.current_prompt_id.lock().ok().and_then(|g| g.clone()));
+            .or_else(|| self.current_prompt_id.lock_or_recover().clone());
         let Some(pid) = resolved else {
             self.unattributed_background_usage
                 .store(true, std::sync::atomic::Ordering::Relaxed);

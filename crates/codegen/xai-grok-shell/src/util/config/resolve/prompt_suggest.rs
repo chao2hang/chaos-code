@@ -1,4 +1,5 @@
 use crate::util::config::RemoteSettings;
+use crate::util::shared_guard::ReadWriteOrRecover;
 use toml::Value as TomlValue;
 use xai_grok_sampling_types::ReasoningEffort;
 
@@ -73,27 +74,28 @@ pub fn resolve_prompt_suggestions_enabled(
     )
 }
 
+/// Process-global cache of the remote `prompt_suggestions` tier.
+/// Both accessors read and write through poisoning: dropping the cached table because an unrelated thread died while holding it would let the local config layer answer a question the remote policy had already settled.
 static REMOTE_PROMPT_SUGGEST_CONFIG: std::sync::RwLock<Option<PromptSuggestConfig>> =
     std::sync::RwLock::new(None);
 
 pub fn cache_remote_prompt_suggestions(value: Option<serde_json::Value>) {
     let coerced = value.and_then(coerce_prompt_suggest_json);
-    if let Ok(mut guard) = REMOTE_PROMPT_SUGGEST_CONFIG.write() {
-        *guard = coerced;
-    }
+    *REMOTE_PROMPT_SUGGEST_CONFIG.write_or_recover() = coerced;
 }
 
 pub fn cache_remote_prompt_suggestions_enabled(value: Option<bool>) {
-    if let Ok(mut guard) = REMOTE_PROMPT_SUGGEST_CONFIG.write() {
-        guard.get_or_insert_with(Default::default).enabled = value;
-    }
+    REMOTE_PROMPT_SUGGEST_CONFIG
+        .write_or_recover()
+        .get_or_insert_with(Default::default)
+        .enabled = value;
 }
 
 pub fn cached_remote_prompt_suggestions_enabled() -> Option<bool> {
     REMOTE_PROMPT_SUGGEST_CONFIG
-        .read()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|c| c.enabled))
+        .read_or_recover()
+        .as_ref()
+        .and_then(|c| c.enabled)
 }
 
 /// Resolves the in-memory pager gate without reading config from disk.
@@ -181,9 +183,8 @@ pub(crate) fn resolve_prompt_suggest_config_from_disk() -> PromptSuggestConfig {
         Err(_) => PromptSuggestConfig::default(),
     };
     let remote = REMOTE_PROMPT_SUGGEST_CONFIG
-        .read()
-        .ok()
-        .and_then(|g| g.clone())
+        .read_or_recover()
+        .clone()
         .unwrap_or_default();
     merge_prompt_suggest_config(config, remote)
 }
@@ -230,7 +231,7 @@ pub(crate) fn prompt_suggest_reasoning_budget(
 mod tests {
     use super::*;
     use crate::agent::config::ConfigSource;
-    use crate::util::shared_guard::LockOrRecover;
+    use crate::util::shared_guard::{LockOrRecover, poison_rwlock_through_a_panicking_writer};
 
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -373,5 +374,37 @@ mod tests {
         assert!(
             prompt_suggest_reasoning_budget(visible_output_tokens, true) > visible_output_tokens
         );
+    }
+
+    /// Same shape as the auto-mode tier: `merge_prompt_suggest_config` resolves every field as
+    /// `config.<field>.or(remote.<field>)`, so a swallowed poisoning error read as "the remote
+    /// tier has no opinion" and the local layer decided the suggestion gate and budget.
+    #[test]
+    fn cached_remote_survives_a_poisoned_lock() {
+        let _guard = guard();
+        cache_remote_prompt_suggestions(Some(serde_json::json!({
+            "enabled": true,
+            "max_output_tokens": 128
+        })));
+        let before = resolve_prompt_suggest_config_from_disk();
+        assert_eq!(before.max_output_tokens, Some(128));
+
+        poison_rwlock_through_a_panicking_writer(&REMOTE_PROMPT_SUGGEST_CONFIG);
+
+        assert_eq!(
+            cached_remote_prompt_suggestions_enabled(),
+            Some(true),
+            "a dead holder must not read as 'the remote tier has no opinion'"
+        );
+        let after = resolve_prompt_suggest_config_from_disk();
+        assert_eq!(
+            after.max_output_tokens, before.max_output_tokens,
+            "the budget must not fall back to the local default over a lock a thread died holding"
+        );
+        assert_eq!(after.enabled, before.enabled, "nor the gate");
+        cache_remote_prompt_suggestions_enabled(Some(false));
+        assert_eq!(cached_remote_prompt_suggestions_enabled(), Some(false));
+        cache_remote_prompt_suggestions(None);
+        REMOTE_PROMPT_SUGGEST_CONFIG.clear_poison();
     }
 }

@@ -136,19 +136,13 @@ static TELEMETRY_CLIENT: OnceLock<Mutex<Option<TelemetryClient>>> = OnceLock::ne
 /// Returns `true` when telemetry mode is `Enabled`.
 /// Used by `log_event`; product analytics events only fire in `Enabled` mode.
 pub fn is_enabled() -> bool {
-    TELEMETRY_CLIENT
-        .get()
-        .and_then(|m| m.lock().ok())
-        .is_some_and(|g| g.as_ref().is_some_and(|c| c.mode.is_enabled()))
+    current_mode().is_some_and(|mode| mode.is_enabled())
 }
 
 /// Returns `true` when telemetry mode is `Enabled` or `SessionMetrics`.
 /// Used by `session_metrics`; lifecycle events fire in both modes.
 pub fn is_session_metrics_enabled() -> bool {
-    TELEMETRY_CLIENT
-        .get()
-        .and_then(|m| m.lock().ok())
-        .is_some_and(|g| g.as_ref().is_some_and(|c| c.mode.session_metrics_enabled()))
+    current_mode().is_some_and(|mode| mode.session_metrics_enabled())
 }
 
 pub struct UserContext {
@@ -534,9 +528,37 @@ mod tests {
         assert_eq!(event_value("grok-workspace-turn"), "turn");
     }
 
+    /// Serializes the tests that install into the process-global client.
+    /// Each one clears the global on the way out, so run concurrently a sibling's assertion would
+    /// read whatever the scheduler happened to leave installed.
+    static CLIENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Kills a thread holding [`TELEMETRY_CLIENT`]'s lock, which is how the rest of the workspace
+    /// does it too (`xai_grok_test_support::poison`). Inlined here because this crate deliberately
+    /// does not dev-depend on that harness: it links a PTY, a WebSocket client and an HTTP server,
+    /// and none of them belong in a logging client's test build.
+    fn poison_client_lock() {
+        let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _held = lock.lock().unwrap();
+                    panic!("a holder dying inside the client lock");
+                }));
+            });
+        });
+        assert!(
+            lock.is_poisoned(),
+            "the poisoning above must be observable, or the caller proves nothing"
+        );
+    }
+
     /// SessionMetrics must not attempt Mixpanel profile engage; sync_profile is a no-op unless mode is fully Enabled.
     #[test]
     fn sync_profile_is_noop_in_session_metrics_mode() {
+        let _serialise = CLIENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // No tokio runtime here on purpose: if the gate wrongly falls through, sync_profile's tokio::spawn panics and fails this test
         // Under #[tokio::test] the spawn would succeed and the test would pass even with the gate broken
         assert!(
@@ -579,6 +601,123 @@ mod tests {
             "client must be live for session metrics"
         );
         assert!(!is_enabled(), "product analytics must stay off");
+    }
+
+    /// Both mode readers used to reach the client through `.ok()`, so one panic anywhere in the
+    /// process turned "telemetry is on" into "telemetry is off", and each reader then stopped
+    /// emitting exactly what it gates -- product events for [`is_enabled`], session lifecycle for
+    /// [`is_session_metrics_enabled`] -- with nothing in the log to say why.
+    /// [`current_mode`], reading the same lock through recovery, kept reporting the mode it was
+    /// installed with, so the two disagreed until the process exited.
+    #[test]
+    fn mode_readers_survive_a_poisoned_client_lock() {
+        let _serialise = CLIENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        struct ClearClient;
+        impl Drop for ClearClient {
+            fn drop(&mut self) {
+                let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+                *lock.lock().unwrap_or_else(|err| err.into_inner()) = None;
+                // Poisoning is a process-wide flag; the next test must not inherit it.
+                lock.clear_poison();
+            }
+        }
+        let _clear = ClearClient;
+
+        let cfg = TelemetryConfig {
+            mixpanel_enabled: false,
+            events_url: None,
+            events_api_key: None,
+            ..TelemetryConfig::default()
+        };
+        init(
+            cfg,
+            TelemetryMode::SessionMetrics,
+            Some("user-1".into()),
+            None,
+            None,
+            None,
+            "0.0.0-test".into(),
+            None,
+            reqwest::Client::new(),
+        );
+        assert!(
+            is_session_metrics_enabled(),
+            "the client must be live before the poisoning"
+        );
+
+        poison_client_lock();
+
+        assert_eq!(current_mode(), Some(TelemetryMode::SessionMetrics));
+        assert!(
+            is_session_metrics_enabled(),
+            "a dead holder must not read as 'telemetry is off'"
+        );
+        assert!(
+            !is_enabled(),
+            "and recovery must not invent a mode that was never installed"
+        );
+    }
+
+    /// The same poisoning with the one mode where [`is_enabled`] answers true. `SessionMetrics`
+    /// keeps that gate closed either way, so a test installed in it cannot tell a working reader
+    /// from one that hands back "telemetry is off" the moment the lock is poisoned.
+    #[test]
+    fn product_event_gate_survives_a_poisoned_client_lock() {
+        let _serialise = CLIENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // No tokio runtime on purpose: an Enabled client that really reached Mixpanel would
+        // spawn there and panic, rather than leaving this test to pass on nothing.
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "this test must run without a tokio runtime"
+        );
+        struct ClearClient;
+        impl Drop for ClearClient {
+            fn drop(&mut self) {
+                let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
+                *lock.lock().unwrap_or_else(|err| err.into_inner()) = None;
+                // Poisoning is a process-wide flag; the next test must not inherit it.
+                lock.clear_poison();
+            }
+        }
+        let _clear = ClearClient;
+
+        let cfg = TelemetryConfig {
+            mixpanel_enabled: false,
+            events_url: None,
+            events_api_key: None,
+            ..TelemetryConfig::default()
+        };
+        init(
+            cfg,
+            TelemetryMode::Enabled,
+            Some("user-1".into()),
+            None,
+            None,
+            None,
+            "0.0.0-test".into(),
+            None,
+            reqwest::Client::new(),
+        );
+        assert!(
+            is_enabled(),
+            "the product-event gate must be open before the poisoning"
+        );
+
+        poison_client_lock();
+
+        assert_eq!(current_mode(), Some(TelemetryMode::Enabled));
+        assert!(
+            is_enabled(),
+            "a dead holder must not switch product telemetry off"
+        );
+        assert!(
+            is_session_metrics_enabled(),
+            "and must not switch the lifecycle gate off either"
+        );
     }
 
     /// Names without a known emitter prefix pass through unchanged.

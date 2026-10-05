@@ -40,6 +40,7 @@ mod inference_override;
 #[cfg(unix)]
 pub mod leader;
 pub mod mock_server;
+pub mod poison;
 pub mod process;
 pub mod recv_wait;
 pub mod resources;

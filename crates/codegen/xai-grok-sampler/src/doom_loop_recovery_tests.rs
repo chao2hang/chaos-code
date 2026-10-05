@@ -495,3 +495,40 @@ fn append_recovery_context_uses_synthetic_user_reminder() {
     };
     assert_eq!(text.as_ref(), RECOVERY_REMINDER);
 }
+
+/// A poisoned capture kept reporting itself armed, because [`FailedResponseCapture::is_armed`]
+/// answers from `inner` and never touches the lock. With the error swallowed, every `record_*`
+/// and the drain afterwards silently did nothing: the retry got the reminder alone, so the model
+/// was told only that it had looped and never shown the turn it looped on.
+#[test]
+fn a_poisoned_capture_still_replays_the_failed_turn() {
+    let capture = armed();
+    capture.record_output_delta(0, 0, "message-1".into(), "partial ");
+
+    let inner = capture
+        .inner
+        .as_ref()
+        .expect("an armed capture holds a mutex to poison");
+    xai_grok_test_support::poison::mutex_through_a_panicking_thread(inner);
+
+    assert!(
+        capture.is_armed(),
+        "the stream keeps doing per-frame work for a capture it believes is armed"
+    );
+    capture.record_output_done(0, 0, "message-1".into(), "the failed answer".into());
+    capture.record_reasoning_summary_done(1, 0, "reasoning-1".into(), "the failed thought".into());
+
+    let items = capture.take_items();
+    assert_eq!(items.len(), 2, "both channels must reach the retry");
+    let ConversationItem::Reasoning(reasoning) = &items[0] else {
+        panic!("expected the reasoning recorded through the poisoned lock");
+    };
+    assert_eq!(
+        reasoning.content.as_ref().unwrap()[0].text,
+        "the failed thought"
+    );
+    let ConversationItem::Assistant(assistant) = &items[1] else {
+        panic!("expected the answer recorded through the poisoned lock");
+    };
+    assert_eq!(assistant.content.as_ref(), "the failed answer");
+}

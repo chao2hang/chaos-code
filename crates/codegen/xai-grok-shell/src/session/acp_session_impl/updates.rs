@@ -210,7 +210,7 @@ impl SessionActor {
     /// live open prompt (never stain a different live turn). Session always.
     pub(super) async fn mark_apply_miss_incomplete(&self, stamped_pin: Option<&str>) -> bool {
         let sticky = self.mark_subagent_usage_not_applied(stamped_pin).await;
-        let live = self.current_prompt_id.lock().ok().and_then(|g| g.clone());
+        let live = self.current_prompt_id.lock_or_recover().clone();
         let stain_prompt = match (stamped_pin, live.as_deref()) {
             (Some(pin), Some(live_id)) => pin == live_id,
             (Some(_), None) => false,
@@ -292,7 +292,8 @@ impl SessionActor {
         let obj = meta
             .as_object_mut()
             .expect("json! literal is always an Object");
-        if let Some(pid) = self.current_prompt_id.lock().ok().and_then(|g| g.clone()) {
+        let live_prompt_id = self.current_prompt_id.lock_or_recover().clone();
+        if let Some(pid) = live_prompt_id {
             obj.insert("promptId".to_string(), pid.into());
         }
         if let Some(ms) = stream_start_ms {

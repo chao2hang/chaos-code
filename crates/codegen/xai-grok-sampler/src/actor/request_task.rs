@@ -3,7 +3,7 @@
 
 use std::pin::pin;
 use std::sync::{
-    Arc, Mutex,
+    Arc, Mutex, PoisonError,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
@@ -666,12 +666,12 @@ fn tee_errors<'a, T: Send + 'a>(
     let cell_clone = Arc::clone(&cell);
     let teed = raw
         .map(move |item| {
-            if let Err(ref e) = item
-                && let Ok(mut guard) = cell_clone.lock()
-                && guard.is_none()
-            {
+            if let Err(ref e) = item {
+                let mut guard = cell_clone.lock().unwrap_or_else(PoisonError::into_inner);
                 // Capture only the first error; subsequent errors on a torn-down stream are usually secondary effects of the same disconnect
-                *guard = Some(clone_error(e));
+                if guard.is_none() {
+                    *guard = Some(clone_error(e));
+                }
             }
             item
         })
@@ -780,8 +780,8 @@ async fn drive_l2(
                     await_first_output_span.take();
                     let raw = captured
                         .lock()
-                        .ok()
-                        .and_then(|mut g| g.take());
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
                     let error = raw.unwrap_or_else(|| synthesize_from_info(&info));
                     let recovery_items = if matches!(error, SamplingError::DoomLoopDetected { .. }) {
                         failed_response.take_items()

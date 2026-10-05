@@ -1,4 +1,5 @@
 use crate::util::config::RemoteSettings;
+use crate::util::shared_guard::ReadWriteOrRecover;
 use toml::Value as TomlValue;
 
 /// Env override for the full crash-handler install gate.
@@ -42,18 +43,16 @@ pub fn resolve_crash_handler_enabled(
 }
 
 /// Process-global cache of the remote tier, read by [`load_crash_handler_enabled_sync`] before Tokio starts, when no live `RemoteSettings` exists.
-/// Fail-safe to `None` on lock poisoning.
+/// Both accessors read through poisoning: `None` here means "the remote tier has no opinion", so treating a dead holder's panic as `None` would drop a policy tier that was actually set.
 static REMOTE_CRASH_HANDLER_ENABLED: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(None);
 
 /// Called when the agent applies `RemoteSettings`.
 pub(crate) fn cache_remote_crash_handler_enabled(value: Option<bool>) {
-    if let Ok(mut guard) = REMOTE_CRASH_HANDLER_ENABLED.write() {
-        *guard = value;
-    }
+    *REMOTE_CRASH_HANDLER_ENABLED.write_or_recover() = value;
 }
 
 fn cached_remote_crash_handler_enabled() -> Option<bool> {
-    REMOTE_CRASH_HANDLER_ENABLED.read().ok().and_then(|g| *g)
+    *REMOTE_CRASH_HANDLER_ENABLED.read_or_recover()
 }
 
 /// Merge system-managed policy (`/etc/grok`) under home `managed_config.toml` so MDM/system layers still reach the managed BoolFlag tier.
@@ -90,6 +89,7 @@ pub fn load_crash_handler_enabled_sync() -> bool {
 mod crash_handler_gate_tests {
     use super::*;
     use crate::agent::config::ConfigSource;
+    use crate::util::shared_guard::poison_rwlock_through_a_panicking_writer;
 
     // `GROK_CRASH_HANDLER` is process-global
     // Serialize and force it unset at the top of each test so a developer's shell value can't make these flaky
@@ -219,5 +219,26 @@ mod crash_handler_gate_tests {
         assert_eq!(cached_remote_crash_handler_enabled(), Some(false));
         cache_remote_crash_handler_enabled(None);
         assert_eq!(cached_remote_crash_handler_enabled(), None);
+    }
+
+    /// `None` in this cache means "the remote tier has no opinion", which is also exactly what a
+    /// swallowed poisoning error answered: one panic anywhere in the process dropped a remote
+    /// decision and let local config, then the default, decide whether the crash handler installs.
+    #[test]
+    fn cached_remote_survives_a_poisoned_lock() {
+        let _g = guard();
+        cache_remote_crash_handler_enabled(Some(true));
+        poison_rwlock_through_a_panicking_writer(&REMOTE_CRASH_HANDLER_ENABLED);
+        assert_eq!(
+            cached_remote_crash_handler_enabled(),
+            Some(true),
+            "a dead holder must not read as 'the remote tier has no opinion'"
+        );
+        // The writer recovers too: the next `RemoteSettings` application has to land on a lock a
+        // thread just died holding, or the tier would freeze at whatever the dead writer left.
+        cache_remote_crash_handler_enabled(Some(false));
+        assert_eq!(cached_remote_crash_handler_enabled(), Some(false));
+        cache_remote_crash_handler_enabled(None);
+        REMOTE_CRASH_HANDLER_ENABLED.clear_poison();
     }
 }

@@ -34,25 +34,33 @@ struct CollectorState {
 }
 
 impl DoomLoopSignalCollector {
+    /// The state behind the lock, read through poisoning.
+    ///
+    /// Every field is a plain value this collector owns, and every critical section below is
+    /// short. Swallowing the error instead would make a single panic inside one of them switch
+    /// the detector off for the rest of the attempt: `record` would drop every later signal,
+    /// `take` would report none, and `abort_triggers` would answer `None` forever.
+    fn state(&self) -> std::sync::MutexGuard<'_, CollectorState> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// A fresh, armed collector judging confidence with `policy`.
     pub(crate) fn new(policy: DoomLoopRecoveryPolicy) -> Self {
         let collector = Self::default();
-        if let Ok(mut state) = collector.inner.lock() {
-            state.policy = policy;
-        }
+        collector.state().policy = policy;
         collector
     }
 
     /// Stop the mid-stream abort for this attempt; signals keep recording.
     pub(crate) fn disarm_abort(&self) {
-        if let Ok(mut state) = self.inner.lock() {
-            state.abort_disarmed = true;
-        }
+        self.state().abort_disarmed = true;
     }
 
     /// While armed: the raw labels of the confident signals recorded so far (non-draining), or `None` when there is nothing to act on.
     pub(crate) fn abort_triggers(&self) -> Option<Vec<String>> {
-        let state = self.inner.lock().ok()?;
+        let state = self.state();
         if state.abort_disarmed {
             return None;
         }
@@ -88,16 +96,11 @@ impl DoomLoopSignalCollector {
 
     /// Drain the recorded signals; empty when nothing was reported.
     pub(crate) fn take(&self) -> Vec<DoomLoopSignal> {
-        match self.inner.lock() {
-            Ok(mut state) => std::mem::take(&mut state.signals),
-            Err(_) => Vec::new(),
-        }
+        std::mem::take(&mut self.state().signals)
     }
 
     fn record(&self, signals: Vec<DoomLoopSignal>) {
-        let Ok(mut state) = self.inner.lock() else {
-            return;
-        };
+        let mut state = self.state();
         // Cumulative sets are re-sent as they grow; the raw label is the stable identity
         // The size bound sits here at the wire collector so no downstream event or response can carry an oversized detector payload
         for signal in signals {
@@ -114,9 +117,7 @@ impl DoomLoopSignalCollector {
 
     /// Debug-log the first malformed payload per attempt (never per event).
     fn log_malformed_once(&self) {
-        let Ok(mut state) = self.inner.lock() else {
-            return;
-        };
+        let mut state = self.state();
         if !state.malformed_logged {
             state.malformed_logged = true;
             tracing::debug!("doom-loop check payload malformed or empty; ignoring");
@@ -245,5 +246,46 @@ mod tests {
         collector.disarm_abort();
         assert!(collector.abort_triggers().is_none());
         assert_eq!(collector.take().len(), 2, "recording survives the disarm");
+    }
+
+    /// One panic inside a critical section must not end the detector for the attempt.
+    /// With the error swallowed, every later `record` was dropped, `take` reported nothing and
+    /// `abort_triggers` answered `None` for the rest of the stream, so a response still looping
+    /// ran to completion with the abort that exists to cut it off disabled.
+    #[test]
+    fn a_poisoned_collector_keeps_recording_and_aborting() {
+        let confident = r#"{"type":"response.doom_loop_check","doom_loop_check":{"triggers":["tail_repetition:8@thinking"]}}"#;
+
+        let collector = DoomLoopSignalCollector::new(DoomLoopRecoveryPolicy::default());
+        assert!(collector.absorb(DOOM_LOOP_CHECK_EVENT_TYPE, confident));
+        assert!(
+            collector.abort_triggers().is_some(),
+            "armed before the poisoning"
+        );
+
+        xai_grok_test_support::poison::mutex_through_a_panicking_thread(&collector.inner);
+
+        assert_eq!(
+            collector.abort_triggers(),
+            Some(vec!["tail_repetition:8@thinking".to_string()]),
+            "a dead holder must not read as 'nothing to act on'"
+        );
+        assert!(collector.absorb(DOOM_LOOP_CHECK_EVENT_TYPE, SAMPLE_CHECK_EVENT_DATA));
+        assert_eq!(
+            collector.take().len(),
+            2,
+            "signals arriving after the death must still be recorded and drainable"
+        );
+
+        // The disarm is the other half: the spent-budget attempt has to complete, and that
+        // decision is written through the same lock a thread just died holding.
+        let collector = DoomLoopSignalCollector::new(DoomLoopRecoveryPolicy::default());
+        assert!(collector.absorb(DOOM_LOOP_CHECK_EVENT_TYPE, confident));
+        xai_grok_test_support::poison::mutex_through_a_panicking_thread(&collector.inner);
+        collector.disarm_abort();
+        assert!(
+            collector.abort_triggers().is_none(),
+            "a disarm written through a poisoned lock must still take effect"
+        );
     }
 }

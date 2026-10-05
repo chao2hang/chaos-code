@@ -61,37 +61,19 @@ impl<T> ReadWriteOrRecover<T> for RwLock<T> {
 /// scope's join makes the poisoning visible before this returns, and the assert
 /// is what stops a caller from measuring recovery on a guard that was never
 /// poisoned at all.
+///
+/// The setup itself lives in `xai-grok-test-support`, because the sampler, the
+/// pager and the shell each hold their own locks and all three have to prove the
+/// same thing about them.
 #[cfg(test)]
 pub(crate) fn poison_mutex_through_a_panicking_thread<T: Send>(guard: &Mutex<T>) {
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _held = guard.lock().unwrap();
-                panic!("a holder dying inside the guard");
-            }));
-        });
-    });
-    assert!(
-        guard.is_poisoned(),
-        "the poisoning above must be observable, or the caller proves nothing"
-    );
+    xai_grok_test_support::poison::mutex_through_a_panicking_thread(guard);
 }
 
 /// The same for a write lock, which is the only way an `RwLock` gets poisoned.
 #[cfg(test)]
 pub(crate) fn poison_rwlock_through_a_panicking_writer<T: Send + Sync>(guard: &RwLock<T>) {
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _held = guard.write().unwrap();
-                panic!("a writer dying inside the guard");
-            }));
-        });
-    });
-    assert!(
-        guard.is_poisoned(),
-        "the poisoning above must be observable, or the caller proves nothing"
-    );
+    xai_grok_test_support::poison::rwlock_through_a_panicking_writer(guard);
 }
 
 #[cfg(test)]

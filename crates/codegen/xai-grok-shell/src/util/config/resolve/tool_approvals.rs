@@ -1,4 +1,5 @@
 use crate::util::config::RemoteSettings;
+use crate::util::shared_guard::ReadWriteOrRecover;
 use toml::Value as TomlValue;
 
 /// Env override for the **remember tool approvals** permission-panel gate.
@@ -47,19 +48,17 @@ pub fn resolve_remember_tool_approvals(
 }
 
 /// Process-global cache of the remote tier, read by [`remember_tool_approvals_from_disk`] at spawn (no live `RemoteSettings` there).
-/// Fail-safe to `None` on lock poisoning.
+/// Both accessors read through poisoning: `None` here means "the remote tier has no opinion", so treating a dead holder's panic as `None` would let a lower-precedence layer decide a permission-persistence setting the remote policy had already settled.
 static REMOTE_REMEMBER_TOOL_APPROVALS: std::sync::RwLock<Option<bool>> =
     std::sync::RwLock::new(None);
 
 /// Record the remote settings value; called when the agent applies `RemoteSettings` (`agent::init` at startup, `MvpAgent` on refresh).
 pub(crate) fn cache_remote_remember_tool_approvals(value: Option<bool>) {
-    if let Ok(mut guard) = REMOTE_REMEMBER_TOOL_APPROVALS.write() {
-        *guard = value;
-    }
+    *REMOTE_REMEMBER_TOOL_APPROVALS.write_or_recover() = value;
 }
 
 fn cached_remote_remember_tool_approvals() -> Option<bool> {
-    REMOTE_REMEMBER_TOOL_APPROVALS.read().ok().and_then(|g| *g)
+    *REMOTE_REMEMBER_TOOL_APPROVALS.read_or_recover()
 }
 
 fn remember_tool_approvals_from_layers(
@@ -108,6 +107,7 @@ pub(crate) fn remember_tool_approvals_from_disk() -> bool {
 mod remember_tool_approvals_gate_tests {
     use super::*;
     use crate::agent::config::ConfigSource;
+    use crate::util::shared_guard::poison_rwlock_through_a_panicking_writer;
 
     // `GROK_REMEMBER_TOOL_APPROVALS` is process-global
     // Serialize and force it unset at the top of each test so a developer's shell value can't make these flaky
@@ -226,5 +226,24 @@ mod remember_tool_approvals_gate_tests {
         assert_eq!(cached_remote_remember_tool_approvals(), Some(false));
         cache_remote_remember_tool_approvals(None);
         assert_eq!(cached_remote_remember_tool_approvals(), None);
+    }
+
+    /// This tier decides whether approved tool calls are persisted at all, so a swallowed
+    /// poisoning error was not a cosmetic miss: the remote policy said one thing, the reader
+    /// answered `None` ("no remote opinion"), and the local layer decided instead.
+    #[test]
+    fn cached_remote_survives_a_poisoned_lock() {
+        let _g = guard();
+        cache_remote_remember_tool_approvals(Some(false));
+        poison_rwlock_through_a_panicking_writer(&REMOTE_REMEMBER_TOOL_APPROVALS);
+        assert_eq!(
+            cached_remote_remember_tool_approvals(),
+            Some(false),
+            "a dead holder must not hand a permission-persistence setting to a lower layer"
+        );
+        cache_remote_remember_tool_approvals(Some(true));
+        assert_eq!(cached_remote_remember_tool_approvals(), Some(true));
+        cache_remote_remember_tool_approvals(None);
+        REMOTE_REMEMBER_TOOL_APPROVALS.clear_poison();
     }
 }
