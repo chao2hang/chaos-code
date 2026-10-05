@@ -1,0 +1,480 @@
+# A cfg condition no build can meet hid 23 tests for 31 days, and their panics were booked as production (2026-10-05)
+
+`crates/codegen/xai-grok-shell/src/agent/auth_method.rs` carried `#[cfg(any())] mod tests` on
+line 593. `any()` with no arguments is a well-formed condition that matches nothing, so rustc
+drops the module before name resolution: `cargo test` compiled none of it, the `#[ignore]`
+ledger had no entry for it, clippy had no warning for it, and `panic-site-census.py` -- whose
+cfg evaluator only answers "does this require `test`", and an empty `any()` requires nothing --
+counted the 13 `.unwrap()` / `.expect()` calls inside it as production panic sites. Two of the
+three things that should have noticed were silent by construction, and the third was wrong in
+the direction that made the file look more thoroughly checked than it is.
+
+== 0. What was on disk
+
+    $ git blame -L 593,594 --date=short HEAD -- crates/codegen/xai-grok-shell/src/agent/auth_method.rs
+    f4dc6d533 (Chaos 2026-07-26 593) #[cfg(any())]
+    f4dc6d533 (Chaos 2026-07-26 594) mod tests {
+
+The module held 23 `#[test]` functions: the classifier matrix for `AuthMethodKind`, the
+credential predicate, the env-var precedence rules, the `AuthManager` legacy-token path and the
+login-method constructors. Nothing about the file read as uncovered. Twenty-three test functions
+sit in it, the census reported the panic sites inside them as production ones, and the last
+window in which the module was live, 2026-08-31 to 2026-09-04, is the last evidence anyone had
+of it.
+
+== 1. How long, and why three times
+
+The attribute is not a one-off. Walking `git log --follow` over the file and reading the line
+above `mod tests {` in each revision gives the whole sequence, with the number of `#[test]`
+functions the module held at that revision:
+
+    c68e39f6 2026-07-16  #[cfg(test)]       tests=21
+    e9d8fa94 2026-07-26  #[cfg(any())]      tests=21
+    f4dc6d53 2026-07-26  #[cfg(any())]      tests=21
+    780d1388 2026-08-03  #[cfg(test)]       tests=21
+    ed6d5436 2026-08-04  #[cfg(test)]       tests=21
+    a5589e95 2026-08-05  #[cfg(test)]       tests=24
+    0a9313e7 2026-08-07  #[cfg(any())]      tests=21
+    bb7f39d5 2026-08-31  #[cfg(test)]       tests=24
+    8dd3a8f9 2026-09-04  #[cfg(any())]      tests=23
+    ca69978c 2026-09-23  #[cfg(any())]      tests=23
+    228ccf83 2026-10-02  #[cfg(any())]      tests=23
+    HEAD    2026-10-05  #[cfg(any())]      tests=23
+    (batch) 2026-10-05  #[cfg(test)]       tests=14
+
+Parked, un-parked by an upstream sync, re-parked, un-parked by the next sync, re-parked, and
+then left for 31 days. Both re-parks landed on top of the newer version of the module that the
+sync had just brought in, so each one also silently discarded upstream's newer tests for the
+file. The reason was never "these tests are wrong": the fork pinned authentication to
+bring-your-own-key only, several of the upstream assertions stopped describing this fork, and
+curating them was deferred. Deferring them by deleting the tests would have been visible; the
+attribute made the deferral invisible, including to whoever would later have to pick it up.
+
+== 2. The guard, in both directions
+
+`scripts/ci/check-dead-cfg.py` folds every `cfg` / `cfg_attr` / `cfg!` predicate in `crates/`
+and `bin/` to TRUE / FALSE / UNKNOWN, sharing its evaluator with the census through
+`scripts/cfg_lib.py`, and reports the FALSE ones. On the tree as it now stands:
+
+    $ python3 scripts/ci/check-dead-cfg.py; echo "exit=$?"
+    2979 files, no cfg predicate that can never hold
+    exit=0
+
+    $ python3 scripts/ci/test-check-dead-cfg.py
+   ----------------------------------------------------------------------
+    Ran 17 tests in 14.568s
+
+    OK
+    exit=0
+
+The negative case is the pristine file, copied into a scratch tree that mirrors the repo layout
+one file deep, so the guard has something to find:
+
+    $ python3 scripts/ci/check-dead-cfg.py --root {SCRATCH}/guardtree; echo "guard exit=$?"
+    {SCRATCH}/guardtree/crates/codegen/xai-grok-shell/src/agent/auth_method.rs:593: cfg(any()) can never hold
+
+    1 cfg predicate(s) can never hold, so rustc drops whatever they gate from every build. Test
+    modules behind one are compiled by no build: they neither run nor appear in any ledger, and
+    the file still reads as covered code. Delete the gated text, or make the condition one a
+    build can satisfy.
+    guard exit=1
+
+== 3. Two scanners, one unchanged tree
+
+Both numbers below were taken with the pristine `auth_method.rs` back in place, so the tree is
+identical in the two runs and only the scanner differs. First the scanner as it was before this
+batch (`git show HEAD:scripts/ci/panic-site-census.py`), then the fixed one:
+
+    $ python3 {SCRATCH}/census.old.py | tail -2
+    32181 .unwrap() calls in all, 300 of them outside any cfg(test) span (0%); 657 unsafe sites,
+    428 in production.
+    unsafe by kind, every build: 599 block, 25 fn, 7 impl, 26 extern
+
+    $ python3 scripts/ci/panic-site-census.py | tail -2
+    32181 .unwrap() calls in all, 293 of them outside any cfg(test) span (0%); 657 unsafe sites,
+    428 in production.
+    unsafe by kind, every build: 599 block, 25 fn, 7 impl, 26 extern
+
+The crate row moves the same 13 sites out of the production columns -- 7 `.unwrap()` and 6
+`.expect()` -- and leaves the `unsafe` columns alone, because the parked module has none:
+
+    $ python3 {SCRATCH}/census.old.py --write-baseline {SCRATCH}/old.pristine.tsv
+    $ grep -P '^xai-grok-shell\t' {SCRATCH}/old.pristine.tsv
+    xai-grok-shell	46	116	28	13
+
+    $ python3 scripts/ci/panic-site-census.py --write-baseline {SCRATCH}/new.pristine.tsv
+    $ grep -P '^xai-grok-shell\t' {SCRATCH}/new.pristine.tsv
+    xai-grok-shell	39	110	28	13
+
+Summing every crate row in the two baselines gives the tree-wide difference, and shows the
+`panic` and `unsafe` columns do not move -- the parked module has neither:
+
+    $ awk -F'\t' '!/^#/ && NF==5 {u+=$2; e+=$3; p+=$4; s+=$5} END {printf "unwrap %d, expect %d, panic %d, unsafe %d\n", u, e, p, s}' {SCRATCH}/old.pristine.tsv
+    unwrap 300, expect 595, panic 130, unsafe 428
+
+    $ awk -F'\t' '!/^#/ && NF==5 {u+=$2; e+=$3; p+=$4; s+=$5} END {printf "unwrap %d, expect %d, panic %d, unsafe %d\n", u, e, p, s}' {SCRATCH}/new.pristine.tsv
+    unwrap 293, expect 589, panic 130, unsafe 428
+
+The row committed in `scripts/ci/panic-site-baseline.tsv` is the second one, and it is the only
+row either scanner disagrees about:
+
+    $ diff {SCRATCH}/old.pristine.tsv {SCRATCH}/new.pristine.tsv
+    61c61
+    < xai-grok-shell	46	116	28	13
+    ---
+    > xai-grok-shell	39	110	28	13
+
+`--list` agrees site by site:
+
+    $ python3 {SCRATCH}/census.old.py --list xai-grok-shell | head -1
+    # 203 production sites in xai-grok-shell
+    $ python3 scripts/ci/panic-site-census.py --list xai-grok-shell | head -1
+    # 190 production sites in xai-grok-shell
+
+== 4. The 13 sites that were never in a build
+
+These are the sites the difference is made of -- the ones that had been driving the ratchet for
+the crate while belonging to code no build compiles:
+
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:884: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1021: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1040: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1054: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1100: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1110: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1157: .unwrap()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:845: .expect()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:847: .expect()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:885: .expect()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:887: .expect()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1022: .expect()
+    crates/codegen/xai-grok-shell/src/agent/auth_method.rs:1096: .expect()
+
+Two blind spots had to be closed for that, both in `panic-site-census.py`:
+
+- an item gated by a never-true predicate is dropped, so the sites inside it belong to no
+  column; the census now folds the predicate through the same `cfg_lib.py` the guard uses.
+- a `mod` declaration under such a predicate is dropped too, which means the file it names is
+  compiled by nobody. Re-listing that declaration in the edge lists put the file back into a
+  build and counted its sites as production; the declaration is now skipped where it is dead.
+
+The ratchet itself still passes against the new numbers -- the crate did not acquire any new
+production panic site, it just stopped being charged for sites it does not have:
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+    exit=0
+
+    $ python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+    uncompiled set holds: 0 files, exactly as recorded
+    exit=0
+
+
+== 5. The census test that was green while measuring something else
+
+The census fix has a fixture: a synthetic crate in which one file's only declaration sits behind
+`#[cfg(any())]`, so the scanner is forced to answer "is a file whose `mod` line was dropped
+compiled by anything?". The first version of that fixture was written as a flat pair of files:
+
+    src/dropped_decl_host.rs      # contains: #[cfg(any())] mod dropped_decl;
+    src/dropped_decl.rs           # the target, with a .unwrap() in it
+
+That shape never existed in the first place. Rust resolves `mod dropped_decl;` inside
+`src/dropped_decl_host.rs` to `src/dropped_decl_host/dropped_decl.rs`, so in the flat pair the
+declaration named nothing, the target was already uncompiled for the "nobody declares this file"
+reason the fixture separately tests with `nobody_declares.rs`, and the rule under test was
+exercised by no line of the fixture. Committed as it is now:
+
+    # scripts/ci/test-panic-site-census.py
+    # The directory matters, not just the names: `mod x;` inside `src/host.rs` looks for
+    # `src/host/x.rs`, so writing the pair side by side in `src/` would declare a file
+    # that resolves to nothing, and the target would land in the uncompiled ledger for
+    # the wrong reason -- the same reason `nobody_declares.rs` is there.
+    (src / "dropped_decl_host").mkdir()
+    (src / "dropped_decl_host" / "mod.rs").write_text(
+        "pub fn ships_anyway() -> u32 {\n    host_side().unwrap();\n    26\n}\n\n"
+        "#[cfg(any())]\nmod dropped_decl;\n",
+        encoding="utf-8",
+    )
+    (src / "dropped_decl_host" / "dropped_decl.rs").write_text(
+        "pub fn compiled_by_nobody() -> u32 {\n    dropped_decl_thing().unwrap();\n    27\n}\n",
+        encoding="utf-8",
+    )
+
+The difference between the two shapes is visible by running the shipped scanner and the M13
+mutant (the skip removed from `module_declarations`) against both, in one process:
+
+    $ python3 {SCRATCH}/probe_shape.py
+
+    == directory shape, as committed
+       dropped_decl_host/dropped_decl.rs
+       shipped: demo row {'unwrap': 26, 'unwrap_prod': 13, 'expect': 0, 'expect_prod': 0, 'panic': 0, 'panic_prod': 0, 'unsafe': 5, 'unsafe_prod': 4, 'unsafe_block': 2, 'unsafe_fn': 1, 'unsafe_impl': 1, 'unsafe_extern': 1, 'files': 22, 'test_files': 8, 'uncompiled_files': 2}
+              uncompiled 2 files: ['dropped_decl_host/dropped_decl.rs', 'nobody_declares.rs']
+              sites booked for the target file: [(2, '.unwrap()')]
+       mutant : demo row {'unwrap': 27, 'unwrap_prod': 14, 'expect': 0, 'expect_prod': 0, 'panic': 0, 'panic_prod': 0, 'unsafe': 5, 'unsafe_prod': 4, 'unsafe_block': 2, 'unsafe_fn': 1, 'unsafe_impl': 1, 'unsafe_extern': 1, 'files': 22, 'test_files': 8, 'uncompiled_files': 1}
+              uncompiled 1 files: ['nobody_declares.rs']
+              sites booked for the target file: [(2, '.unwrap()'), (2, '.unwrap()')]
+
+    == flat shape, the first version
+       dropped_decl.rs, dropped_decl_host.rs
+       shipped: demo row {'unwrap': 26, 'unwrap_prod': 13, 'expect': 0, 'expect_prod': 0, 'panic': 0, 'panic_prod': 0, 'unsafe': 5, 'unsafe_prod': 4, 'unsafe_block': 2, 'unsafe_fn': 1, 'unsafe_impl': 1, 'unsafe_extern': 1, 'files': 22, 'test_files': 8, 'uncompiled_files': 2}
+              uncompiled 2 files: ['dropped_decl.rs', 'nobody_declares.rs']
+              sites booked for the target file: [(2, '.unwrap()')]
+       mutant : demo row {'unwrap': 26, 'unwrap_prod': 13, 'expect': 0, 'expect_prod': 0, 'panic': 0, 'panic_prod': 0, 'unsafe': 5, 'unsafe_prod': 4, 'unsafe_block': 2, 'unsafe_fn': 1, 'unsafe_impl': 1, 'unsafe_extern': 1, 'files': 22, 'test_files': 8, 'uncompiled_files': 2}
+              uncompiled 2 files: ['dropped_decl.rs', 'nobody_declares.rs']
+              sites booked for the target file: [(2, '.unwrap()')]
+
+In the flat shape the shipped line and the mutant line are identical -- every number the fixture
+asserts is the same with the fix and without it, which is why the fixture was green before the
+fixture was right. In the directory shape the mutant re-books the dropped file: 27 unwraps instead
+of 26, 14 of them production, one file fewer in the uncompiled ledger.
+
+Said in the fixture's own terms: the first version of the fixture, run against the shipped census
+and against M13, passes both times and prints the same bytes.
+
+    $ python3 {SCRATCH}/flat_fixture.py
+    flat fixture, shipped census vs M13 mutant: byte-identical = True
+    sha of shipped run: e2e77203f46830fc
+    sha of mutant run : e2e77203f46830fc
+    --- the shipped run, in full ---
+    exit=0
+    all census fixture checks passed
+
+With the fixture fixed, M13 stops being invisible. These are the assertions that fire:
+
+    $ python3 scripts/ci/test-panic-site-census.py   # the fixture, with M13 applied
+    FAIL production unwraps: got 14, want 13
+    FAIL all unwraps counted at all: got 27, want 26
+    FAIL the file no crate root declares, and the one whose only declaration is dropped, are compiled by nothing: they are counted in no column at all: got (1, 27), want (2, 26)
+    FAIL the .unwrap() behind #[cfg(any())] is dropped from every build, so it is not a production panic site; the host file's own .unwrap() still is: got 14, want 13
+    FAIL baseline records the production row: got 'demo\t14\t0\t0\t4', want 'demo\t13\t0\t0\t4'
+    FAIL and the file whose only declaration sits behind #[cfg(any())]: got False, want True
+    exit 1; names 'cfg(any())': True -> caught
+
+The fixture itself, unmutated:
+
+    $ python3 scripts/ci/test-panic-site-census.py
+    all census fixture checks passed
+    exit=0
+
+== 6. The mutation matrix
+
+Every claim in this batch is a claim about a checker, so each was tested by breaking the thing
+the checker is supposed to notice. Seven mutants break shipped auth behavior and are expected to
+be caught by the revived Rust tests; five break the guard or the census and are expected to be
+caught by the Python fixtures; one removes the gate from the container list and is expected to be
+caught by the wiring guard.
+
+    $ grep -E '^== M|-> (caught|MISSED)' {SCRATCH}/mutation.log
+    == M1 pinned-oidc returns an empty list and no default
+    exit 101; names 'every_configuration_advertises_only_api_key': True -> caught
+    == M2 unpinned re-advertises cached_token (the upstream regression shape)
+    exit 101; names 'legacy_grok_auth_env_is_loaded_but_never_advertised': True -> caught
+    == M3 kill switch no longer flips the predicate
+    exit 101; names 'disable_api_key_auth_decides_the_predicate_not_the_advertised_list': True -> caught
+    == M4 push_interactive_login stops requiring an issuer
+    exit 101; names 'push_interactive_login_requires_an_issuer_for_oidc': True -> caught
+    == M5 grok_com_auth_method ignores its label
+    exit 101; names 'retained_login_methods_still_build': True -> caught
+    == M6 legacy GROK_CODE_XAI_API_KEY fallback removed
+    exit 101; names 'legacy_env_var_fallback_advertises_xai_api_key': True -> caught
+    == M7 cached_token no longer classified as session-based
+    exit 101; names 'auth_method_kind_classifier_matrix': True -> caught
+    == M8 any() folds TRUE instead of FALSE
+    exit 1; names 'FAILED': True -> caught
+    == M9 all() folds FALSE instead of TRUE
+    exit 1; names 'FAILED': True -> caught
+    == M10 guard stops reporting never-true predicates
+    exit 1; names 'FAILED': True -> caught
+    == M11 census counts never-compiled spans as production again
+    exit 1; names 'cfg(any())': True -> caught
+    == M12 dead_by_cfg always answers 'compiled'
+    exit 1; names 'cfg(any())': True -> caught
+    == M13 census re-lists a module declared under a dropped cfg
+    exit 1; names 'cfg(any())': True -> caught
+    == M14 dead-cfg gate removed from the container gate list
+    exit 1; names 'scripts/ci/check-dead-cfg.py': True -> caught
+
+    $ grep -c -- '-> caught' {SCRATCH}/mutation.log
+    14
+    $ grep -c -- '-> MISSED' {SCRATCH}/mutation.log
+    0
+
+    $ tail -1 {SCRATCH}/mutate2.stdout      # the harness's own summary line
+    all 14 mutants caught
+
+Two things about the harness were wrong before any mutant was caught, and both are the kind that
+produce a green result for no reason. The first version applied no patches at all -- it computed
+the mutated text and dropped it -- so all fourteen "caught" verdicts came from running the
+unmutated tree, which fails only when a mutant is genuinely load-bearing. The second was M14's
+expectation: it waited for the gate label `dead cfg` in the output, while `check-guard-wiring.py`
+reports the file it cannot reach, so a mutant the guard did catch was recorded as surviving. Both
+were fixed before the run quoted above.
+
+
+== 7. The Rust side: 23 parked tests, and what came back
+
+The module is `#[cfg(test)]` again at line 616 and compiles. The file's tests as a whole:
+
+    $ cargo fmt -p xai-grok-shell --check; echo "fmt exit=$?"
+    fmt exit=0
+
+    $ cargo test -q -p xai-grok-shell --lib agent::auth_method
+    running 20 tests
+    ....................
+    test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 6888 filtered out; finished in 0.01s
+
+    $ cargo clippy -p xai-grok-shell --lib --all-targets -- -D warnings; echo "clippy exit=$?"
+        Checking xai-grok-shell v0.4.2 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-shell)
+        Finished `dev` profile [unoptimized] target(s) in 1m 22s
+    clippy exit=0
+
+The name-level accounting, `mod tests` before and after (module bodies diffed by the `fn` names
+following each `#[test]`):
+
+    23 parked            8 kept under the same name
+                         3 back under a new name, because the claim changed shape
+                        11 deleted, each named in the module doc with what it asserted
+                         1 folded into a loop over every cached-token input
+    -> 14 in `mod tests` = 8 + 3 + 3 written for this batch
+    -> 20 in the file   = 14 + 4 in `runtime_api_key_tests` + 2 in `chaos_auth_tests`
+
+The three renames are `disable_api_key_auth_suppresses_xai_api_key_method` to
+`disable_api_key_auth_decides_the_predicate_not_the_advertised_list`,
+`grok_login_legacy_token_does_not_require_login` to
+`legacy_grok_auth_env_is_loaded_but_never_advertised`, and
+`no_legacy_token_means_no_cached_token_advertised` to `no_legacy_token_means_no_current_credential`.
+The new tests are `retained_login_methods_still_build`, which is where
+`auth_provider_command_sets_external_provider_meta`'s assertion moved to when the advertised list
+stopped being reachable, `push_interactive_login_selects_the_configured_method`, and
+`push_interactive_login_requires_an_issuer_for_oidc`.
+
+No shipped behavior changed in this batch: the three `auth_method` builders still return exactly
+`[xai.api_key]` with `Some(xai.api_key)` as default, and `disable_api_key_auth` is still enforced
+in `resolve_static_api_key` (`crates/codegen/xai-grok-shell/src/auth/manager.rs:2332`) rather than
+by an empty advertised list. What changed is that those facts now have tests that run, and that
+the module doc no longer claims the fork advertises anything it does not.
+
+== 8. Wiring
+
+A gate nobody runs is how this happened the first two times, so the gate is registered in both
+places the wiring guard reads, and the guard confirms it can reach it:
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (85 files in scripts/ci/, 84 reachable, 76 run by scripts/verify-in-docker.sh, 8 recorded CI-only, 1 exempt)
+    exit=0
+
+    $ grep -n 'dead cfg' scripts/verify-in-docker.sh
+    361:  "dead cfg: python3 scripts/ci/test-check-dead-cfg.py && python3 scripts/ci/check-dead-cfg.py"
+
+    $ grep -n 'check-dead-cfg' .github/workflows/ci.yml
+    844:          python3 scripts/ci/test-check-dead-cfg.py
+    845:          python3 scripts/ci/check-dead-cfg.py
+
+The shared cfg evaluator went to `scripts/cfg_lib.py`, not `scripts/ci/cfg_lib.py`, for the same
+reason the other shared library is there: every file in `scripts/ci/` has to be a gate the runner
+can reach, and a library is not one.
+
+The same list runs inside `chaos-verify:local`, build legs included, and the new gate is in it. Its
+section, from a `--full` run of this tree:
+
+    $ bash scripts/verify-in-docker.sh --full
+    == dead cfg
+    test_a_leaf_and_its_own_negation_contradict_only_under_all (__main__.FoldTests.test_a_leaf_and_its_own_negation_contradict_only_under_all) ... ok
+    [...]
+    Ran 17 tests in 11.616s
+
+    OK
+    2979 files, no cfg predicate that can never hold
+    [...]
+    all gates passed in chaos-verify:local
+
+That run then refused to sign its own verdict, and the refusal belongs in this record:
+
+    UNATTRIBUTABLE: the source tree changed while the gates ran.
+      checksum 4284988695 -> 4053253308; path set 3458307932 unchanged, so file contents moved:
+        docs/audit-followup-report.md
+        docs/verification/never-true-cfg-2026-10-05.log
+        docs/verification/todo-open-items.tsv
+        scripts/cfg_lib.py
+        scripts/ci/check-dead-cfg.py
+        scripts/ci/test-check-dead-cfg.py
+      nothing in this run can be attributed to a commit; re-run it with the tree at rest.
+
+Six moved files, each one a file this batch was still writing while its own gates ran. A verdict
+gathered while the tree moves cannot be attached to a commit, so the runner exits 1 and says why
+rather than letting "all gates passed" be the last line anyone reads. The attributable form is a
+clone checked out at a commit, where nothing can move underneath the checksum:
+
+    $ git clone /home/chaos/hunt/dev/projects/chaos-code /var/tmp/full-<sha>
+    $ cd /var/tmp/full-<sha> && git checkout --detach <sha>
+    $ CHAOS_TREE_MANIFEST=/var/tmp/full-<sha>-manifest ./scripts/verify-in-docker.sh --full
+
+The host sweep is the same label list with the build legs skipped. Its first run caught this batch
+rather than the tree: `TODO status doc` failed, because the `TODO.md` row added for this work sits
+above ten of the rows the export copies out and moves their line numbers, and the gate re-derives
+`docs/verification/todo-open-items.tsv` from the file on disk instead of from intent. 37 gates
+passed around it, which is the shape of the mistake -- one stale generated file, everything else
+quiet:
+
+    $ bash scripts/verify-gates.sh      # first run, export not yet refreshed
+    PASS  toolchain matches the pin
+    [...]
+    FAIL  TODO status doc (exit 1)
+    [...]
+    PASS  secret scan
+    gates exit=1
+
+`python3 scripts/ci/classify-open-todos.py --write-export` is the refresh; both of its checks are
+quiet afterwards, and the sweep re-run with nothing else editing the tree has no failing gate:
+
+    $ bash scripts/verify-gates.sh      # resting tree, export refreshed
+    == gates extracted from /home/chaos/hunt/dev/projects/chaos-code/scripts/verify-in-docker.sh
+       host run: the ${bootstrap} prefix is dropped, build gates are skipped
+       a skipped build gate plus a changed Rust file is a NOT COVERED failure, not a pass
+       env: RUST_MIN_STACK=16777216 (mirrors the container's --env; set it to override)
+    PASS  toolchain matches the pin
+    [...]
+    PASS  panic-site census
+    PASS  dead cfg
+    PASS  metric labels
+    [...]
+    PASS  secret scan
+    SKIP  cargo check (build gate; --with-build runs it)
+    SKIP  cargo clippy (build gate; --with-build runs it)
+    SKIP  cargo test (build gate; --with-build runs it)
+    SKIP  GUI protocol types (build gate; --with-build runs it)
+
+    NOT COVERED  4 build gate(s) skipped while 1 changed file(s) are theirs to measure:
+                  crates/codegen/xai-grok-shell/src/agent/auth_method.rs
+                  run: scripts/verify-gates.sh --with-build
+    gates exit=1
+
+    $ grep -c '^PASS' {SCRATCH}/b20/gates2.txt; grep -c '^FAIL' {SCRATCH}/b20/gates2.txt
+    38
+    0
+
+The exit 1 there is the design and not a failure: a changed Rust file whose build gates were
+skipped is reported as NOT COVERED rather than as a pass, which is the mechanism that sends a batch
+to the container instead of letting it stop at "gates passed". Those build legs are what the
+`--full` section above ran, and the `cargo test` leg is where this module's 20 tests are actually
+executed.
+
+== 9. What this does not cover
+
+- `xai-grok-shell`'s own tests run in the Linux `cargo test --workspace` job
+  (`.github/workflows/ci.yml:175`). The macOS and Windows legs compile `xai-grok-shell-terminal`
+  and four other target-OS crates, not this one, so the revived tests are Linux-only in CI. That
+  matches what they test: the module has no platform-specific path.
+- The guard answers one question -- can this predicate ever hold -- and not the next one, whether
+  the text behind it should be repaired or deleted. The fork parked this module three times
+  because curating it looked like more work than silencing it; the gate does not do that work, it
+  makes silencing it a build failure instead of a non-event.
+- The fold is conservative in the direction that costs false positives nothing: any predicate the
+  evaluator cannot decide is UNKNOWN and reported as fine. A `cfg(feature = "...")` naming a
+  feature that no build in this repository turns on is therefore still invisible -- that question
+  lives in `Cargo.toml`, not in the shape of the predicate, and no gate here answers it today.
+  `check-load-bearing-features.py` answers a different feature question: whether a dependency
+  feature still reaches a crate on every target.
+- Nothing here repairs the two upstream syncs that silently discarded this module's newer tests.
+  The sync procedure is a separate row in `TODO.md`.

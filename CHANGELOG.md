@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### 门禁：一条永不为真的 `cfg` 把 23 条测试藏了一个月，现在有人会响，而扫描器不再把它们记成生产位点
+
+`crates/codegen/xai-grok-shell/src/agent/auth_method.rs` 的 `mod tests` 前面写的是 `#[cfg(any())]`。
+空 `any()` 没有分量，任何 target、任何 feature 树、任何 profile 下都是假，rustc 在名字解析**之前**
+就把整个条目丢掉；丢掉的东西不报警，因为空 `any()` 是一条合法条件，只是永不为真。于是三件事同时
+成立：`cargo test` 编译不到它，它不出现在任何测试报告里；`#[ignore]` 台账数不到它，台账数的是被编
+译进去又被标掉的测试；`panic-site-census.py` 把它算成生产 —— 那个扫描器的 `cfg` 求值器只回答「这条
+属性是否**要求** `test`」，空 `any()` 什么都不要求，于是模块里 7 个 `.unwrap()` 与 6 个 `.expect()`
+全部落进生产那一列。逐提交读下去发现这不是一次性决定：属性被写下三次（2026-07-26、2026-08-07、
+2026-09-04），中间被两次上游同步冲回 `#[cfg(test)]`，盖回去的两次同时把上游较新的模块版本换掉了
+（24 条测试变 21 条、24 条变 23 条），最后一段到今天 31 天。三处修正分别从三个方向收。
+
+第一处是防止它再发生：`scripts/ci/check-dead-cfg.py` 把 `crates/` 与 `bin/` 每一条 `cfg`、
+`cfg_attr`、`cfg!` 谓词折成三值结论（真 / 假 / 看不清），报出判为假的；`cfg_attr` 只看第一个逗号之前
+的谓词部分，因为它的条目是**永远**构建的。读数逻辑与扫描器共用一份 `scripts/cfg_lib.py` —— 两处各写
+一个 `cfg` 求值器正是这类盲区的来源。它在 `scripts/` 而不是 `scripts/ci/`，因为那个目录里每个文件都
+必须是某个入口跑起来的门禁，而一个被两个门禁 import 的库不是（`scripts/notices_lib.py` 同理，这条
+是 `check-guard-wiring.py` 教的：它把 `scripts/ci/` 下的每个 `.py` 都当成一条必须可达的门禁）。今天
+全树读数是 `2979 files, no cfg predicate that can never hold`，把那份文件换回原样它立刻报
+`auth_method.rs:593: cfg(any()) can never hold`。
+
+第二处是扫描器自己的口径：「永远为假」既不是测试代码也不是生产代码，是第三种状态——没有任何构建编
+译它。这类 span 现在从生产列摘出去，也不并进测试列；推论是模块声明同样归它管，`#[cfg(any())] mod
+x;` 丢掉的是声明本身，`x.rs` 于是属于 §2.5 那条 uncompiled 台账而不是生产。同一棵树两个扫描器的差
+是生产 unwrap 300 → 293、生产 expect 595 → 589，unsafe 两列不动；`xai-grok-shell` 那行从
+`46/116/28/13` 变 `39/110/28/13`，逐位点清单从 203 条变 190 条，门禁基线里唯一变动的就是这一行。
+
+第三处是那 23 条测试本身。模块回到 `#[cfg(test)]` 之后逐条判定：11 条删掉（断言的是分叉已经删掉的
+排序与 pin 语义，模块头按名字逐条写明理由，不是悄悄删），11 条改写后留下，1 条折进分叉不变量那条断
+言，3 条新增（覆盖仍然可达但没人调用的 login 方法构造器，以及 `(true, None)` 那个必须 panic 的组
+合）。同时改掉几处撒谎的文档注释——它们还在描述上游那套「按 pin 决定 advertised list」的行为，而
+`should_advertise_xai_api_key` 如今只喂 `initialize()` 遥测、`acp_agent.rs` 里那句 `debug_assert!`
+和 CLI 提示条；`disable_api_key_auth` 真正的执行点在 `resolve_static_api_key`，那是一条活测试
+`cached_api_key_session_rejected_when_api_key_auth_disabled` 守着的路径。改完 `agent::auth_method`
+一共 20 条测试（4 条 runtime key、14 条本模块、2 条分叉不变量），后者把 `preferred_method` 三个取值
+× 5 个布尔 × `login_label` 的 96 种组合全跑一遍，钉的正是「这 5 个输入字段如今没有一个能改变输
+出」。总 `.unwrap()` 数从 32181 变 32176，生产那一列停在 293 不动——那 5 个从来就不在生产里。
+
+矩阵 14 发，第一轮 12 死 2 活，两处存活都是本轮的账。**M13 那发是真存活**：为了守住「被丢掉的声明」
+那条推论写的夹具，把 `dropped_decl_host.rs` 与 `dropped_decl.rs` 平铺在 `src/` 下，可 `src/host.rs`
+里的 `mod x;` 找的是 `src/host/x.rs`，那条声明根本解析不到任何文件；被丢掉的文件因为「没人声明」这
+另一个原因落进 uncompiled 台账，六条断言全绿，把 `continue` 换成 `if False` 之后输出逐字节相同。改
+成 Rust 真会有的目录形状（`dropped_decl_host/mod.rs` 声明 `dropped_decl.rs`）之后，同一发让
+`unwrap_prod` 从 13 变 14、台账从 2 个文件变 1 个，六条同时红。**M14 那发是判据写错**：变异其实被
+抓（`check-guard-wiring.py` 非零退出并指名那两个文件），是矩阵拿门禁标签 `dead cfg` 去比对，而
+guard 打印的是它够不着的路径。改判据、补夹具，14 发全灭，每发之后源文件逐字节还原并 `cmp` 验证。
+
+接入位置：`scripts/verify-in-docker.sh` 的 `gates` 数组新增一条 `dead cfg`，`.github/workflows/ci.yml`
+镜像同一条命令；census 基线与 uncompiled 台账两条 ratchet 的读数不变（`baseline holds: 97 crates`、
+`uncompiled set holds: 0 files`）。逐位点核对与变异证据见
+`docs/verification/never-true-cfg-2026-10-05.log`，口径修正记在 `docs/audit-followup-report.md` §2.7。
+
+（2026-10-05；`crates/codegen/xai-grok-shell/src/agent/auth_method.rs`、`scripts/cfg_lib.py`、
+`scripts/ci/check-dead-cfg.py`、`scripts/ci/test-check-dead-cfg.py`、`scripts/ci/panic-site-census.py`、
+`scripts/ci/test-panic-site-census.py`、`scripts/ci/panic-site-baseline.tsv`、
+`scripts/verify-in-docker.sh`、`.github/workflows/ci.yml`、`docs/audit-followup-report.md`、
+`docs/ci-test-debt.md`、`TODO.md`、`docs/verification/todo-open-items.tsv`、
+`docs/verification/never-true-cfg-2026-10-05.log`）
+
 ### 门禁：npm 平台包开始为自己交付的字节写摘要，而第一个能被长度骗过的地方在装配失败之后
 
 `npm install -g chaos-code` 把 70-150 MB 的二进制搬进 `$CHAOS_HOME/bin`，而这条路上此前没有任何

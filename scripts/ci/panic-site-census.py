@@ -38,19 +38,29 @@ it.
 """
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+# Shared with `check-dead-cfg.py`; one directory up, like `scripts/notices_lib.py`,
+# because a file in `scripts/ci/` has to be a gate something runs.
+_CFG_LIB = HERE.parent / "cfg_lib.py"
+if not _CFG_LIB.is_file():
+    raise SystemExit(f"panic-site-census: {_CFG_LIB} is missing, so nothing here can be checked")
+_cfg_spec = importlib.util.spec_from_file_location("cfg_lib", _CFG_LIB)
+cfg_lib = importlib.util.module_from_spec(_cfg_spec)
+assert _cfg_spec.loader is not None
+_cfg_spec.loader.exec_module(cfg_lib)
+
 # The opening of a `cfg` attribute. The argument list is read by balancing
 # parentheses from here, because `cfg(all(test, not(unix)))` nests and a
 # character-class regex cannot see the `test` inside it.
 CFG_OPEN = re.compile(r"#\s*!?\s*\[\s*cfg(?:_attr)?\s*\(")
-# Tokens of a `cfg(...)` argument list: condition names, `key = "value"` halves,
-# and the punctuation that nests them. Strings are already blanked to spaces by
-# the time an argument list is read, so a missing value has to parse as one.
-CFG_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\(|\)|,|=")
+# Reading a `cfg(...)` predicate is not done here: `scripts/cfg_lib.py` owns it, because
+# `scripts/ci/check-dead-cfg.py` has to reach the same verdict about the same text.
 # A whole character literal: `'}'`, `'\n'`, `'\u{1f600}'`, `'\''`. Anything else
 # starting with `'` is a lifetime.
 CHAR_LITERAL = re.compile(r"'(?:\\.|[^\\'])'|'\\u\{[0-9a-fA-F]+\}'")
@@ -243,57 +253,27 @@ def cfg_attribute(clean: str, open_at: int) -> tuple[str, int] | None:
 def gated_by_test(args: str) -> bool:
     """Does a `cfg(...)` argument list apply only to a test build?
 
-    The question is whether `test` is *required*, not whether the word appears.
-    `all` requires whatever any of its parts requires, because rustc builds the
-    item only when every part holds; `any` requires only whatever every part
-    requires, because one branch alone is enough to build it. So `all(unix, test)`
-    is a test gate and `any(target_os = "linux", all(unix, test))` is not, and a
-    file carrying the second one is in the Linux release build with its panics
-    attached. `not(...)` requires nothing, so `cfg(not(test))` marks code that
-    ships precisely when tests are off.
+    `scripts/cfg_lib.py` answers it, and its docstring carries the reasoning: the question is
+    whether `test` is *required*, not whether the word appears.
     """
-    tokens = CFG_TOKEN.findall(args)
-
-    def condition(index: int) -> tuple[bool, int]:
-        """Whether one condition requires `test`, and where the tokens go on."""
-        name = tokens[index]
-        if index + 1 < len(tokens) and tokens[index + 1] == "=":
-            return False, index + 2
-        if name in ("all", "any", "not") and index + 1 < len(tokens) and tokens[index + 1] == "(":
-            parts, after = branch(index + 2)
-            if name == "all":
-                return any(parts), after
-            if name == "any":
-                return bool(parts) and all(parts), after
-            return False, after
-        return name == "test", index + 1
-
-    def branch(index: int) -> tuple[list[bool], int]:
-        """The requirement of each comma-separated part, and where the list ends."""
-        parts: list[bool] = []
-        while index < len(tokens):
-            if tokens[index] == ")":
-                return parts, index + 1
-            if tokens[index] == ",":
-                index += 1
-                continue
-            part, index = condition(index)
-            parts.append(part)
-        return parts, index
-
-    top: list[bool] = []
-    index = 0
-    while index < len(tokens):
-        if tokens[index] in (",", ")"):
-            index += 1
-            continue
-        part, index = condition(index)
-        top.append(part)
-    return bool(top) and all(top)
+    return cfg_lib.requires_test(args)
 
 
-def test_spans(clean: str) -> list[tuple[int, int]]:
-    """Ranges of `clean` that a `cfg(test)` attribute puts under the test cfg.
+def dead_by_cfg(args: str) -> bool:
+    """Is this predicate false in every build of every target, so rustc drops the item?
+
+    An unreadable predicate is answered "no" on purpose: the census's blind direction is to count
+    text as production (see the module docstring), and `check-dead-cfg.py` is the gate that
+    refuses to read a predicate it cannot fold.
+    """
+    try:
+        return cfg_lib.never_holds(args)
+    except ValueError:
+        return False
+
+
+def cfg_item_spans(clean: str, keep) -> list[tuple[int, int]]:
+    """Spans of the items whose `cfg(...)` predicate `keep` accepts.
 
     A `#[cfg(test)] mod x;` declaration gets a span over its own text too, so the
     caller can find it the same way it finds a declaration nested in a test module.
@@ -309,7 +289,7 @@ def test_spans(clean: str) -> list[tuple[int, int]]:
         if read is None:
             continue
         args, after = read
-        if not gated_by_test(args):
+        if not keep(args):
             continue
         head = clean[: opening.start()]
         if "!" in opening.group(0):
@@ -328,6 +308,23 @@ def test_spans(clean: str) -> list[tuple[int, int]]:
             continue
         spans.append((after, brace_end(clean, brace)))
     return spans
+
+
+def test_spans(clean: str) -> list[tuple[int, int]]:
+    """Ranges of `clean` that a `cfg(test)` attribute puts under the test cfg."""
+    return cfg_item_spans(clean, gated_by_test)
+
+
+def never_spans(clean: str) -> list[tuple[int, int]]:
+    """Ranges that a provably-false `cfg` removes from *every* build.
+
+    `#[cfg(any())]` is false whatever the target, the feature tree or the profile, so rustc drops
+    the item before name resolution. That text is neither production nor test code: it is
+    compiled by nobody. Counting it as production is what happened here for ten weeks -- 7
+    `.unwrap()`s in a dropped `mod tests` were reported as production panic sites in
+    `xai-grok-shell`, and the tests inside them appeared in no test run and no ledger.
+    """
+    return cfg_item_spans(clean, dead_by_cfg)
 
 
 def crate_dir_of(path: Path, root: Path) -> Path:
@@ -387,6 +384,7 @@ def module_declarations(
     path: Path,
     spans: list[tuple[int, int]],
     at_crate_root: bool,
+    dead: list[tuple[int, int]] = (),
 ) -> tuple[list[Path], list[Path]]:
     """Files this one brings in, split into test-gated and ordinarily compiled.
 
@@ -417,6 +415,10 @@ def module_declarations(
             if named
             else [c for c in module_files(path, decl.group(1), at_crate_root) if c.exists()]
         )
+        if any(start <= decl.start() < end for start, end in dead):
+            # The declaration itself is dropped from every build, so the file it names is
+            # compiled by nobody. Naming it in either edge list would put it back in a build.
+            continue
         if any(start <= decl.start() < end for start, end in spans):
             gated.extend(targets)
         else:
@@ -496,19 +498,23 @@ def measure(
     # Blanking the noise is the expensive part of reading a file, so each one is
     # read once and reused by the test-module walk and the counting pass.
     blanked: dict[Path, str] = {}
-    spans_of: dict[Path, list[tuple[int, int]]] = {}
+    spans_of: dict[Path, tuple[list[tuple[int, int]], list[tuple[int, int]]]] = {}
     text_of: dict[Path, str] = {}
 
-    def spans_for(path: Path) -> list[tuple[int, int]]:
+    def spans_for(path: Path) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        """The file's test-gated spans and the spans no build compiles at all."""
         found = spans_of.get(path)
         if found is None:
             text = path.read_text(encoding="utf-8", errors="replace")
             clean = blank_noise(text)
-            found = test_spans(clean)
+            found = (test_spans(clean), never_spans(clean))
             text_of[path] = text
             blanked[path] = clean
             spans_of[path] = found
         return found
+
+    def dead_spans_for(path: Path) -> list[tuple[int, int]]:
+        return spans_for(path)[1]
 
     declared_test: set[Path] = set()
     shipped: set[Path] = set()
@@ -529,9 +535,14 @@ def measure(
         test_roots.extend(sorted(found_testing))
     roots = {*shipped_roots, *test_roots}
     for path in files:
-        spans = spans_for(path)
+        spans, _dead = spans_for(path)
         gated, ordinary = module_declarations(
-            blanked[path], text_of[path], path, spans, path.resolve() in roots
+            blanked[path],
+            text_of[path],
+            path,
+            spans,
+            path.resolve() in roots,
+            dead_spans_for(path),
         )
         key = path.resolve()
         ordinary_edges[key] = ordinary
@@ -555,12 +566,17 @@ def measure(
         if clean is None:
             clean = blank_noise(path.read_text(encoding="utf-8", errors="replace"))
             blanked[path] = clean
-        spans = spans_for(path)
+        spans, dead = spans_for(path)
         ships = path.resolve() in shipped
         whole_file_test = (
             not ships
             or is_test_by_location(path, root)
             or any(start == 0 and end == len(clean) for start, end in spans)
+        )
+        # A file whose whole body sits behind a predicate that can never hold ships nothing, even
+        # when a crate root reaches it: `#![cfg(any())]` in a `lib.rs` is compiled away entirely.
+        no_build_compiles_it = any(
+            start == 0 and end == len(clean) for start, end in dead
         )
         crate = crate_of(path, root)
         row = totals.setdefault(
@@ -599,11 +615,17 @@ def measure(
             row[key] += len(hits)
             if whole_file_test:
                 continue
-            live = [
-                hit
-                for hit in hits
-                if not any(start <= hit.start() < end for start, end in spans)
-            ]
+            live = (
+                []
+                if no_build_compiles_it
+                else [
+                    hit
+                    for hit in hits
+                    if not any(
+                        start <= hit.start() < end for start, end in [*spans, *dead]
+                    )
+                ]
+            )
             row[prod_key] += len(live)
             for hit in live:
                 line = clean.count("\n", 0, hit.start()) + 1

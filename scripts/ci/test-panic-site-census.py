@@ -87,6 +87,7 @@ pub mod nested;
 pub mod mixed;
 mod whole_file;
 mod after_attr;
+pub mod dropped_decl_host;
 
 #[cfg(test)]
 #[path = "shared.rs"]
@@ -166,6 +167,19 @@ mod only_under_test {
     pub fn either_os() -> u32 {
         either_os_thing().unwrap();
         24
+    }
+}
+
+// False in every build of every target, so rustc drops the module before name resolution.
+// Its `.unwrap()` belongs to neither column: not production, because no binary contains it,
+// and not test code either, because `cargo test` cannot run it. `auth_method.rs` carried 23
+// tests behind exactly this attribute for ten weeks while the census reported 7 of its
+// `.unwrap()`s as production.
+#[cfg(any())]
+mod dropped_by_cfg {
+    pub fn gone() -> u32 {
+        dropped_thing().unwrap();
+        25
     }
 }
 """,
@@ -273,6 +287,26 @@ mod t {
         "pub fn never_compiled() -> u32 {\n    dead().unwrap();\n    10\n}\n",
         encoding="utf-8",
     )
+    # The other way a file stops being compiled: the declaration is still written, but
+    # behind a `cfg` no build can satisfy, so rustc drops the declaration itself. The
+    # host file still ships its own code; only the target drops out. Without the rule
+    # in `module_declarations`, `dropped_decl.rs` is listed as ordinarily compiled and
+    # its `.unwrap()` is booked as a production panic site.
+    #
+    # The directory matters, not just the names: `mod x;` inside `src/host.rs` looks for
+    # `src/host/x.rs`, so writing the pair side by side in `src/` would declare a file
+    # that resolves to nothing, and the target would land in the uncompiled ledger for
+    # the wrong reason -- the same reason `nobody_declares.rs` is there.
+    (src / "dropped_decl_host").mkdir()
+    (src / "dropped_decl_host" / "mod.rs").write_text(
+        "pub fn ships_anyway() -> u32 {\n    host_side().unwrap();\n    26\n}\n\n"
+        "#[cfg(any())]\nmod dropped_decl;\n",
+        encoding="utf-8",
+    )
+    (src / "dropped_decl_host" / "dropped_decl.rs").write_text(
+        "pub fn compiled_by_nobody() -> u32 {\n    dropped_decl_thing().unwrap();\n    27\n}\n",
+        encoding="utf-8",
+    )
 
 
 def main() -> int:
@@ -284,20 +318,27 @@ def main() -> int:
         row = rows["demo"]
         # lib.rs: two production unwraps (the shipped one and the not(test) one);
         # four more sit in comments, a string and a raw string and count nowhere;
-        # the rest are inside cfg(test) spans or test-only files.
-        check("production unwraps", row["unwrap_prod"], 12)
-        check("all unwraps counted at all", row["unwrap"], 24)
+        # the rest are inside cfg(test) spans, behind a cfg no build can satisfy
+        # (inline module or dropped declaration), or in test-only files.
+        check("production unwraps", row["unwrap_prod"], 13)
+        check("all unwraps counted at all", row["unwrap"], 26)
         check(
-            "the file no crate root declares is compiled by nothing, so its "
-            ".unwrap() is counted in neither column",
-            (row["uncompiled_files"], row["unwrap"] - row["unwrap_prod"]),
-            (1, 12),
+            "the file no crate root declares, and the one whose only declaration is "
+            "dropped, are compiled by nothing: they are counted in no column at all",
+            (row["uncompiled_files"], row["unwrap"]),
+            (2, 26),
         )
         check(
             "the whole-file cfg(test) files, the declared test mod and tests/ "
             "are not production",
             row["unwrap"] - row["unwrap_prod"],
-            12,
+            13,
+        )
+        check(
+            "the .unwrap() behind #[cfg(any())] is dropped from every build, so it "
+            "is not a production panic site; the host file's own .unwrap() still is",
+            row["unwrap_prod"],
+            13,
         )
         check("unsafe sites total", row["unsafe"], 5)
         check("unsafe sites in production", row["unsafe_prod"], 4)
@@ -312,7 +353,7 @@ def main() -> int:
             (2, 1, 1, 1),
         )
         check("files counted as test code", row["test_files"], 8)
-        check("files seen", row["files"], 20)
+        check("files seen", row["files"], 22)
 
         # The baseline is the ratchet, so it has to fail when a crate gains a way
         # to panic and pass when one is removed.
@@ -333,7 +374,7 @@ def main() -> int:
         check(
             "baseline records the production row",
             baseline.read_text(encoding="utf-8").splitlines()[-1],
-            "demo\t12\t0\t0\t4",
+            "demo\t13\t0\t0\t4",
         )
         checker = [
             sys.executable,
@@ -387,6 +428,12 @@ def main() -> int:
             "it names the file no root declares",
             uncompiled_record.read_text(encoding="utf-8").splitlines()[-1],
             "crates/demo/src/nobody_declares.rs",
+        )
+        check(
+            "and the file whose only declaration sits behind #[cfg(any())]",
+            "crates/demo/src/dropped_decl_host/dropped_decl.rs"
+            in uncompiled_record.read_text(encoding="utf-8"),
+            True,
         )
         held_record = subprocess.run(
             recorder + ["--check-uncompiled", str(uncompiled_record)],

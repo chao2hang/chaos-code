@@ -351,6 +351,14 @@ gates=(
   # at the moment it exists rather than in a review of the script that caused it.
   "tree ownership: python3 scripts/ci/test-check-tree-ownership.py && python3 scripts/ci/check-tree-ownership.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
+  # A `#[cfg(any())]` is false in every build of every target, so rustc drops the item it gates
+  # before name resolution. 23 tests sat behind one in `agent/auth_method.rs`: they ran in no
+  # build, appeared in no ignored-test ledger, and the census above counted 7 of their
+  # `.unwrap()`s as production, because its cfg evaluator answers "does this require `test`" and
+  # an empty `any()` requires nothing. Neither rustc nor clippy warns -- an empty `any()` is a
+  # well-formed condition that simply never matches -- and `cargo test` cannot report text it
+  # never compiled. This folds every predicate in `crates/` and `bin/` and refuses the FALSE ones.
+  "dead cfg: python3 scripts/ci/test-check-dead-cfg.py && python3 scripts/ci/check-dead-cfg.py"
   # The census cannot see a Prometheus call whose label count is wrong, because the panic
   # lives in the dependency (`with_label_values` unwraps) and no token at the call site says
   # so. This pairs each label-value call with the labels its metric registration declares.
