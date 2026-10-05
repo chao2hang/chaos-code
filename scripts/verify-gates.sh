@@ -27,6 +27,17 @@
 #   VERIFY_GATES_CHANGED newline-separated path list overriding what this runner believes
 #                        is changed (see the NOT COVERED rule below; --self-test sets it so
 #                        its fixtures do not inherit the real checkout's diff)
+#   VERIFY_GATES_LOG_DIR directory for every gate's full output (same as --log-dir; the
+#                        default is a timestamped directory under target/verify-gates)
+#
+# A failing gate prints its own last 40 lines, which is a reading aid and deliberately not
+# the record: cargo names the failing target at the very end of a test leg, after the output
+# of the target that failed. Measured on 2026-10-05, where the only lines the sweep kept were
+# `error: 1 target failed:` / `-p chaos-engine --lib` plus 38 lines of an unrelated crate's
+# doctests, and the name of the failing test -- which cargo prints ~1,000 lines earlier -- was
+# gone. So every gate's complete output is also written to a file, named in the failure block
+# and in the summary, and the failing test names and targets are lifted out of the full text
+# and printed regardless of where they sit in it.
 #
 # Usage:
 #   scripts/verify-gates.sh                 # cheap gates, in array order
@@ -34,6 +45,7 @@
 #   scripts/verify-gates.sh --only <label>  # only the gates whose label matches (repeatable)
 #   scripts/verify-gates.sh --list          # print the extracted labels, run nothing
 #   scripts/verify-gates.sh --verbose       # stream every gate's output, not just failures
+#   scripts/verify-gates.sh --log-dir DIR   # where to keep every gate's full output
 #   scripts/verify-gates.sh --self-test     # verify extraction and the failure path
 #   scripts/verify-gates.sh --allow-unbuilt-changes
 #                                           # skip the build gates even with Rust changed
@@ -54,6 +66,7 @@
 #
 # Capture evidence with:
 #   scripts/verify-gates.sh 2>&1 | tee verify-gates-$(date +%Y%m%d).log
+# and keep the per-gate files the run names in its summary: the tee'd log holds only the tails.
 set -uo pipefail
 
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -84,6 +97,9 @@ allow_unbuilt="no"
 # the matcher reads it with `read -r` and the file is also sourced by the self-test fixtures.
 only=""
 only_count=0
+# Where every gate's complete output is kept. Empty means "decide on the first write", so a
+# `--list` run or a self-test that never needs the files creates no directory.
+log_dir_opt="${VERIFY_GATES_LOG_DIR:-}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -104,6 +120,16 @@ while [ $# -gt 0 ]; do
       only="${only}${1}"$'\n'
       only_count=$((only_count + 1))
       ;;
+    --log-dir)
+      # Same shape as --only: an empty value would mean "the default directory" while looking
+      # like a caller's path, and a caller who passed a path expects their path.
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "--log-dir needs a directory (the default is under target/verify-gates)" >&2
+        exit 2
+      fi
+      shift
+      log_dir_opt="$1"
+      ;;
     -h | --help)
       # The header up to the first non-comment line, so `--help` cannot drift out of sync
       # with the number of lines added above it.
@@ -111,7 +137,7 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "unknown argument: $1 (expected --with-build, --allow-unbuilt-changes, --only <label>, --list, --verbose, --self-test or --help)" >&2
+      echo "unknown argument: $1 (expected --with-build, --allow-unbuilt-changes, --only <label>, --log-dir <dir>, --list, --verbose, --self-test or --help)" >&2
       exit 2
       ;;
   esac
@@ -195,6 +221,102 @@ matches_only() {
   return 1
 }
 
+# Where a gate's complete output goes. The directory is made once, by a called statement
+# rather than a command substitution, because a substitution runs in a subshell and the value
+# would never reach the summary line. Decided on the first failure, so `--list` and a green
+# sweep leave no directory behind; a tree where it cannot be made still gets the named failures
+# below, just with no file to point at, because losing the log must not lose the verdict.
+gate_log_dir=""
+log_dir_ready="no"
+log_dir_unusable="no"
+ensure_log_dir() {
+  local candidate
+  [ "${log_dir_ready}" = "yes" ] && return 0
+  [ "${log_dir_unusable}" = "yes" ] && return 1
+  candidate="${log_dir_opt:-${repo_root}/target/verify-gates/$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+  if ! mkdir -p "${candidate}" 2>/dev/null; then
+    log_dir_unusable="yes"
+    return 1
+  fi
+  gate_log_dir="${candidate}"
+  log_dir_ready="yes"
+}
+
+# Pure, once ensure_log_dir has succeeded. Labels hold spaces and the odd path; file names do not.
+gate_log_path() {
+  printf '%s/%s\n' "${gate_log_dir}" "$(printf '%s' "$1" | tr -cs 'A-Za-z0-9._-' '-')"
+}
+
+# Cargo prints the failing test names in the middle of a test leg and the failing target flags
+# at the very end, and the tail this runner shows holds at most one of the two. Both are
+# therefore lifted out of the complete output rather than out of what fits on screen, which is
+# why they read the gate's output on stdin instead of a file -- the log is a convenience, and a
+# tree that cannot write one still gets the names. The test names are matched as bare
+# identifiers (or, for doc-tests, as cargo's own `path - item (line N)` shape) so a test's own
+# indented stdout is not read as one, and each is tagged with the `Running`/`Doc-tests` header
+# cargo printed above it, which is what makes a multi-target `--no-fail-fast` leg readable as
+# "this target's this test went red" rather than as a pile.
+failing_targets() {
+  awk '
+    /^error: [0-9]+ targets? failed:/        { wanted = 1; next }
+    wanted && /^[[:space:]]+`[^`]+`$/ {
+      gsub(/^[[:space:]]+/, "")
+      gsub(/^`|`$/, "")
+      print; next
+    }
+    wanted && /^[[:space:]]*$/               { next }
+                                           { wanted = 0 }
+  ' | awk '!seen[$0]++'
+}
+
+failing_pairs() {
+  awk '
+    /^ *(Running|Doc-tests) / { label = $0
+                                sub(/^[[:space:]]+/, "", label)
+                                sub(/[[:space:]]+$/, "", label)
+                                next }
+    /^failures:[[:space:]]*$/                       { wanted = 1; next }
+    wanted && /^[[:space:]]{4}[A-Za-z_][A-Za-z0-9_:]*$/ {
+      name = $0
+      sub(/^[[:space:]]+/, "", name)
+      print (label == "" ? "(no target header)" : label) "\t" name
+      next
+    }
+    # A doc-test is not named by an identifier: cargo prints `path - item (line N)`, so that
+    # shape needs its own anchor rather than a looser character class that indented prose
+    # could also satisfy.
+    wanted && /^[[:space:]]{4}[A-Za-z0-9_][A-Za-z0-9_.\/-]*( - [^(]+)? \(line [0-9]+\)$/ {
+      name = $0
+      sub(/^[[:space:]]+/, "", name)
+      print (label == "" ? "(no target header)" : label) "\t" name
+      next
+    }
+    wanted && /^[[:space:]]*$/                      { next }
+                                                  { wanted = 0 }
+  ' | awk '!seen[$0]++'
+}
+
+report_named_failures() {
+  local text targets pairs total shown
+  text="$(cat)"
+  targets="$(printf '%s\n' "${text}" | failing_targets)"
+  if [ -n "${targets}" ]; then
+    printf '    target(s) cargo blames, as it says them:\n'
+    printf '%s\n' "${targets}" | sed 's/^/      /'
+  fi
+  pairs="$(printf '%s\n' "${text}" | failing_pairs)"
+  if [ -n "${pairs}" ]; then
+    total="$(printf '%s\n' "${pairs}" | wc -l | tr -d ' ')"
+    printf '    red, %s of them, one line each, tagged with the target cargo was running:\n' \
+      "${total}"
+    shown="$(printf '%s\n' "${pairs}" | head -n 40)"
+    printf '%s\n' "${shown}" | awk -F'\t' '{ printf "      [%s] %s\n", $1, $2 }'
+    if [ "${total}" -gt 40 ]; then
+      printf '      ... %s more, in the full output\n' "$((total - 40))"
+    fi
+  fi
+}
+
 run_gates() {
   local source_file="$1"
   local gate label command_line rc pattern labels
@@ -263,8 +385,21 @@ run_gates() {
       printf 'FAIL  %s (exit %s)\n' "$label" "$rc"
       # The reason is at the end: a guard prints its findings and then its summary. Forty
       # lines covers both, and keeps one red gate from burying the others under a cargo-sized
-      # dump.
+      # dump. It is not the record -- the whole output goes to a file, named below.
+      local gate_log="" gate_lines=""
+      if ensure_log_dir; then
+        gate_log="$(gate_log_path "$(printf '%02d' "${ran}")-${label}")"
+        if printf '%s\n' "${out}" >"${gate_log}" 2>/dev/null; then
+          gate_lines="$(wc -l <"${gate_log}" | tr -d ' ')"
+        else
+          gate_log=""
+        fi
+      fi
       printf '%s\n' "$out" | tail -n 40 | sed 's/^/    /'
+      printf '%s\n' "${out}" | report_named_failures
+      if [ -n "${gate_log}" ]; then
+        printf '    full output of this gate: %s (%s lines)\n' "${gate_log}" "${gate_lines}"
+      fi
       failed="${failed} ${label}"
       failures=$((failures + 1))
     fi
@@ -280,6 +415,10 @@ run_gates() {
   fi
 
   echo
+  # Named here as well as in each failure block, because the line a reader keeps is the summary.
+  if [ -n "${gate_log_dir}" ]; then
+    printf 'full gate output: %s\n' "${gate_log_dir}"
+  fi
   # A filtered run has to say it is filtered: a summary indistinguishable from a full sweep is
   # how a partial pass gets quoted back as "all gates passed".
   local scope=""
@@ -335,6 +474,7 @@ run_gates() {
 # scripts/verify-in-docker.sh's array so the extractor is also held against the real file.
 self_test() {
   local work pass=0 fail=0 real_list lines container_stack
+  local saved_log default_log
   LAST_OUT=""
   LAST_RC=0
 
@@ -347,6 +487,11 @@ self_test() {
   # diff set it themselves.
   VERIFY_GATES_CHANGED=""
   export VERIFY_GATES_CHANGED
+  # Every case is its own process, so without this each failing fixture would create its own
+  # timestamped directory under the real target/. The default path is covered separately, by a
+  # case that clears this and then checks where the file actually landed.
+  VERIFY_GATES_LOG_DIR="${work}/gate-logs"
+  export VERIFY_GATES_LOG_DIR
 
   # The fixture mirrors the real file's placeholder. `bootstrap` is exported so that a
   # surviving prefix expands, inside the gate's own bash, to a command that aborts it: with
@@ -405,6 +550,68 @@ FIXTURE
   cat >env-mirror.sh <<'FIXTURE'
 gates=(
   "a gate sees the mirrored stack size: test \"${RUST_MIN_STACK:-}\" = \"${EXPECTED_STACK}\""
+)
+FIXTURE
+
+  # The shape that made this reporting necessary: cargo's own names for what failed, split
+  # between the middle of the output (test names) and the very end (target flags), with enough
+  # filler in front that neither can reach a printed tail. Reproduced from a real `cargo test`
+  # leg on 2026-10-05 whose failing test name existed nowhere in the captured sweep log. It
+  # carries two targets rather than the one the real leg had, so that which target a name is
+  # attributed to is something a case can be wrong about, instead of a label that happens to be
+  # right only because there was a single candidate.
+  cat >cargo-shaped-output.sh <<'SH'
+#!/bin/sh
+printf '     Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\n'
+i=0
+while [ "$i" -lt 300 ]; do
+  printf 'test t%s ... ok\n' "$i"
+  i=$((i + 1))
+done
+printf '\nfailures:\n\n---- tests::buried_by_the_tail stdout ----\n\n'
+printf "thread 'tests::buried_by_the_tail' panicked at src/lib.rs:4091:41:\nnote: run with RUST_BACKTRACE=1\n\n"
+printf 'failures:\n    tests::buried_by_the_tail\n    a_module::another_one\n\n'
+printf 'test result: FAILED. 299 passed; 2 failed; 0 ignored; 0 measured\n'
+printf '\nerror: test failed, to rerun pass `-p chaos-engine --lib`\n'
+printf '     Running unittests src/lib.rs (target/debug/deps/xai_tty_utils-654c93f9b2abfae2)\n'
+printf 'test u0 ... ok\n'
+printf '\nfailures:\n\n---- a_later_target_own_test stdout ----\n\n'
+printf "thread 'a_later_target_own_test' panicked at src/lib.rs:1:1\n\n"
+printf 'failures:\n    a_later_target_own_test\n\n'
+printf 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured\n'
+printf '\nerror: test failed, to rerun pass `-p xai-tty-utils --lib`\n'
+printf '   Doc-tests chaos_engine\n\nrunning 1 test\ntest src/lib.rs - add (line 3) ... FAILED\n'
+printf '\nfailures:\n\n---- src/lib.rs - add (line 3) stdout ----\n'
+printf 'Test executable failed (exit status: 101).\n\n'
+printf 'failures:\n    src/lib.rs - add (line 3)\n\n'
+printf 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured\n'
+printf '\nerror: doctest failed, to rerun pass `-p chaos-engine --doc`\n'
+printf '\nerror: 3 targets failed:\n    `-p chaos-engine --lib`\n'
+printf '    `-p xai-tty-utils --lib`\n    `-p chaos-engine --doc`\n'
+exit 101
+SH
+  chmod +x cargo-shaped-output.sh
+
+  # The runner runs its gates from the repository root, so the fixture reaches the helper by an
+  # absolute path handed over in the environment -- the same channel the stack-size case above
+  # uses, rather than a path substituted into the fixture at write time. Unquoted on purpose:
+  # the fixture heredoc is quoted, so a backslash-escaped quote here would reach the gate's
+  # shell as a literal `"` inside the file name it is asked to open.
+  FIXTURE_SH="${work}/cargo-shaped-output.sh"
+  export FIXTURE_SH
+
+  cat >cargo-shaped.sh <<'FIXTURE'
+gates=(
+  "a gate shaped like cargo's test leg: sh ${FIXTURE_SH}"
+)
+FIXTURE
+
+  # A guard that prints a line reading `failures:` and then indented prose must not have test
+  # names invented for it. Without this fixture the identifier rule in `failing_tests` could be
+  # loosened to any indented word and every case above would stay green.
+  cat >indented-prose.sh <<'FIXTURE'
+gates=(
+  "a guard whose findings are indented: printf 'findings:\nfailures:\n    called `Result::unwrap()` on an Err value\n    note: run with RUST_BACKTRACE=1\n'; exit 5"
 )
 FIXTURE
 
@@ -540,6 +747,98 @@ crates/b.rs"
   run_case "an empty --only pattern is refused, not parsed" 2 all-pass.sh --only ""
   expect_line "naming the flag instead of selecting nothing" "needs a gate label"
   reject_line "and no gate ran on the way to the error" "^PASS  always passes"
+
+  run_case "--log-dir without a value is refused, not defaulted" 2 all-pass.sh --log-dir
+  expect_line "naming the flag instead of silently picking target/" "needs a directory"
+
+  # The flag last on the command line is caught by the "no second word" half of the guard; an
+  # empty value is caught only by the other half, so it needs its own case or that half is dead
+  # weight that no mutation can be shown to need.
+  run_case "an empty --log-dir value is refused, not parsed" 2 all-pass.sh --log-dir ""
+  expect_line "naming the flag instead of taking the empty string as a path" "needs a directory"
+  reject_line "and no gate ran on the way to the error" "^PASS  always passes"
+
+  # The reason this runner was changed: cargo puts the failing test names thousands of lines
+  # above the `error: N target failed:` line, so the printed tail can only ever carry one of
+  # them. Both halves have to be lifted out of the whole output, and the whole output has to
+  # survive somewhere a reader can open.
+  run_case "a failure whose names are buried above the tail still names them" 1 cargo-shaped.sh
+  expect_line "the first target cargo blames" "^      -p chaos-engine --lib$"
+  expect_line "and the second target it blames" "^      -p xai-tty-utils --lib$"
+  expect_line "the test buried under 300 lines of filler" \
+    "^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] tests::buried_by_the_tail$"
+  expect_line "and the second name from that same block" \
+    "^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] a_module::another_one$"
+  expect_line "the later target's test tagged with the later target" \
+    "^      \[Running unittests src/lib.rs (target/debug/deps/xai_tty_utils-654c93f9b2abfae2)\] a_later_target_own_test$"
+  reject_line "rather than folded onto whichever target came first" \
+    "chaos_engine-80b8ed7d12d00ecb\] a_later_target_own_test"
+  expect_line "the third target cargo blames" "^      -p chaos-engine --doc$"
+  expect_line "a doc-test named the way cargo names it, not dropped" \
+    "^      \[Doc-tests chaos_engine\] src/lib.rs - add (line 3)$"
+  expect_line "counted, not just trailed" "red, 4 of them, one line each"
+  expect_line "pointing at the file holding the whole output" "^    full output of this gate: "
+  expect_line "and the summary repeating that directory" "^full gate output: ${work}/gate-logs$"
+
+  # A pointer to a file that turns out to hold another tail is the same loss with extra steps,
+  # so the persisted file is opened and a line from its middle is looked for.
+  saved_log="$(printf '%s\n' "${LAST_OUT}" \
+    | sed -n 's#^    full output of this gate: \([^ ]*\) .*#\1#p' | head -n 1)"
+  if [ -n "${saved_log}" ] && [ -f "${saved_log}" ] \
+    && grep -q '^test t17 \.\.\. ok$' "${saved_log}"; then
+    printf 'ok    the persisted file holds the middle of the output, not another tail\n'
+    pass=$((pass + 1))
+  else
+    printf 'not ok the persisted gate log is missing or truncated (%s)\n' "${saved_log}"
+    fail=$((fail + 1))
+  fi
+
+  # The names come out of the output's own structure, not out of "some indented line": a guard
+  # that prints `failures:` and then indented prose gets no fabricated test list, which is what
+  # keeps the identifier rule from being loosened into a line-matcher without anything going red.
+  run_case "indented prose under a failures line is not read as a test name" 1 indented-prose.sh
+  reject_line "no test names invented for a guard" "one line each, tagged with the target"
+  reject_line "and no target names invented either" "cargo blames"
+  expect_line "while the finding itself is still printed" "called .Result::unwrap."
+
+  # The same failure with a caller-chosen directory has to land there, or a sweep whose log a
+  # reader is asked to keep would keep the runner's own throwaway path instead.
+  run_case "--log-dir puts the file where the caller said" 1 cargo-shaped.sh \
+    --log-dir "${work}/kept"
+  expect_line "naming that path in the failure block" "^    full output of this gate: ${work}/kept/"
+  expect_line "and in the summary" "^full gate output: ${work}/kept$"
+
+  # Nothing was asked for when the gate passed, so nothing is claimed. A runner that printed a
+  # file pointer for gates it never wrote would train readers to ignore the line.
+  run_case "a passing run writes no failure pointer" 0 all-pass.sh
+  reject_line "because there was no failure to point at" "full output of this gate"
+  reject_line "and invents no names for a gate that had none" "one line each, tagged with the target"
+
+  # The names come out of the output, not out of a guess about what a red gate must have run: a
+  # guard that prints prose gets no fabricated test list.
+  run_case "a failing guard with no cargo shape gets no invented names" 1 one-fails.sh
+  reject_line "no target list" "cargo blames"
+  reject_line "no test list" "one line each, tagged with the target"
+  expect_line "while still keeping the full output" "^    full output of this gate: "
+
+  # The default directory is part of the contract, since that is what a plain sweep gets.
+  LAST_OUT="$(VERIFY_GATES_SOURCE="${work}/cargo-shaped.sh" VERIFY_GATES_LOG_DIR="" \
+    bash "${script_path}" 2>&1)"
+  default_log="$(printf '%s\n' "${LAST_OUT}" | sed -n 's#^full gate output: \(.*\)$#\1#p' \
+    | head -n 1)"
+  case "${default_log}" in
+    "${repo_root}/target/verify-gates/"*)
+      printf 'ok    with no --log-dir the output goes under target/verify-gates\n'
+      pass=$((pass + 1))
+      ;;
+    *)
+      printf 'not ok the default gate log went somewhere else (%s)\n' "${default_log}"
+      fail=$((fail + 1))
+      ;;
+  esac
+  if [ -n "${default_log}" ]; then
+    rm -rf "${default_log}"
+  fi
 
   container_stack="$(sed -n 's/.*--env RUST_MIN_STACK=\([0-9][0-9]*\).*/\1/p' \
     "${repo_root}/scripts/verify-in-docker.sh" | head -n 1)"

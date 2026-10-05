@@ -2,6 +2,161 @@
 
 ## Unreleased
 
+### 门禁：44 格全量扫描红的时候说不出谁红了 —— 完整闸门输出落盘，每个红测试挂在它自己的 target 下面
+
+第二次全量扫描以 `cargo test` 一格退出码 101 收场，汇总里跟这次失败有关的只有三行，其中 `running 0 tests`
+还是后面某个 crate 的 doctest 腿；完整输出只活在 shell 变量里，进程一退出就没有了，「哪个测试失败」在扫描产物里
+根本不存在，而同一条命令直接重跑又全绿 —— 唯一见过这次间歇失败的东西，正是把它丢掉的那个环节。
+
+- 结构性的错位，不是运气：闸门写着 `cargo test --workspace --locked --no-fail-fast`，`--no-fail-fast` 让 cargo 跑完
+  剩余 target 并把 `error: N target failed:` 归责块压到最末尾；失败测试名在中段，40 行尾巴最多只能带出其中一头。
+- 三件事一起做：失败格**完整**输出落盘（默认 `target/verify-gates/<UTC 时间戳>-<pid>/NN-<slug>`，`--log-dir` 与
+  `VERIFY_GATES_LOG_DIR` 可覆写）并把路径同时打进失败块与汇总；失败名从完整输出里提而不是从尾巴里找；多 target
+  结果按 cargo 自己的 `Running`/`Doc-tests` 头归并成「哪个 target 的哪个测试红了」的一行摘要。落盘目录刻意偏离原行
+  写死的 `$TARGET_DIR/gate-logs/<slug>.log`，改成每次扫描一个目录 —— 同一棵树上先后两次扫描会互相覆盖日志，而
+  「拿这次的日志去对稍后重跑的同一条命令」正是最需要留着第一次的场景。
+- 输出形状来自真实运行而非回忆：doc-test 的失败名不是标识符，cargo 写作 `src/lib.rs - add (line 3)`，按标识符匹配
+  会把它静默丢掉，这条形状是从一个故意跑挂 doc-test 的临时 crate 实测出来的。归属也需要反例才可信：夹具带三个
+  target，另配「缩进散文不是测试名」这一格负控。
+- 自测从 60 格增至 **96/96**；**12 格变异矩阵全部 CAUGHT**、树按 sha256 校验回到字节相同，其中三格专打归属本身
+  （名字报对却归到错误的 target，跟一个都不报同样没用）；一格如实记为驱动自身漏格 —— `--log-dir` 空值那半条守卫
+  当时背后没有测试，变异合法存活，补格后才被抓住。
+- 再把真 cargo 失败运行的原始字节（302 行，第 5 次尝试抓到）灌进入厂 runner 重放：失败名在第 222 行，旧尾巴从第
+  263 行才开始，即它原本在 **41 行**以上、任何人都看不见的地方。四个间歇失败（`chaos-engine` 的 `Text file busy`
+  与端口未释放、`xai-tty-utils` 的线程计数与 `PR_SET_PDEATHSIG`）就此从「看不见」变成有名有姓，另立新行；
+  根因未诊断是本批有意为之 —— 看不清名字的修法只能是猜。
+
+（2026-10-05；`scripts/verify-gates.sh`、`docs/verification/gate-output-persistence-2026-10-05.log`、`TODO.md`）
+
+### 修复：明文 HTTP 打开的页面一条消息也发不出去，而它在 localhost 上永远是好的 —— 35 处 `crypto.randomUUID()` 换成按能力选来源的 `newMessageId()`，以及它身后第二条被静默丢掉的发送
+
+用户要求把 web 端起在 `0.0.0.0` 上自己点。从局域网 IP 用明文 HTTP 打开时，界面连得上、握手完成、外壳画得出来，
+然后什么都不做：徽标停在「正在创建工作区」，每一条 prompt 都不了了之；同一份构建从 `127.0.0.1` 打开却完全正常。
+差别不是主机、端口、代理或后端，是浏览器给这个源的定性。
+
+- `crypto.randomUUID` 只在 secure context 里存在，`http://` 加一个可路由地址不算，于是这个属性是 `undefined`，
+  调用它抛 `TypeError`；`crypto.getRandomValues` 没有这个限制。`apps/chaos-ui` 恰好把 `client_msg_id` 全押在前者上：
+  `main.tsx` 32 处、`session.ts` 3 处，共 **35** 处，而 id 是写在发送调用的实参表里的 —— 抛错发生在 `send()`
+  **之前**，消息从没上过线，界面上也没有任何痕迹。实测：`http://127.0.0.1:5174` 与 `http://localhost:5174` 下
+  `randomUUID` 是 function 且整条链路可用；`http://172.16.2.253:5174` 下 `isSecureContext=false`、
+  `randomUUID=undefined`、`getRandomValues=function`，不可用 —— 而 `172.16.2.253` 正是部署文档叫人在另一台机器
+  上打开的那个地址。既有 Playwright 腿恰好跑在这两个有该方法的原点上，所以这条路径红不起来。
+- 修法是按能力分支而不是按假设分支：`transport.ts` 新增 `newMessageId(source = globalThis.crypto)`，三级兜底 ——
+  有 `randomUUID` 且**调用不抛**就用（隐私扩展之类的宿主会把方法定义出来再拒绝它）；否则用 `getRandomValues`
+  填 16 字节拼成 v4，并把全零结果判为不可用（一个只会返零的桩会永远铸出同一个 id，而重复 id 正是宿主拿上一回合
+  的回复回答下一条消息的方式）；两者都没有时退到时间戳加序号，仍写成 v4 形状，且明写只保证页面内唯一。
+- 一处类型细节：TypeScript 7 的 DOM 库把 `getRandomValues` 声明在 `Exclude<BufferSource, ArrayBuffer>` 上，
+  `IdSource` 里写成宽松的 `Uint8Array` 会让默认实参过不了 `npm run typecheck`（`Type 'Crypto' is not assignable
+  to type 'IdSource'`），参数必须写成 `Uint8Array<ArrayBuffer>`。
+- 顺着这条路径又抓到第二条静默失败：`send()` 原本写作「socket 不是 OPEN 就什么都不做」，而 `submit()` 在发送
+  **之前**就把 prompt 写进转录 —— 页面因此会显示一条宿主从没收到过的消息；没有 session 时的提交也走同一条无声
+  早退。现在 `transport.ts` 暴露 `dropReasonFor(readyState)`（可发则 `null`，否则给出尚未连接 / 正在连接 /
+  连接已断开三种「消息未发送」文案，`readyState` 数字按规范就地写死，以免依赖 `WebSocket` 全局），`send()` 把
+  原因写回徽标，`submit()` 在乐观追加**之前**先判可达性：没发出去的 prompt 不进转录、不进 prompt 历史、
+  不清空草稿，可以原样再发一次，而徽标说明第一次为什么没出去。
+- 测试：`transport.test.ts` 12 例钉住三级兜底（含逐位拼接的确切字符串 `01020304-0506-4708-890a-0b0c0d0e0f10`、
+  500 个互不相同的 id、200 个无 WebCrypto 下的 id、全零桩被拒、抛错的 `randomUUID`、默认实参）与
+  `dropReasonFor` 的五个状态，套件 132 例；新增两条 Playwright spec，与动过的 `reconnect-snapshot` 合起来 16 例，在
+  桌面 1440×1000 与 390×844 各跑过一遍，当时据此写下「双视口全绿」—— 那句说早了，手机视口里有一条在提交后的树上
+  是红的，下面记它的归因与改法。
+  `insecure-origin.pw.ts` 用 `addInitScript` 把 `Crypto.prototype.randomUUID` 遮蔽成 `undefined`，并**先断言页面里
+  它确实不存在**，否则这条测试会悄悄退化成 happy path 的复述；`offline-send.pw.ts` 路由并拒绝 `/ws`，要求被拒的
+  发送一定可见（徽标序列里有原因、`.user p` 仍为空、草稿还在）。瞬态徽标读的是共享的
+  `recordStatusBadge` / `statusSequence`，这两个 helper 从 `reconnect-snapshot.pw.ts` 提到 `e2e/support/shell.ts`，
+  原文件改为 import，8 例照旧全绿。
+- 变异矩阵 5 格全被抓住（W1 把一处发送改回 `crypto.randomUUID()` → 三条全红；W2 去掉抛错兜底 → 只红那一条守护
+  该行为的；W3 恢复静默早退、W5 把乐观追加挪到守卫之前 → 离线两条全红；W4 恢复静默丢弃 → 只红 socket 那条），
+  源文件 sha256 逐一验回。**第一遍矩阵作废重跑**：`offline-send.pw.ts` 少 import 了 `headerTab`，一条测试因无关
+  原因红着，三格因此不可信 —— `npm run typecheck` 点出了它，驱动也从此拒绝在非绿基线上开跑。
+- 同一个不对称另在真浏览器里驱动了一遍（`http://172.16.2.253:5174` vs `http://127.0.0.1:5174`）：改回直调之后，
+  明文源启动帧 0 条、submit 从未上线，而 loopback 源两条帧照发、submit 照答 —— 这就是缺陷能活过评审的原因。
+  修好之后明文源上打的字到达了宿主并拿回回答，控制台无错。
+- 上面那句「双视口全绿」在提交后的树上不成立，是照着用户的规则去真浏览器里里外外点一遍才抓出来的。
+  `offline-send.pw.ts` 的第二条在 `mobile-chromium` 上**确定性**失败（30 秒超时），报的是 `aside.rightbar-col` 里一个
+  `.panel-section` 拦截指针事件；换四副端口各跑一次全部同样红，与端口和环境无关。红的原因是那句结论的证据链自己断的：
+  变异矩阵的驱动把命令行钉在 `--project=desktop-chromium`，也就是说最后一次真正跑到这条测试手机腿的运行，早于这条
+  测试里「点 📁 文件 标签，逼宿主在死掉的 socket 上做一次目录列举」那一步 —— 那一步加在两条测试的第二条内部，测试
+  起始行号不变，所以「跑过、行号对得上」看起来像是重跑过，其实手机腿一次也没再跑。
+- 归因不靠猜，量了几何（`elementFromPoint` 打在发送按钮中心）：390×844 下新页面刚开时详情面板 `display: none`，
+  该点命中 `composer-submit`；点过 📁 文件 之后面板变成 `position: fixed`、`x: 0, y: 52`、390×844、`z-index: 100`，
+  同一个点命中的是面板内的 `BUTTON.file-item-btn`（`insidePanel: true`、`isSubmit: false`）；1440×1000 下面板是
+  `static` 摆在 x=1020 的旁边一列，同一个点始终命中 `composer-submit`。判读要落在产品上而不是测试上：手机上
+  文件/终端/Git 面板本就是覆盖整屏的抽屉，关掉它的是头部「对话」标签与「关闭侧栏」，界面从未提供 spec 假设的那种
+  隔着抽屉直接点输入框的用法 —— 红的是 spec。helper 因此先回到「对话」标签、断言 `[data-shell-column="details"]`
+  已隐藏，再 fill 与 submit，量到的数字留在注释里；这条 spec 单独跑 4 例（两视口）全绿，整份默认配置
+  **85 通过 / 6 跳过 / 退出码 0**，`playwright.git.config.ts` 的 14 例（两视口各 7）另跑一遍全绿，确认
+  `recordStatusBadge` 搬进 `e2e/support/shell.ts` 之后共享它的另外四条 spec 没有被牵动。
+- 计数第三次朝同一个方向订正：起手 TODO 行写 34（31 + 3），那是**行**数；按出现次数量是 32 + 3 = 35
+  （`main.tsx` 有一行两次调用）。散文里引用的数字必须来自按出现次数计数的命令。
+- 一条环境事实顺带记下来，因为它的症状与本缺陷一模一样：直接 `npx playwright test -c playwright.config.ts` 而不给
+  `CHAOS_E2E_ORIGIN` 与 `CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN=1` 时，宿主按 origin 允许名单拒绝 WebSocket 升级，
+  徽标同样停在「连接断开，正在重连」。`e2e-runner.mjs` 一直有给这两个变量。
+- 没有声称的部分：第三级 id 只保证单页面内唯一；`chaos-web` 仍只绑 loopback，本次不改这一点，也不替操作者判断
+  明文 HTTP 是否可接受 —— 这一批让页面如实交代它被给到的环境，而不是让那个环境变安全；手工测试期间架的自签
+  TLS 前置（`0.0.0.0:5175`）是环境绕行，不进仓库，也不是修复。
+
+（2026-10-05；`apps/chaos-ui/src/transport.ts`、`apps/chaos-ui/src/transport.test.ts`、`apps/chaos-ui/src/main.tsx`、`apps/chaos-ui/src/session.ts`、`apps/chaos-ui/e2e/insecure-origin.pw.ts`、`apps/chaos-ui/e2e/offline-send.pw.ts`、`apps/chaos-ui/e2e/support/shell.ts`、`apps/chaos-ui/e2e/reconnect-snapshot.pw.ts`、`apps/chaos-ui/playwright.config.ts`、`docs/verification/web-insecure-origin-send-2026-10-05.log`、`docs/ci-test-debt.md`、`TODO.md`）
+
+### 门禁：19 处把「有持有者死了」读成「这里没有东西」的静默锁中毒，一个没有基线的硬零闸门，以及一格抓到自家测试盲区的变异
+
+上一批（`docs/verification/lock-poison-consolidation-2026-10-05.log`）处理的是**会 panic** 的那一半：装上
+`util::shared_guard`，把 28 处挪到 `lock_or_recover()` / `read_or_recover()` / `write_or_recover()`。崩溃没了，
+同一族惯用法的另一半留在那里更糟：把中毒错误咽下去、假装数据本来就不存在。`.lock().ok()` 不是「尽力而为」——
+中毒是锁上的**粘性标志**而不是某一次获取的属性，所以进程里任何一处 panic 之后，它此后永久等于「这个值没了」，直到进程退出。
+
+- 站点数是 19，分布在 14 个文件。起手的 TODO 行写 6，因为那是人单行 `grep` 找得到的量；HEAD 那棵树上单行正则是
+  11；把闸门自己的整文件扫描指向 HEAD 的临时 worktree，是 **19**。差出来的 8 处全是 rustfmt 把
+  `.lock().ok()` 这条链拆到不同行 —— 与上一批 `.recv().await.expect(` 完全同一种漏法，连续第二次。分布：
+  `current_prompt_id` 7 处（`run_loop` 2 / `updates` 2 / `turn` / `acp_agent` / `session_setup`）、四个远程配置层
+  6 处（`auto_mode` 2、`prompt_suggest` 2、`crash_handler` 1、`tool_approvals` 1）、`TELEMETRY_CLIENT` 2 处、
+  `xai-grok-sampler` 3 处（doom-loop 收集器、`FailedResponseCapture`、工具 actor 的错误 tee）、
+  `xai-grok-pager` 的 `CWD_GIT_CACHE` 1 处。
+- 改之前它们各自在做什么（全部读自 `git show HEAD:<file>`，不是读新代码）：`current_prompt_id` 的 7 个读者一起
+  说「现在没有回合在跑」——流式更新丢掉 `promptId`、`turn_running` 在回合进行中报 false、
+  `x.ai/runningPromptId` 消失，而 `mark_apply_miss_incomplete` **fail-closed**：apply miss 落在「不属于任何
+  prompt」上，那条本该给坏回合上色的台账保持干净。四个远程层则是远程层读成「没配」，于是低一层接管 —— 运维把
+  auto mode / 提示建议 / 记住审批 / 远程 crash handler 关掉的那个 kill switch **安静地失效**。其余：遥测两条门
+  各自朝自己的方向读成「关」、doom-loop 的 `abort_triggers` 说「无事可做」而收集器其实还在填、armed 的
+  `FailedResponseCapture` 既不记也不放、错误 tee 写侧丢第一条错误、`cwd_git_info_lazy` 返回 `None` 且**不预约**
+  刷新槽位（表头永久空着）。
+- **一把锁一个策略**：写者与读者一起转（`*REMOTE_AUTO_MODE_CONFIG.write_or_recover() = ..`、收集器的
+  record/disarm/clear、`update_from_notification`、tee 的写分支）。只转读者，等于留下一个写者仍能把锁停在读者
+  刚刚被告知要活下去的那个状态里。
+- 闸门 `scripts/ci/check-lock-poison.py` 是宿主扫描的第 44 格，与周围的棘轮闸门不同，它**没有基线文件也没有测试
+  豁免**：可容忍数量是零，生产代码与测试代码一视同仁。口径复用 `panic-site-census.py` 的注释/字符串空白化、
+  `cfg(test)` 区间行与 crate 归属。9 条夹具把「它刻意不匹配什么」钉在代码里而不只是散文里：`try_lock()`（可能失
+  败正是这个调用的目的，且忙时也失败）、`if let Ok(guard)` 与 `let Ok(..) else { return }`（对错误显式分支）、
+  async 锁的 `.read().await.ok()`（`tokio::sync` 根本没有中毒这回事）、以及 `&str` 上的 `read(&mut buf)`（同拼写
+  另一个方法，所以接收者和参数表都得读）。
+- 10 条行为测试，每条都让一个线程在 guard 里 panic 把**真的**那把锁毒掉，再驱动出厂读者。中毒是进程级的，泄漏
+  一下就会 panic 掉无关的兄弟测试，所以每个碰全局锁的测试都取该模块已有的串行锁、在 `Drop` 里恢复缓存值、并调
+  `clear_poison()`；三处测试侧访问器为此一并转掉，`xai-grok-telemetry` 新增 `CLIENT_TEST_LOCK`。中毒机制本身下沉
+  为 `xai-grok-test-support::poison` 的 `mutex_through_a_panicking_thread` /
+  `rwlock_through_a_panicking_writer`（一律以 `unwrap_or_else(PoisonError::into_inner)` 获取，好让**只有**那句
+  故意的 `panic!` 造成中毒），`shared_guard` 的两份副本改成委托；telemetry 保留一份 6 行的本地副本，因为它刻意
+  不 dev-depend 一个会链接 PTY/WebSocket/HTTP server 的 crate。
+- 变异矩阵 13 格（把 `git show HEAD:<file>` 的原文拼回单个位点，跑它对应的那一条测试，再从字节副本还原并比对
+  sha256；驱动在非绿的基线上直接中止，所以绿的矩阵不可能跑在坏树上）。第一轮 **12/13**，`M8`（
+  `telemetry::is_enabled`）存活，而它是对的：那条测试装的是 `TelemetryMode::SessionMetrics`，而 `is_enabled()`
+  只在 `Enabled` 为真 —— 改动前后都答 false，断言无从分辨能用的读者与坏的读者。转换本身没错，错的是**测试**对那
+  一道门是空转的，除了矩阵没人会说这句话。补一条装在 `Enabled` 下的
+  `product_event_gate_survives_a_poisoned_client_lock`（顺带断言 `Handle::try_current().is_err()`，好让真去够
+  Mixpanel 的客户端大声 panic 而不是靠「什么都没发生」蒙过），`--only telemetry` 重跑 2/2。诚实的说法是**加了一条
+  测试之后** 13/13，不是第一次就 13/13；两次跑的全部 15 行 `restore=ok`。
+- 两条该写进日志而不是脚注的边界：等价的另一种拼法任何正则都看不见 —— HEAD 的 `doom_loop::take()` 写的是
+  `match self.inner.lock() { Ok(..) => .., Err(_) => Vec::new() }`，同一句谎话换了衣服，`M3` 因它而在。这类分岔
+  如今由闸门自己数：新增的 `--inventory` 模式量出 **30 处**（生产 27），并按「失败路径上还拿不拿得到守卫」分桶 ——
+  **19 处彻底丢掉守卫**（生产 18、测试 1，全是 `if let Ok(..)` 与 `let Ok(..) else`），11 处已经用 `into_inner()`
+  把守卫拿回来（`status_line.rs:172` 是范本：记一条 warn 再用旧值）。丢掉守卫的那 18 处是同一类问题低一层（丢一次
+  写，而不是凭空造一个「没有」），本批只记行不宣称修完；这个数字先前被随手记成 41，那是个跑不出第二遍的数，已连同
+  出处一起改掉 —— 一个只能靠人手工 grep 一次的分母，写进台账就是给下一个人留了个假基线。
+- 远端 CI 这次**没能**当审稿人：约 30 分钟内同一个 run（`37304357103`）读到十份互相矛盾的读数，包括一个 404 的
+  幽灵 run、`status=completed` 配 `conclusion=in_progress`、以及一份返回 HTTP 200、内含 `all gates passed`、13
+  秒后重读变成 `BlobNotFound` 的日志块。处置是丢掉判定、不再架 Actions 监视、以宿主全量扫描与点名的本地运行为记
+  录证据，并明确写出「本批 CI 结论从这台机器上不可知」，同时留下持久 TODO 行。
+
+（2026-10-05；`crates/codegen/xai-grok-test-support/src/poison.rs`、`scripts/ci/check-lock-poison.py`、`scripts/ci/test-check-lock-poison.py`、`scripts/ci/panic-site-baseline.tsv`、`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、`crates/codegen/xai-grok-telemetry/src/client.rs`、`crates/codegen/xai-grok-shell/src/util/config/resolve/auto_mode.rs`、`crates/codegen/xai-grok-shell/src/util/config/resolve/crash_handler.rs`、`crates/codegen/xai-grok-shell/src/util/config/resolve/prompt_suggest.rs`、`crates/codegen/xai-grok-shell/src/util/config/resolve/tool_approvals.rs`、`crates/codegen/xai-grok-shell/src/session/acp_session_impl/updates.rs`、`crates/codegen/xai-grok-sampler/src/doom_loop.rs`、`docs/verification/lock-poison-silent-reader-2026-10-05.log`、`docs/ci-test-debt.md`、`TODO.md`、`CHANGELOG.md`）
+
 ### 门禁：测试里 232 处「等一个不会来的事件」全部有界，闸门两侧都不许动，而 `start_paused` 的时钟会把默认的 2 秒变成抢跑
 
 上一批把 `session/workflow/manager.rs` 的 15 处裸 `recv().await` 收进带期限的 `recv_spawn`，并留下一行 TODO：

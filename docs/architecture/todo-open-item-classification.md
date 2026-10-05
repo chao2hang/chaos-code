@@ -21,8 +21,8 @@ path fold decided and then executed against a Windows target, the unpin/title
 lost update closed inside the persistence actor itself, the platform gating that turned that Windows
 leg green, the bounded spawn-wait that stopped one test from spending the whole CI job
 budget, and the five mechanisms that accounted for the 42 Windows test failures left over after
-that gating, now inventoried row by row, is
-23 unchecked and 114 partial
+that gating, now inventoried row by row, is in
+the table further down this file and nowhere else, split the same way into unchecked and partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -64,6 +64,35 @@ got a name by looping the suite 30 times locally (round 23:
 of a failed gate to be written to a file and named in the summary before it asks
 for any fix of the intermittent failure itself, because a fix aimed at an
 unnamed test is a guess.
+The batch that followed opened three more and rewrote one. The rewrite is the
+one worth reading: the row it revised had recorded that no test seam in the
+repository could construct the precondition for 12 poisoned-`current_prompt_id`
+readers, and the next pass built that seam in twenty lines using an actor
+fixture that was already in the tree, so the row is now partial and lists the
+12 readers by file and line instead of declaring them unreachable -- a claim of
+impossibility in a ledger is not a caveat but a stop sign, because the next
+reader does not go looking. Of the three new rows, one inventories the 18
+production sites that branch on a poisoned lock and then drop the guard (the
+figure comes from the gate's own `--inventory` mode, because an earlier draft
+carried a hand-counted 41 that nothing in the repository can reproduce); one
+records that the remote CI endpoint returned ten mutually contradictory
+readings of a single run, so the verdict for the previous push is unknown from
+that host and the host sweep is the evidence of record; and one is a product
+defect the Web host brought to light -- the browser front end calls
+`crypto.randomUUID()` for every message id, that API exists only in a secure
+context, and so over plain HTTP from a routable address the page connects,
+renders, and then fails every single send with nothing visible on screen.
+That fourth row closed the same day it was filed, and its value was not only the
+id factory that replaced the 35 direct `crypto.randomUUID()` calls: driving the
+page to find the second throw surfaced a second silent failure in the same
+composer, where a send attempted while the socket was down was dropped without a
+trace and the prompt had already been appended to the transcript, so the page
+displayed a message the host had never received. Both are covered by Playwright
+specs that manufacture the missing browser API rather than trusting the origin,
+and by a five-cell mutation matrix whose first pass was discarded because the
+driver had run it on a tree where one spec was red for an unrelated reason. That
+row was filed and closed inside the same day, so the table below counts it
+nowhere.
 Three unchecked rows were opened on 2026-10-04 while the
 Docker acceptance labs were being re-run, and all three closed the same day: the installer's
 artifact fetch now has a rate floor with fixtures of its own, the reasons its mirror candidates
@@ -155,7 +184,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 4 | 18 |
+| Maintenance items / §8 | 5 | 19 |
 
 ## Locally delivered in this audit pass
 

@@ -1,0 +1,258 @@
+# The sweep that could not say what failed: full gate output persisted, and every red test named under its own target (2026-10-05)
+
+== 1. What the sweep actually kept
+
+A full 44-gate sweep (`bash scripts/verify-gates.sh --with-build`) run on 2026-10-05 finished with one red gate. This
+is the entire trace the runner produced for it -- 4 lines for the gate, plus the summary line:
+
+```
+PASS  cargo check
+PASS  cargo clippy
+FAIL  cargo test (exit 101)
+    
+    running 0 tests
+        `-p chaos-engine --lib`
+PASS  GUI protocol types
+
+FAILED gates: cargo test
+44 gate(s) run, 0 skipped, 1 failed
+```
+
+`running 0 tests` is a doctest leg of an unrelated crate. The name of the failing test appeared nowhere: the runner
+printed `tail -n 40` of the gate's output and the complete output lived only in a shell variable, so it disappeared
+when the process exited. Which test went red was, at that moment, unknowable from the artifact the sweep leaves
+behind.
+
+The reason the tail is systematically the wrong end of the output is the gate's own command line
+(`scripts/verify-in-docker.sh:405`):
+
+```
+  gates+=("cargo test: ${bootstrap}; cargo test --workspace --locked --no-fail-fast")
+```
+
+`--no-fail-fast` makes cargo keep going after the first failing target and defer its blame line to the very end:
+
+```
+error: 1 target failed:
+    `-p chaos-engine --lib`
+```
+
+So a test leg's output has the failing test names in the middle and the failing target flags at the end, and a
+40-line tail can carry at most one of the two -- in practice it carried the target flag and lost the name.
+
+== 2. The change
+
+`scripts/verify-gates.sh` now does three things on a red gate:
+
+1. writes the gate's **complete** output to a file and names that file in the failure block and in the summary;
+2. lifts cargo's own names for what failed out of the whole output rather than out of what fits on screen;
+3. folds them into one line per red test, tagged with the target cargo was running when it printed it.
+
+The directory defaults to `target/verify-gates/<UTC timestamp>-<pid>/` and can be overridden with `--log-dir DIR` or
+`VERIFY_GATES_LOG_DIR`. Files are named `NN-<slug>` where `NN` is the gate's ordinal in the run, and the slug is
+filtered to `[A-Za-z0-9._-]` so a label with shell metacharacters cannot escape the directory.
+
+Deviation from the wording of the TODO row this closes: the row asked for `$TARGET_DIR/gate-logs/<slug>.log`. The
+directory is instead per-run and timestamped, because two sweeps on the same tree would otherwise overwrite each
+other's logs -- and the case that motivated this (a sweep whose log had to be compared against a later rerun of the
+same command) is exactly the case where overwriting loses the evidence. The ordinal prefix keeps the files in gate
+order inside the run directory.
+
+Measured against the capture in section 4, the failure block now reads:
+
+```
+    target(s) cargo blames, as it says them:
+      -p chaos-engine --lib
+    red, 1 of them, one line each, tagged with the target cargo was running:
+      [Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)] tests::headless_process_adapter_reads_real_json_entrypoint
+    full output of this gate: <scratch>/b26/replay-logs/01-the-leg-under-replay (302 lines)
+```
+
+The attribution comes from cargo's own per-target header (`     Running unittests src/lib.rs (...)` / `   Doc-tests
+<crate>`) printed above the `failures:` block. Names are matched as bare identifiers, plus one tightly anchored shape
+for doc-tests, because cargo does not name a doc-test by an identifier -- it names it `src/lib.rs - add (line 3)`,
+which the first version of this code silently dropped. That shape was taken from a real cargo run rather than
+assumed: a throwaway crate with one deliberately failing doc-test produced
+
+```
+   Doc-tests doctest_probe
+
+running 1 test
+test src/lib.rs - add (line 3) ... FAILED
+...
+failures:
+    src/lib.rs - add (line 3)
+
+error: doctest failed, to rerun pass `--doc`
+```
+
+A guard whose findings are indented prose therefore gets no fabricated test list, which is what keeps the identifier
+rule from being quietly loosened into a line-matcher.
+
+== 3. Self-test and mutation matrix
+
+`bash scripts/verify-gates.sh --self-test` went from 60 cases to **96/96 pass**. The new fixtures are a cargo-shaped
+output generator with three targets (`Running` x2 plus `Doc-tests`), 300 filler lines placed above the failure block
+so the buried-name property is real rather than merely asserted, and an indented-prose guard used as the negative
+control.
+
+The matrix below mutates one behaviour at a time and passes only if every mutation turns at least one self-test case
+red, the mutant still parses as bash, and the tree comes back byte-identical (sha256). Mutations G10-G12 aim
+specifically at attribution: a report that names the right tests but files them under the wrong target is as
+unusable as one that names none, and G1-G9 cannot see the difference. Verbatim transcript:
+
+```
+baseline sha256 d5745c0887cdab7d03eff6daed1d46361ee4abe2dc612e1f0cb0ff2863571513
+baseline self-test: exit 0, 0 red
+CAUGHT   G1 the named-failure report is not called at all
+           not ok the first target cargo blames (no line matching: ^      -p chaos-engine --lib$)
+           not ok and the second target it blames (no line matching: ^      -p xai-tty-utils --lib$)
+           not ok the test buried under 300 lines of filler (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] tests::buried_by_the_tail$)
+           not ok and the second name from that same block (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] a_module::another_one$)
+           not ok the later target's test tagged with the later target (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/xai_tty_utils-654c93f9b2abfae2)\] a_later_target_own_test$)
+           not ok the third target cargo blames (no line matching: ^      -p chaos-engine --doc$)
+           not ok a doc-test named the way cargo names it, not dropped (no line matching: ^      \[Doc-tests chaos_engine\] src/lib.rs - add (line 3)$)
+           not ok counted, not just trailed (no line matching: red, 4 of them, one line each)
+CAUGHT   G2 the target block extraction returns nothing
+           not ok the first target cargo blames (no line matching: ^      -p chaos-engine --lib$)
+           not ok and the second target it blames (no line matching: ^      -p xai-tty-utils --lib$)
+           not ok the third target cargo blames (no line matching: ^      -p chaos-engine --doc$)
+CAUGHT   G3 the target flag keeps cargo's backticks
+           not ok the first target cargo blames (no line matching: ^      -p chaos-engine --lib$)
+           not ok and the second target it blames (no line matching: ^      -p xai-tty-utils --lib$)
+           not ok the third target cargo blames (no line matching: ^      -p chaos-engine --doc$)
+CAUGHT   G4 test names are read from anywhere, not from a failures block
+           not ok the test buried under 300 lines of filler (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] tests::buried_by_the_tail$)
+           not ok and the second name from that same block (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] a_module::another_one$)
+           not ok the later target's test tagged with the later target (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/xai_tty_utils-654c93f9b2abfae2)\] a_later_target_own_test$)
+           not ok a doc-test named the way cargo names it, not dropped (no line matching: ^      \[Doc-tests chaos_engine\] src/lib.rs - add (line 3)$)
+           not ok counted, not just trailed (no line matching: red, 4 of them, one line each)
+CAUGHT   G5 the name pattern also accepts prose, so a guard's output becomes a test name
+           not ok no test names invented for a guard (unexpected line matching: one line each, tagged with the target)
+CAUGHT   G6 the persisted file is another tail, not the whole output
+           not ok the persisted gate log is missing or truncated (/tmp/tmp.A0p43caKvS/gate-logs/01-a-gate-shaped-like-cargo-s-test-leg)
+CAUGHT   G7 --log-dir is ignored and the default always wins
+           not ok and the summary repeating that directory (no line matching: ^full gate output: /tmp/tmp.hYtvxTje11/gate-logs$)
+           not ok naming that path in the failure block (no line matching: ^    full output of this gate: /tmp/tmp.hYtvxTje11/kept/)
+           not ok and in the summary (no line matching: ^full gate output: /tmp/tmp.hYtvxTje11/kept$)
+CAUGHT   G8 the summary stops naming the directory
+           not ok and the summary repeating that directory (no line matching: ^full gate output: /tmp/tmp.YLBQ3fbSSH/gate-logs$)
+           not ok and in the summary (no line matching: ^full gate output: /tmp/tmp.YLBQ3fbSSH/kept$)
+           not ok the default gate log went somewhere else ()
+CAUGHT   G9 --log-dir stops validating its value
+           not ok an empty --log-dir value is refused, not parsed (expected exit 2, got 0)
+           not ok naming the flag instead of taking the empty string as a path (no line matching: needs a directory)
+           not ok and no gate ran on the way to the error (unexpected line matching: ^PASS  always passes)
+CAUGHT   G10 a doc-test header no longer counts as a target header
+           not ok a doc-test named the way cargo names it, not dropped (no line matching: ^      \[Doc-tests chaos_engine\] src/lib.rs - add (line 3)$)
+CAUGHT   G11 the doc-test name shape is dropped, so red doc-tests are unnamed
+           not ok a doc-test named the way cargo names it, not dropped (no line matching: ^      \[Doc-tests chaos_engine\] src/lib.rs - add (line 3)$)
+           not ok counted, not just trailed (no line matching: red, 4 of them, one line each)
+CAUGHT   G12 every name is filed under the first target header seen, not its own
+           not ok the test buried under 300 lines of filler (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] tests::buried_by_the_tail$)
+           not ok and the second name from that same block (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)\] a_module::another_one$)
+           not ok the later target's test tagged with the later target (no line matching: ^      \[Running unittests src/lib.rs (target/debug/deps/xai_tty_utils-654c93f9b2abfae2)\] a_later_target_own_test$)
+           not ok a doc-test named the way cargo names it, not dropped (no line matching: ^      \[Doc-tests chaos_engine\] src/lib.rs - add (line 3)$)
+           not ok counted, not just trailed (no line matching: red, 4 of them, one line each)
+restore sha256 d5745c0887cdab7d03eff6daed1d46361ee4abe2dc612e1f0cb0ff2863571513 ok=True
+post-matrix self-test: exit 0, 0 red
+
+all 12 mutations CAUGHT, tree restored byte-identical
+```
+
+G9 is reported for completeness as a case where the first version of the driver was wrong rather than the code: the
+empty-value half of the `--log-dir` guard had no case behind it, so the mutation legitimately survived until the case
+`an empty --log-dir value is refused, not parsed` was added.
+
+== 4. Replay of verbatim cargo bytes
+
+The self-test fixture is authored, so on its own it only proves the code agrees with an author's idea of cargo's
+shape. This driver therefore captures a genuine failing run of the real gate command, then replays those exact bytes
+through the shipped runner as a gate (`cat` of the capture plus the captured exit status), so the reporting path
+exercised is the shipped one and the input is cargo's own output.
+
+The capture is a flake, so the driver loops until a genuinely failing run appears and aborts rather than fabricating
+one if none shows up. The run quoted below caught it on attempt 5 of 40; capture sha256
+`cd7259dc88234dceefbecfbc270462dd867d1a1691257fd82699954116c2bf80`, 302 lines. Verbatim:
+
+```
+== capture attempt 1
+== capture attempt 2
+== capture attempt 3
+== capture attempt 4
+== capture attempt 5
+== captured a failing run on attempt 5: 302 lines
+== real bytes: 302 lines, printed tail would start at line 263
+== first `failures:` test-name line: 222
+== cargo's target-failed line:       301
+== PROVEN: the test name is 263 lines above the printed tail's first line
+== replay exit: 1
+   45:        `-p chaos-engine --lib`
+   46:    target(s) cargo blames, as it says them:
+   47:      -p chaos-engine --lib
+   48:    red, 1 of them, one line each, tagged with the target cargo was running:
+   49:      [Running unittests src/lib.rs (target/debug/deps/chaos_engine-80b8ed7d12d00ecb)] tests::headless_process_adapter_reads_real_json_entrypoint
+   50:    full output of this gate: /tmp/grok-goal-ec37f68d1619/implementer/b26/replay-logs/01-the-leg-under-replay (302 lines)
+
+== verdict
+== the target cargo blamed (-p chaos-engine --lib) is the target the replay printed
+== the name cargo printed (tests::headless_process_adapter_reads_real_json_entrypoint) is printed under the target cargo printed it in
+== the persisted file holds cargo's whole output (only trailing blank lines differ)
+ALL CHECKS PASS
+```
+
+The distance the fix buys is the number in that transcript: the failing name is on line 222, the old printed tail
+would have begun on line 263, so the name sat **41 lines above** everything the previous runner showed anybody.
+
+The panic itself, from the same capture, verbatim:
+
+```
+---- tests::headless_process_adapter_reads_real_json_entrypoint stdout ----
+
+thread 'tests::headless_process_adapter_reads_real_json_entrypoint' (1407915) panicked at crates/codegen/chaos-engine/src/lib.rs:4091:41:
+called `Result::unwrap()` on an `Err` value: "无法启动 headless Agent: Text file busy (os error 26)"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+== 5. The intermittents this makes visible
+
+Four intermittent failures are now named by the runner instead of being lost. All four exist at HEAD and none of
+them is in code this batch touched.
+
+| test | site | observed |
+| --- | --- | --- |
+| `tests::headless_process_adapter_reads_real_json_entrypoint` | `crates/codegen/chaos-engine/src/lib.rs:4091:41` | `Result::unwrap()` on `Err("无法启动 headless Agent: Text file busy (os error 26)")` |
+| `remote::forward::tests::a_grant_that_runs_out_closes_the_listener` | `crates/codegen/chaos-engine/src/remote/forward.rs:770` | `the local port was still held after the grant ran out` |
+| `process_resources::tests::thread_gauge_tracks_spawned_threads` | `crates/codegen/xai-tty-utils/src/process_resources.rs:386` | gauge out of step with spawned threads |
+| `tests::armed_child_dies_when_parent_exits` | `crates/codegen/xai-tty-utils/src/lib.rs:1611` | `grandchild pid <n> outlived its parent despite kill_on_parent_death_std (PR_SET_PDEATHSIG not effective)` |
+
+Measured rates, on this host, for the `chaos-engine`/`xai-tty-utils` pair:
+
+| how it was run | result |
+| --- | --- |
+| one test alone, 12 repeats | 12/12 pass |
+| prebuilt suite, `--test-threads=8`, 15 then 20 repeats | 2/15 red, then 1/20 red |
+| `cargo test --no-fail-fast --lib -p chaos-engine -p xai-tty-utils`, 25 attempts | 4 non-green |
+| same command, 40-attempt budget, two separate launches | red on attempt 1; red on attempt 26 |
+| same command, this batch's capture loop | red on attempt 5 |
+
+The failure is therefore load- and timing-dependent, not a property of the test body: the same binary passes in
+isolation and loses roughly one run in twenty to one in five under concurrency.
+
+== 6. Not claimed
+
+- The root cause of `Text file busy (os error 26)` on the headless Agent spawn is **not** diagnosed here. The
+  observability change was deliberately landed first, because the TODO row's own reasoning applies: any "fix" for an
+  intermittent whose name nobody can see is a guess. The leading hypothesis is that a freshly written test binary is
+  still being closed (`fput`/`i_writecount` still pinned) at the moment `execve` runs on it, or that the busy file is
+  the `/bin/sh` interpreter of the child rather than the binary; `strace -f -e trace=execve` on a red run is the
+  planned instrument. `gdb` and `ltrace` are not installed on this host.
+- The doc-test naming rule is proven against a real doc-test failure captured from cargo, and against the fixture.
+  It is not proven end-to-end inside a full `cargo test --workspace` leg, because that leg was green on every attempt
+  this batch made.
+- The buried-name property is measured on a 2-target capture (41 lines). For the real 44-gate leg, where the test leg
+  spans the whole workspace, the gap is larger, not smaller: the sweep log in section 1 kept 38 lines of an unrelated
+  crate's doctests and no name at all.
+- The self-test proves the extraction and the persistence. It does not prove that a reader who follows the printed
+  pointer finds a useful file on a filesystem where `target/` is later wiped; `target/` is a build directory and is
+  cleaned by the same cargo that fills it.
