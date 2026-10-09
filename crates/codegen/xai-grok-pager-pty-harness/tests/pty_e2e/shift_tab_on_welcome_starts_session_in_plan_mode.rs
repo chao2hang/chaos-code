@@ -1,0 +1,37 @@
+// Per-test-case module for the `pty_e2e` integration test crate.
+#[allow(unused_imports)]
+use super::common::*;
+
+/// Shift+Tab (BackTab, `ESC [ Z`) on the welcome screen must leave home for the optimistic
+/// session and cycle its mode.
+/// the transient "已切换到模式：计划" banner proves both halves:
+/// the key was promoted to a new session AND the forwarded BackTab resolved to `Action::CycleMode`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
+async fn shift_tab_on_welcome_starts_session_in_plan_mode() {
+    let content = ContentController::start().await.expect("start content");
+
+    let binary = pager_binary().expect("resolve pager binary");
+    let mut harness =
+        PtyHarness::spawn_with_content(&binary, DEFAULT_ROWS, DEFAULT_COLS, &content, &[])
+            .expect("spawn pager with content");
+
+    harness
+        .wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT)
+        .expect("welcome text");
+
+    // Shift+Tab arrives as BackTab (CSI Z)
+    harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
+
+    harness
+        .wait_for_text("已切换到模式：计划", Duration::from_secs(10))
+        .expect("plan mode banner after Shift+Tab on welcome screen");
+
+    // Second press cycles Plan to Auto (gate defaults ON)
+    harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
+    harness
+        .wait_for_text("已切换到模式：自动", Duration::from_secs(10))
+        .expect("auto banner on second Shift+Tab");
+
+    harness.quit().expect("clean quit");
+}

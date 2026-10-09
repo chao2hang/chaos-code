@@ -31,9 +31,10 @@
 
 ## 关闭子代理
 
-用环境变量或配置文件关闭子代理：
+用命令行标志、环境变量或配置文件关闭子代理（优先级从高到低）。同样的规则适用于交互式 `chaos` TUI、`chaos agent stdio` 和无头运行。
 
 ```bash
+chaos --no-subagents                 # This session only
 export GROK_SUBAGENTS=0              # Environment variable
 ```
 
@@ -42,6 +43,8 @@ export GROK_SUBAGENTS=0              # Environment variable
 [subagents]
 enabled = false
 ```
+
+只有显式的 `enabled = false` 才会关闭子代理。一个只设置了 `max_depth`、`[subagents.models]` 或 `[subagents.toggle]`、没有 `enabled` 键的 `[subagents]` 表不会关闭它们。
 
 ---
 
@@ -59,7 +62,7 @@ enabled = false
 
 ## 内置代理类型
 
-`spawn_subagent` 工具接受一个 `subagent_type` 参数，用来选择子会话的类型：
+内置类型仍以宿主类型的形式存在，模型不能按名字选择它们。省略 `subagent_type` 时就是 `general-purpose`。
 
 | 类型              | 说明                                          |
 | ----------------- | ---------------------------------------------------- |
@@ -68,6 +71,8 @@ enabled = false
 | `plan`            | 规划型代理。探索代码库并产出结构化的实现计划；不改文件。 |
 
 项目级或用户级定义的代理可以新增类型，也可以按名字遮蔽这些内置类型。
+
+当存在插件、项目或用户定义的代理时，`spawn_subagent` 带一个可选的 `subagent_type` 枚举，其值就是这些代理（例如 `my-plugin:reviewer`）。内置名称与 xAI 捆绑的代理不在其中。如果父会话的 `tools` 列表用 `Agent(...)` 限制了可派生的类型，枚举只列出被允许的类型。传入未知类型会令调用失败，并附上有效类型的清单。
 
 ---
 
@@ -152,15 +157,14 @@ description = "Path to write review notes"
 
 主代理调用 `spawn_subagent` 工具。它的参数：
 
-| 参数         | 说明                                                       |
-| ----------------- | ---------------------------------------------------------------- |
-| `prompt`          | 交给子代理的完整任务提示。                           |
-| `description`     | 任务的简短标签（3-5 个词）。                          |
-| `subagent_type`   | 要启动的代理类型。默认 `general-purpose`。         |
-| `background`       | 让子代理在后台运行，立即返回一个子代理 ID。默认 `false`。 |
-| `isolation`       | `none`（共享工作区，默认）或 `worktree`（隔离的 git worktree）。 |
-| `resume_from`     | 继续某个已完成子代理的对话。传它的子代理 ID。 |
-| `cwd`             | 子代理的工作目录。与 `isolation: worktree` 互斥；设了 `resume_from` 时忽略（续跑的子会话继承来源的目录）。 |
+| 参数                | 说明                                                       |
+| ------------------- | ---------------------------------------------------------- |
+| `prompt`            | 交给子代理的完整任务提示。                           |
+| `description`       | 任务的简短标签（3-5 个词）。                          |
+| `run_in_background` | 在后台运行并返回一个子代理 ID。默认 `true`。          |
+| `isolation`         | `none`（共享工作区，默认）或 `worktree`（隔离的 git worktree）。 |
+| `resume_from`       | 继续某个已完成子代理的对话。传它的子代理 ID。 |
+| `cwd`               | 子代理的工作目录。与 `isolation: worktree` 互斥；设了 `resume_from` 时忽略（续跑的子会话继承来源的目录）。 |
 
 在后台运行子代理时，事后用 `get_command_or_subagent_output` 取它的结果。
 
@@ -194,15 +198,15 @@ description = "Path to write review notes"
 `delivery: "queue"`；两者同时出现时以 `delivery` 为准。
 
 会话记录把每次发送显示为一行 `Message` 行：先是表示结果的动词，然后是子代理的标签
-（它的类型、人设或角色）和加弯引号的描述 —— 与它那行 `Subagent …: “…”` 滚动回溯
+（它的人设、角色、tag，或回退名 `Subagent`）和加弯引号的描述 —— 与它那行 `Subagent …: “…”` 滚动回溯
 行引用的内容一致，截到第一行且最多 40 个字符。投递方式由动词体现，所以 steer 不带
 标记：
 
-- `Message sent to Explore “find callers”`（steer）
-- `Message queued for Explore “find callers”` / `Message interjected to Explore “find callers”`
+- `Message sent to Subagent “find callers”`（steer）
+- `Message queued for Subagent “find callers”` / `Message interjected to Subagent “find callers”`
 - `Message sending to …`，发送在途时配一个动画圆点
-- 被拒绝的发送是 `Message rejected · Explore “find callers”`；shell 无法确认的是
-  `Message unconfirmed · Explore “find callers”`
+- 被拒绝的发送是 `Message rejected · Subagent “find callers”`；shell 无法确认的是
+  `Message unconfirmed · Subagent “find callers”`
 - 子代理给父会话发消息时是 `Message sent to parent`
 
 折叠行不显示消息正文，也不显示原因。**Right**（vim 模式下 `l`/`e`）展开这一行，
@@ -243,6 +247,11 @@ shell 命令，但不能改文件。
 重新渲染。来源必须处于已完成状态（不是在运行），属于当前会话，并且使用相同的代理类型。
 
 ### MCP 继承
+
+主会话会把当前活跃代理的 `mcpServers` frontmatter 按名字叠加到磁盘/客户端的合并结果上
+（agent.md 头部优先于 `config.toml`）。切换主代理时，叠加层只换成新代理的那一份。
+子代理内联声明的 `mcpServers` 仍然会成为它自有的客户端，并优先于继承来的共享客户端。
+插件代理不能声明 `mcpServers`。
 
 子代理默认继承父会话**已经连上**的 MCP 服务器。这包括本地 stdio/HTTP 服务器和来自
 插件的代理（例如 `my-plugin:reviewer`）。子会话发现和调用这些工具的方式与父会话相同，
@@ -312,6 +321,18 @@ explore = "grok-4.6"                 # route explore to a specific model
 ```
 
 每种类型的模型覆盖对任何父会话都生效；没有覆盖时，子代理继承父会话的模型。
+
+### 由代理选择模型
+
+`spawn_subagent` 工具向代理提供一个 `model` 参数，其描述里列出可选的模型，供你明确想让子代理跑在别的模型时使用。设置 `[features] subagent_model_inheritance = true`（或 `GROK_SUBAGENT_MODEL_INHERITANCE=1`）后，只要模型选择器里的模型全是 xAI 模型，参数及其描述都会隐藏：此时子代理总是继承父会话的模型；仍指定模型的派生会失败，附一条让代理不指定模型重试的消息。目录里有第三方模型、有未声明家族的模型、或目录还在加载时，参数保留。`[subagents.models]` 的固定值、角色与人设不受影响。它在会话开始时读取，改动需要重启。优先级：`requirements.toml`/MDM 固定值，然后环境变量，然后 `config.toml`，然后远端设置，最后默认值（关）。
+
+你也可以在 `/settings` → Models → **Subagent model inheritance** 里切换它：
+
+- 开：Chaos 不能为子代理设置模型
+- 关：Chaos 可以为子代理选择不同的模型。重启后生效。
+- 注意：仅当所有模型都是 xAI 的 "model_family" 时，该设置才起作用。你多半不需要配置它。
+
+该行显示的是重启后生效的值。切换会写入 `[features] subagent_model_inheritance = true` 或 `= false`（显式的 `false` 会盖过远端的 `true`）；`d`（重置）删除该键，让 `managed_config.toml`、远端设置或默认值重新生效。已在运行的代理保持它们启动时的模式。当 `config.toml` 无法覆盖的某一层决定了这个值——`requirements.toml`/MDM 固定值、环境变量、`GROK_CONFIG` 叠加层或进行中的活动——切换与重置都会被拒绝，并弹出一条点名该层的 toast。
 
 ### 自定义角色与人设
 
@@ -383,13 +404,13 @@ Chaos 在代理界面的侧栏里显示正在运行和已完成的工作：
 
 ### 全屏框架视图（子会话记录）
 
-打开某个子代理时（从滚动回溯块、任务面板或看板的某一行打开），父视图会被一个带边框
-的框架替换，显示子会话的完整记录：
+打开某个子代理时（从滚动回溯块或任务面板），父视图会被一个带边框的
+框架替换，显示子会话的完整记录：
 
 - 框架内的标题栏：状态图标（转圈 / ✓ / ✗）、标签 + 加粗描述 + 模型、可选的
   `resumed`/`forked` 徽章、实时活动 · 已用时间，以及 [✗] 关闭按钮。
 - 子会话自己的滚动回溯、思考与工具调用都渲染在框架内。
-- 查看期间，父会话的任务面板、待办面板、停靠栏和目录都会隐藏。
+- 查看期间，父会话的任务面板、待办面板和停靠栏都会隐藏。
 
 这个视图是只读观察用的。输入框被隐藏（占零行）。你不能聚焦它、输入提示、暂存草稿，
 也不能从这里发后续消息。提示仍然归父会话所有。要给运行中的子代理下指令，请关闭该视图，

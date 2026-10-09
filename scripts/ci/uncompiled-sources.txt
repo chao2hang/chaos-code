@@ -1,3 +1,8 @@
 # Files under crates/ that no build compiles, from scripts/ci/panic-site-census.py.
 # Each is a module no crate root reaches. Every line is a decision somebody
 # has to revisit: wire it up, or delete the file and its tests with it.
+crates/codegen/xai-fast-worktree/src/offline_clean_tests.rs
+crates/codegen/xai-grok-pager/src/disk_usage_cmd/redirects_tests.rs
+crates/codegen/xai-grok-pager/src/views/subagent_catalog_pane.rs
+crates/codegen/xai-grok-workspace/src/permission/manager/tests/bash_filename_arguments_tests.rs
+crates/codegen/xai-grok-workspace/src/permission/manager/tests/stack_routing_tests.rs

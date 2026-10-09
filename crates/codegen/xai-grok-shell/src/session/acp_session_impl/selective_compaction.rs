@@ -144,7 +144,10 @@ fn suggest_compressible_spans(
 
         // 收集一段连续的助手+结果配对；遇到用户/系统或保护工具则停止。
         while end < recent_start {
-            match &conversation[end] {
+            let Some(item) = conversation.get(end) else {
+                break;
+            };
+            match item {
                 ConversationItem::Assistant(assistant) => {
                     if assistant.tool_calls.is_empty() {
                         end += 1;
@@ -203,10 +206,10 @@ fn item_outline(index: usize, item: &ConversationItem) -> String {
     let (kind, text) = match item {
         ConversationItem::System(system) => ("system", system.content.as_ref()),
         ConversationItem::User(user) => {
-            let kind = if user.synthetic_reason.is_some() {
-                "synthetic-user"
-            } else {
+            let kind = if user.synthetic_reason == crate::sampling::SyntheticReason::Human {
                 "user"
+            } else {
+                "synthetic-user"
             };
             let text = user
                 .content
@@ -269,8 +272,9 @@ fn build_strategy_entries(conversation: &[ConversationItem]) -> Vec<StrategyEntr
         .enumerate()
         .map(|(index, item)| match item {
             ConversationItem::Assistant(assistant) => {
-                if assistant.tool_calls.len() == 1 {
-                    let call = &assistant.tool_calls[0];
+                if assistant.tool_calls.len() == 1
+                    && let Some(call) = assistant.tool_calls.first()
+                {
                     StrategyEntry {
                         index,
                         kind: StrategyEntryKind::ToolCall {
@@ -327,7 +331,11 @@ fn compute_protected_indices(
         .iter()
         .enumerate()
         .filter_map(|(index, item)| match item {
-            ConversationItem::User(user) if user.synthetic_reason.is_none() => Some(index),
+            ConversationItem::User(user)
+                if user.synthetic_reason == crate::sampling::SyntheticReason::Human =>
+            {
+                Some(index)
+            }
             _ => None,
         })
         .collect();
@@ -452,7 +460,9 @@ impl SessionActor {
             .iter()
             .rev()
             .find_map(|item| match item {
-                ConversationItem::User(user) => Some(user.synthetic_reason.is_none()),
+                ConversationItem::User(user) => {
+                    Some(user.synthetic_reason == crate::sampling::SyntheticReason::Human)
+                }
                 _ => None,
             })
             .unwrap_or(false);
@@ -984,6 +994,7 @@ mod restore_tests {
             stream_tool_calls: None,
             extract_inline_thinking: None,
             is_workbuddy: false,
+            ..Default::default()
         }
     }
 

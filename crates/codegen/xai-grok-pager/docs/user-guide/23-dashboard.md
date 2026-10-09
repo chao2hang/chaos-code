@@ -2,7 +2,7 @@
 
 代理看板（Agent Dashboard）列出本 pager 进程中的每一个顶层会话——包括本地会话与分支（fork）——并按状态分组。在同一个界面里，你可以预览、回复、接入（attach）、置顶、重命名、停止会话，或派发一个新代理。子代理（subagent）不会列出；它们运行在父会话之下，而父会话在任务进行中时本来就会显示。
 
-它不是代理模态框（`/config-agents` / `/agents`——定义与人设），也不是会话选择器（`/resume` / `F3`，磁盘上的历史会话），更不是工作流运行界面（`/workflow runs`）。
+它不是代理模态框（`/config-agents` / `/agents`——定义与人设），也不是会话选择器（`/resume` / `Ctrl+R`，磁盘上的历史会话），更不是工作流运行界面（`/workflow runs`）。
 
 ---
 
@@ -53,6 +53,8 @@
 只要还有活着的后台工作在跑，即使回合已经结束，该行也仍然显示为**运行中**——比如一个后台任务、一个 `monitor`，或一个生效中的定时 `/loop`。活动行会说明还有什么在跑（例如 `1 monitor · 2 loops still running`）。
 
 分组没有内联标题；排序保证同状态的行彼此相邻，每行的小圆点加颜色就说明了它属于哪一组。
+
+**看板预览（Dashboard preview）**位于 `/settings` 的**外观（Appearance）**下（搜索 "preview"）。关闭预览与回复面板后，列表会多出空间。预览关闭时，你必须打开一个会话才能回复或回答权限请求。新建代理的提示框仍然可用。该设置重启后仍然保留，并可以在同一处重新打开。在 `config.toml` 里设置 `[ui] dashboard_preview = true` 也能开启它。
 
 派发输入框沿用与代理视图相同的提示框外观。按 `Ctrl+/` 可以把它翻到**搜索模式**：`❯` 前缀变成黄色的 `Search:`，此时输入会实时过滤列表，而不是派发新会话。
 
@@ -139,7 +141,7 @@
 
 所选代理的**模型**，以及在总是批准（yolo）模式下出现的 **`always-approve`** 标记，位于面板底边框上（与派发框共用同一个标记位），回答问题时也一样显示。列表里的行已不再重复显示模型或 always-approve 标记。
 
-**`Shift+Tab` 用于轮换被预览代理的模式**（普通 → 计划 → 自动（若已启用）→ 总是批准 → 普通），作用于**当前活着的**代理。在派发框上，Shift+Tab 只是为*下一个*代理预先设定模式。
+**`Shift+Tab` 用于轮换被预览代理的模式**（普通 → 计划 → Auto-review（若已启用）→ 总是批准 → 普通），作用于**当前活着的**代理。在派发框上，Shift+Tab 只是为*下一个*代理预先设定模式。
 
 与派发（只能新建会话）不同，预览面板的回复**是发给所选代理的**：
 
@@ -180,7 +182,7 @@
 [dashboard]
 enabled = true
 grouping = "state"   # or "directory"
-pinned   = ["top:<session_id>", "sub:<parent_session_id>:<child_session_id>"]
+pinned   = ["top:<session_id>"]
 reorder  = ["top:<session_id>"]
 ```
 

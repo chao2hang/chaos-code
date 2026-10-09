@@ -1,6 +1,6 @@
 use agent_client_protocol as acp;
 
-use crate::auth::{AuthManager, GrokAuth};
+use xai_grok_login::{AuthManager, GrokAuth};
 
 /// Advice for a caller that has no xAI credential to offer.
 ///

@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 use crate::views::modal_window::ModalWindowState;
 use indexmap::IndexMap;
 use xai_grok_shell::agent::client_profiles::{ClientProfile, by_id as builtin_profile_by_id};

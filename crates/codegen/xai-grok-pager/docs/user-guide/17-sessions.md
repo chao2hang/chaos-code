@@ -165,10 +165,7 @@ chaos --resume <session-id-or-title>
 
 ```
 /compact
-/compact [context]
 ```
-
-可选的 `context` 参数让你补充说明压缩时要保留什么。
 
 ### 自动压缩
 
@@ -304,6 +301,32 @@ worktree 会话在内部通过 `x.ai/git/worktree/*` 扩展方法管理。关键
 
 用 `chaos -w -r <session-id>` 在一个全新的 worktree 里恢复会话。
 
+`chaos worktree create [NAME]` 创建 `chaos -w [NAME]` 会创建的同一个 worktree，但不启动会话。它打印会话将会打开的目录。该路径是 stdout 上的唯一输出，所以 `cd "$(chaos worktree create my-fix)"` 可以用。默认情况下，worktree 从 HEAD 起步，并把未提交的改动一并带过去。传 `--ref <ref>` 可以从某个分支、标签或提交的干净检出起步。如果新 worktree 里缺了你启动时所在的目录——例如 `--ref` 检出早于该目录、或它是个被忽略的目录——命令打印 worktree 根目录。
+
+### 管理 Grove 重定向
+
+Grove worktree 可以把被忽略的产物目录（如 `target`、`node_modules`）重定向到投影树之外的存储。重定向命令的第一个参数是挂载路径。
+
+```bash
+chaos worktree redirect list /path/to/worktree
+chaos worktree redirect list /path/to/worktree --json
+chaos worktree redirect add /path/to/worktree target bind
+chaos worktree redirect del /path/to/worktree target
+chaos worktree redirect fixup /path/to/worktree
+chaos worktree redirect unmount /path/to/worktree target
+```
+
+`list` 打印 `repo_path`、`type`、`mechanism`、`target`、`source` 和 `state`。不带仓库相对路径运行 `unmount` 会拆除该挂载上的全部重定向。用 `fixup --force` 替换 Grove 自有的残留。用 `fixup --strict` 拒绝非空的普通目录。
+
+```bash
+chaos clone https://example.com/org/repo.git --redirect-ignored
+chaos clone https://example.com/org/repo.git \
+  --redirect-ignored --redirect-dir build --redirect-dir '**/node_modules'
+chaos clone https://example.com/org/repo.git --no-redirects
+```
+
+`GROVE_REDIRECTS=0` 仍是运行时紧急开关。Chaos 不会把这个紧急开关存为克隆的重定向选择。
+
 ### 查看磁盘占用
 
 `chaos du`（别名：`chaos disk-usage`）报告 Chaos 基准目录（`~/.chaos`）在磁盘上占用了多少空间。它先按大小从大到小列出每个顶层目录，然后逐个列出 worktree，给出大小、类型、年龄、标签和路径。登记表没有跟踪的 worktree 显示为 `untracked`。传 `--json` 可以得到同样内容的机器可读输出。
@@ -324,6 +347,8 @@ Worktrees
 To reclaim space, run `chaos worktree gc --max-age 7d --dry-run`, then the same command without `--dry-run`. Without `--max-age`, gc expires nothing, and it keeps a worktree whose work it cannot find elsewhere, naming each one.
 Untracked rows are not in the registry, so gc never visits them. Remove one with `chaos worktree rm --dry-run <path>`, then without `--dry-run`.
 ```
+
+在 `~/.chaos` 表之后，`chaos du` 可能还会打印 **Redirections**、**Orphaned redirections** 和 **Unattributed redirect directories**。这些字节在 Grove 的逃逸区（escape jail）里，不计入 `~/.chaos` 的合计。扫描为空时什么都不打印。用 `chaos worktree clean-artifacts` 回收一个存活的逃逸区。用 `chaos du --clean --yes` 清除存活逃逸区加上已证实的孤儿。只用 `chaos du --clean-orphaned --yes` 删除已证实的孤儿。
 
 `AGE` 就是 `chaos worktree gc` 度量的那个值：该 worktree 最后一次被访问距今多久；如果它是在那之后才创建的，则从创建算起。会话与代理活动会更新它；在目录里开着的 shell 或编辑器不会。未被跟踪的 worktree 没有登记表条目，因此它的年龄来自其下最新的那个文件。
 
@@ -372,7 +397,7 @@ Chaos 把对话存成换行分隔的 JSON（JSONL）。`updates.jsonl` 里的每
 - `num_messages` 与 `num_chat_messages` —— 更新数与聊天消息数
 - `current_model_id` —— 当前使用的模型
 - `parent_session_id` —— 分叉或恢复时的来源会话
-- `agent_name` —— 会话最后保存时生效的代理定义
+- `agent_name` —— 只有命名代理会持久保存它；内联 `--agent-profile` 会话还会持久保存 `agent_profile` JSON
 - `last_turn_summary` —— 最近一轮的超短摘要
 - `last_recap` —— 最新会话回顾的有界预览
 

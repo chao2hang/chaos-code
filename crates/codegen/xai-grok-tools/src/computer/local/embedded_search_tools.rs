@@ -67,23 +67,16 @@ const UGREP_BYTES: &[u8] = include_bytes!(concat!(
     ".bin.zst"
 ));
 
-/// Oneline inject for shell wrappers; always ends with `"; "`.
-///
-/// `cfg` is the backend's resolved per-tool enable state (see module docs); it
-/// is passed in per command rather than read from a process-global so subagents
-/// sharing a backend can't clobber each other's shadows.
+/// Oneline inject for shell wrappers; always ends with `"; "`. `cfg` is the backend's resolved
+/// per-tool enable state (see module docs); it is passed in per command rather than read from a
+/// process-global so subagents sharing a backend can't clobber each other's shadows.
 pub fn search_injection(cfg: SearchShadowConfig) -> String {
     build_injection(cfg.find_bfs, cfg.grep_ugrep, resolved_tools())
 }
 
-/// Compose the inject from per-tool enable flags + resolved binaries. An enabled
-/// tool installs a self-resolving shadow (the memoized `tools` path is only a
-/// fast-path hint; the shadow re-resolves at call time and falls back to the OS
-/// binary — see [`shell_function`]). A disabled tool emits a marker-gated
-/// `restore` that drops only a prior harness shadow. Kept pure (flags/tools
-/// passed in) so tests need no process-global env mutation — that is UB against
-/// the `shell_state` integration tests that read env / spawn children
-/// concurrently.
+/// Compose the inject from per-tool enable flags + resolved binaries. An enabled tool installs a self-resolving shadow (the memoized `tools`
+/// path is only a fast-path hint; the shadow re-resolves at call time and falls back to the OS binary — see [`shell_function`]). A disabled
+/// tool emits a marker-gated `restore` that drops only a prior harness shadow.
 fn build_injection(find_on: bool, grep_on: bool, tools: &ResolvedTools) -> String {
     let find = if find_on {
         shell_function("find", "bfs", tools.bfs.as_deref(), &[])
@@ -98,11 +91,9 @@ fn build_injection(find_on: bool, grep_on: bool, tools: &ResolvedTools) -> Strin
     format!("{find}; {grep}; ")
 }
 
-/// Drop a *previously installed harness* shadow so command-word `{name}` uses the
-/// OS binary again. Gated on the `__grok_shadow_{name}` marker that
-/// [`shell_function`] sets, so a user-defined `{name}` function replayed from the
-/// shell snapshot is left intact — only the harness's own shadow is removed.
-/// `set -u`/`set -e` safe and idempotent (`unset -f` is bash + zsh).
+/// Drop a *previously installed harness* shadow so command-word `{name}` uses the OS binary again. Gated on the `__grok_shadow_{name}` marker
+/// that [`shell_function`] sets, so a user-defined `{name}` function replayed from the shell snapshot is left intact — only the harness's own
+/// shadow is removed. `set -u`/`set -e` safe and idempotent (`unset -f` is bash + zsh).
 fn restore_command(name: &str) -> String {
     format!(
         "if [ -n \"${{__grok_shadow_{name}-}}\" ]; then \
@@ -187,11 +178,9 @@ fn resolve_tool(
     )
 }
 
-/// Resolution order: explicit env path → bundled (self-extracted) →
-/// `~/.grok/vendor/<bin>` → `which`. Env and vendor only require `is_file()` here
-/// (a lenient hint, no `+x` probe) so an odd-permission copy still resolves; the
-/// injected shadow gates on `[ -x ]` at call time and falls back to the OS binary
-/// if the hint isn't executable, so a non-exec path can't hard-fail `find`/`grep`.
+/// Resolution order: explicit env path → bundled (self-extracted) → `~/.grok/vendor/<bin>` → `which`. Env and vendor only require `is_file()`
+/// here (a lenient hint, no `+x` probe) so an odd-permission copy still resolves; the injected shadow gates on `[ -x ]` at call time and falls
+/// back to the OS binary if the hint isn't executable, so a non-exec path can't hard-fail `find`/`grep`.
 fn resolve_tool_from(
     env_path: Option<PathBuf>,
     bundled: Option<PathBuf>,
@@ -732,10 +721,9 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/dev/null");
     }
 
-    /// #1 regression: a host hint that exists but is **not executable** (e.g. a
-    /// mode-0644 `GROK_TOOLS_*_PATH` / vendor copy) must fall through to the OS
-    /// binary rather than hard-fail `exec` with EACCES. The `[ -x ]` guard (not
-    /// `[ -f ]`) is what makes this work.
+    /// #1 regression: a host hint that exists but is **not executable** (e.g. a mode-0644
+    /// `GROK_TOOLS_*_PATH` / vendor copy) must fall through to the OS binary rather than hard-fail
+    /// `exec` with EACCES. The `[ -x ]` guard (not `[ -f ]`) is what makes this work.
     #[test]
     fn shadow_falls_back_when_hint_not_executable() {
         let Ok(bash) = which::which("bash") else {

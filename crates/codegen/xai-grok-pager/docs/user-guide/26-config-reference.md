@@ -9,8 +9,8 @@
 | 文件 | 谁写入 | 存放位置 | 用途 |
 | --- | --- | --- | --- |
 | `config.toml` | 开发者 | `~/.chaos/config.toml`，以及项目中的 `.chaos/config.toml` | 设置个人默认值。这里的任何内容都可以由使用这台机器的人修改。 |
-| `managed_config.toml` | 你，通过控制台或部署工具 | `/etc/grok/managed_config.toml` | 向一批机器下发起点配置。开发者自己的文件会覆盖它。 |
-| `requirements.toml` | 你（含签名） | `/etc/grok/requirements.toml`，或 macOS 设备管理 | 设置开发者不能修改的值。下文标为 `pin` 的键对其他所有文件、环境变量和命令行都有效。 |
+| `managed_config.toml` | 你，通过控制台或部署工具 | `/etc/grok/managed_config.toml`，或 `$CHAOS_HOME/managed_config.toml` | 向一批机器下发起点配置。开发者自己的文件会覆盖它。 |
+| `requirements.toml` | 你（含签名） | `/etc/grok/requirements.toml`、macOS 设备管理，或 `$CHAOS_HOME/requirements.toml` | 设置开发者不能修改的值。下文标为 `pin` 的键对其他所有文件、环境变量和命令行都有效。 |
 
 如果你希望别人能调整某些默认值，就用 `managed_config.toml`；如果希望他们不能改，就用 `requirements.toml`。
 
@@ -52,7 +52,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `auth` | `table` | `yes` | `user` | `[grok_com_config]` 的别名；每个 `grok_com_config.*` 键也都可以写成 `auth.*`。 |
-| `auth.auth_provider_command` | `string` | `yes` | `user` | 外部认证二进制文件；stdout 即 token。等价于 GROK_AUTH_PROVIDER_COMMAND；也接受 `grok_com_config.auth_provider_command`。 |
+| `auth.auth_provider_command` | `string` | `yes` | `user` | 外部认证二进制文件；stdout 即 token。设置了 `endpoints.models_base_url` 或 `models_list_url` 时，由该端点的模型列表决定提供哪些模型。等价于 GROK_AUTH_PROVIDER_COMMAND；也接受 `grok_com_config.auth_provider_command`。 |
 | `auth.auth_provider_label` | `string` | `yes` | `user` | 外部认证提供方的登录按钮标签。等价于 GROK_AUTH_PROVIDER_LABEL；也接受 `grok_com_config.auth_provider_label`。 |
 | `auth.auth_token_ttl` | `number` | `yes` | `user` | 返回裸 token 的提供方所用的 token TTL，单位秒。等价于 GROK_AUTH_TOKEN_TTL；也接受 `grok_com_config.auth_token_ttl`。 |
 | `auth.disable_api_key_auth` | `boolean` | `pin` | `user` | 拒绝 API-key 认证，使只有部署的 IdP 能登录。等价于 GROK_DISABLE_API_KEY_AUTH；也接受 `grok_com_config.disable_api_key_auth`。 |
@@ -98,11 +98,12 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | --- | --- | --- | --- | --- |
 | `cli.auto_update` | `boolean` | `pin` | `user` | 启动时检查 CLI 更新。等价于 GROK_DISABLE_AUTOUPDATER（用于抑制）。 |
 | `cli.channel` | `stable / alpha` | `pin` | `user` | 发布渠道偏好。 |
+| `cli.grove` | `boolean` 或 `grove` / `grove-fuse` / `grove-nfs` / `nfs` / `all` / `copy` / `true` / `false` / `1` / `0` / `on` / `off` | `yes` | `user` | 便捷开关：当具体开关未设置时，**同时**打开 `chaos clone` 与会话 / `-w` 的 Grove。等价于 `GROK_GROVE`。`false` / `copy` / `off` 表示「全开」关闭（回落到其它层），并不会强制两个面都关。worktree 上 `[cli] grove_worktree` 与 `GROK_WORKTREE_TYPE` 仍然优先；clone 上 `GROK_CLONE` 仍然优先。远端 `grove_worktree = false` 仍只扼制 worktree。本分叉不含 `chaos clone`，此键在本分叉里只影响 worktree 面（兼容说明）。 |
 | `cli.grove_worktree` | `boolean` 或 `grove` / `grove-fuse` / `grove-nfs` / `nfs` / `copy` / `true` / `false` / `1` / `0` / `on` / `off` | `yes` | `user` | 会话 / `-w` 用 Grove 还是复制。默认复制。与创建模式的 `cli.worktree_type` 不同。等价于 `GROK_WORKTREE_TYPE`。分层顺序：请求 → 环境 → 本地 → 远端为 true；然后按最后命中扼杀：远端 `grove_worktree = false` → 复制。远端缺失的设置不算扼杀：本地/环境/请求仍然生效。上游的 `grok clone` 依赖 Grove，本分叉不含该功能（兼容说明）。 |
 | `cli.installer` | `string` | `—` | `user` | 上次安装该 CLI 的安装器，用于选择更新路径。 |
 | `cli.maximum_version` | `string` | `pin` | `user` | 仍可运行而不被硬性拦截的最高 CLI 版本。等价于 GROK_MAXIMUM_VERSION。 |
 | `cli.minimum_version` | `string` | `pin` | `user` | 仍可运行而不被硬性拦截的最低 CLI 版本。等价于 GROK_MINIMUM_VERSION。 |
-| `cli.nfs_worktree` | same as `cli.grove_worktree` | `yes` | `user` | `cli.grove_worktree` 的读取别名。 |
+| `cli.nfs_worktree` | 同 `cli.grove_worktree` | `yes` | `user` | `cli.grove_worktree` 的读取别名。 |
 | `cli.npm_registry` | `string` | `yes` | `user` | 自动更新器使用的 npm registry。 |
 | `cli.required_maximum_version` | `string` | `pin` | `user` | 硬性最高 CLI 版本。等价于 GROK_REQUIRED_MAXIMUM_VERSION。 |
 | `cli.required_minimum_version` | `string` | `pin` | `user` | 硬性最低 CLI 版本。等价于 GROK_REQUIRED_MINIMUM_VERSION。 |
@@ -203,8 +204,8 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `endpoints.deployment_key` | `string` | `pin` | `user` | 企业部署的管理密钥。另见 GROK_DEPLOYMENT_KEY。 |
 | `endpoints.feedback_base_url` | `string` | `yes` | `user` | 反馈提交的去向。另见 GROK_FEEDBACK_BASE_URL。 |
 | `endpoints.managed_config_url` | `string` | `yes` | `user` | 覆盖受管配置端点。另见 GROK_MANAGED_CONFIG_URL。 |
-| `endpoints.models_base_url` | `string` | `pin` | `user` | 自定义推理 base URL。另见 GROK_MODELS_BASE_URL。 |
-| `endpoints.models_list_url` | `string` | `pin` | `user` | 覆盖模型列表 URL。另见 GROK_MODELS_LIST_URL。别名 `models_endpoint`。 |
+| `endpoints.models_base_url` | `string` | `pin` | `user` | 自定义推理 base URL。设置了 `auth_provider_command` 时，`{models_base_url}/models` 决定提供哪些模型。另见 GROK_MODELS_BASE_URL。 |
+| `endpoints.models_list_url` | `string` | `pin` | `user` | 覆盖模型列表 URL。设置了 `auth_provider_command` 时，此列表决定提供哪些模型。另见 GROK_MODELS_LIST_URL。别名 `models_endpoint`。 |
 | `endpoints.trace_upload_bucket` | `string` | `yes` | `user` | 直连的 gs:// 或 s3:// trace 桶；绕过代理。另见 GROK_TRACE_UPLOAD_BUCKET。 |
 | `endpoints.trace_upload_credentials` | `string` | `yes` | `user` | 该桶内联的 GCS 服务账号 JSON 或 AWS 凭据；优先于 `trace_upload_credentials_file`，且没有对应的环境变量。 |
 | `endpoints.trace_upload_credentials_file` | `string (path)` | `yes` | `user` | 该桶的 GCS 服务账号 JSON 或 AWS 凭据文件路径。另见 GROK_TRACE_UPLOAD_CREDENTIALS_FILE。 |
@@ -231,6 +232,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `features.dock` | `boolean` | `pin` | `user` | 启用或禁用 `dock`。默认 false。另见 `GROK_DOCK`。 |
 | `features.feedback` | `boolean` | `pin` | `user` | 启用或禁用 `feedback`。本分叉默认 false：反馈提交依赖上游服务，自定义模型提供方用不上。另见 `GROK_FEEDBACK_ENABLED`。 |
 | `features.feedback_trace_card` | `boolean` | `pin` | `user` | 在 `/feedback` 之后显示 trace 上传征询问题。默认 false。另见 `GROK_FEEDBACK_TRACE_CARD`。 |
+| `features.file_acceleration` | `boolean` | `pin` | `user` | 当 build 安装了文件加速器时，把本地会话的文件系统交给它。默认 false。另见 `GROK_FILE_ACCELERATION`。 |
 | `features.image_edit_model_override` | `string` | `yes` | `user` | image_edit 使用的 Imagine 模型 id。 |
 | `features.image_gen` | `boolean` | `pin` | `user` | 启用 image_gen / `/imagine`。 |
 | `features.image_gen_model_override` | `string` | `yes` | `user` | image_gen 使用的 Imagine 模型 id。留空则回退到远端配置的默认值。 |
@@ -243,12 +245,13 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `features.non_git_warning` | `boolean` | `yes` | `user` | 在 Git 仓库之外启动 Grok 时显示阻断式警告。 |
 | `features.remember_mode` | `boolean` | `—` | `—` | 跨会话记住上次的权限模式。仅从用户 `config.toml` 读取。 |
 | `features.remote_fetch` | `boolean` | `pin` | `fleet` | 固定远端模型目录与资源拉取。两者都设置时受管配置优先于用户文件。 |
-| `features.repo_status_in_system_prompt` | `boolean` | `pin` | `user` | 启用或禁用 `repo_status_in_system_prompt`。默认 true。另见 `GROK_REPO_STATUS_IN_SYSTEM_PROMPT`。 |
 | `features.session_recap` | `boolean` | `pin` | `user` | 启用或禁用 `session_recap`。默认 true。另见 `GROK_SESSION_RECAP`。 |
 | `features.session_search` | `boolean` | `pin` | `user` | 启用或禁用 `session_search`。默认 true。另见 `GROK_SESSION_SEARCH`。 |
+| `features.subagent_model_inheritance` | `boolean` | `pin` | `user` | 当你能选择的所有模型都是 xAI 模型时，隐藏子代理的 `model` 参数，使子代理继承父会话的模型。默认 false。另见 `GROK_SUBAGENT_MODEL_INHERITANCE`。会话开始时读取；修改后需重启。 |
 | `features.subagent_worktree_snapshot` | `boolean` | `pin` | `user` | 启用或禁用 `subagent_worktree_snapshot`。默认 false。另见 `GROK_SUBAGENT_WORKTREE_SNAPSHOT`。 |
 | `features.support_permission` | `boolean` | `yes` | `user` | 允许代理为工具执行请求权限。 |
 | `features.telemetry` | `boolean / session_metrics / off` | `pin` | `user` | 产品遥测模式。企业默认为 off。 |
+| `features.terminal_theme` | `boolean` | `pin` | `user` | 在其灰度期间暴露终端原生的 `terminal` 颜色主题。默认 false。另见 `GROK_TERMINAL_THEME`。 |
 | `features.title_refresh` | `boolean` | `pin` | `user` | 会话早期的自动标题刷新。在 requirements 中 pin 该键可压过 GROK_TITLE_REFRESH。 |
 | `features.turn_summary` | `boolean` | `pin` | `user` | 启用或禁用 `turn_summary`。默认 true。另见 `GROK_TURN_SUMMARY`。 |
 | `features.two_pass_compaction` | `boolean` | `pin` | `user` | 启用或禁用 `two_pass_compaction`。本分叉默认 false（保持历史行为，需显式开启）。另见 `GROK_TWO_PASS_COMPACTION`。 |
@@ -272,6 +275,12 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `feedback.user.email` | `string[]` | `yes` | `user` | 反馈作者邮箱的来源（`git_email` 或字面值）。 |
 | `feedback.user.name` | `string[]` | `yes` | `user` | 反馈作者姓名的来源（`os_user` 或字面值）。 |
 
+### `file_acceleration`
+
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
+| --- | --- | --- | --- | --- |
+| `file_acceleration.routes` | `string` | `yes` | `user` | 路由覆盖，原样传给已安装的文件加速器；空值表示未设置。另见 `GROK_FILE_ACCELERATION_ROUTES`。 |
+
 ### `goal`
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
@@ -283,7 +292,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `grok_com_config` | `table` | `yes` | `user` | Grok.com websocket 与 OAuth/OIDC 设置。`[auth]` 是别名。 |
-| `grok_com_config.auth_provider_command` | `string` | `yes` | `user` | 外部认证二进制文件；stdout 即 token。另见 GROK_AUTH_PROVIDER_COMMAND。 |
+| `grok_com_config.auth_provider_command` | `string` | `yes` | `user` | 外部认证二进制文件；stdout 即 token。设置了 `endpoints.models_base_url` 或 `models_list_url` 时，由该端点的模型列表决定提供哪些模型。另见 GROK_AUTH_PROVIDER_COMMAND。 |
 | `grok_com_config.auth_provider_label` | `string` | `yes` | `user` | 外部认证提供方的登录按钮标签。另见 GROK_AUTH_PROVIDER_LABEL。 |
 | `grok_com_config.auth_token_ttl` | `number` | `yes` | `user` | 返回裸 token 的提供方所用的 token TTL，单位秒。另见 GROK_AUTH_TOKEN_TTL。 |
 | `grok_com_config.disable_api_key_auth` | `boolean` | `pin` | `user` | 拒绝 API-key 认证，使只有部署的 IdP 能登录。另见 GROK_DISABLE_API_KEY_AUTH。 |
@@ -309,7 +318,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `harness.block_for_upload` | `boolean` | `yes` | `user` | 阻塞回合结束，直到工作区快照上传完成。 |
+| `harness.wait_for_uploads` | `boolean` | `yes` | `user` | 在返回提示响应前等待回合结束时的 trace 上传。默认关闭；一次性的无头运行改在退出时排空待上传的回合结束上传，使用一个强制的最小预算（约 150 秒：解析窗口加一次上传尝试）；`upload_flush_timeout_secs` 若更大则会扩展该预算。 |
 | `harness.disable_workspace_teleport` | `boolean` | `pin` | `user` | 逐回合工作区快照的紧急开关。 |
 
 ### `hints`
@@ -327,6 +336,14 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `hooks.<event>[].hooks[].command` | `string` | `yes` | `user` | 此 hook 要运行的命令。加载时不展开 `$VAR`。 |
 | `hooks.<event>[].hooks[].type` | `command` | `yes` | `user` | hook 处理器类型。支持 command hook。 |
 | `hooks.<event>[].matcher` | `string` | `yes` | `user` | 此 hook 组的工具名匹配器。 |
+
+### `long_reasoning_reminder`
+
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
+| --- | --- | --- | --- | --- |
+| `long_reasoning_reminder.enabled` | `boolean` | `yes` | `user` | 在某次模型调用产生很长的隐藏推理后，注入一条「简要推理」的回合中提醒。默认 false。另见 `GROK_LONG_REASONING_REMINDER`（布尔词，或本表形状的 JSON 对象）。 |
+| `long_reasoning_reminder.tokens` | `integer` | `yes` | `user` | 单次模型调用中被视为「长」的推理 token 数。默认 1000，钳制在 100–200000。另见 `GROK_LONG_REASONING_REMINDER` JSON 对象里的 `tokens`。 |
+| `long_reasoning_reminder.delay` | `integer` | `yes` | `user` | 长调用之后等待多少个模型调用再发提醒。默认 1，钳制在 0–10。另见 `GROK_LONG_REASONING_REMINDER` JSON 对象里的 `delay`。 |
 
 ### `managed_mcps`
 
@@ -354,6 +371,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | --- | --- | --- | --- | --- |
 | `mcp_servers.<name>.args` | `string[]` | `yes` | `user` | stdio 或 HTTP MCP 服务器上的 `[mcp_servers.<name>]` `args`。 |
 | `mcp_servers.<name>.bearer_token_env_var` | `string` | `yes` | `user` | stdio 或 HTTP MCP 服务器上的 `[mcp_servers.<name>]` `bearer_token_env_var`。 |
+| `mcp_servers.<name>.bearer_token_file` | `string` | `yes` | `user` | HTTP MCP 服务器上的 `[mcp_servers.<name>]` `bearer_token_file`：bearer token 的绝对路径或 `~/` 路径，每次请求都会重读。 |
 | `mcp_servers.<name>.command` | `string` | `yes` | `user` | stdio 或 HTTP MCP 服务器上的 `[mcp_servers.<name>]` `command`。 |
 | `mcp_servers.<name>.cwd` | `string` | `yes` | `user` | stdio 或 HTTP MCP 服务器上的 `[mcp_servers.<name>]` `cwd`。 |
 | `mcp_servers.<name>.enabled` | `boolean` | `yes` | `user` | stdio 或 HTTP MCP 服务器上的 `[mcp_servers.<name>]` `enabled`。 |
@@ -375,7 +393,21 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `memory.enabled` | `boolean` | `pin` | `user` | 跨会话记忆总开关。另见 GROK_MEMORY。 |
+| `memory.enabled` | `boolean` | `pin` | `user` | 旧版记忆开关。另见 `GROK_MEMORY`；当 v2 闸门启用时被取代。 |
+| `memory_v2.enabled` | `boolean` | `pin` | `user` | 记忆 v2 的主开关。为 true 时，v2 优先于旧版 `memory.enabled`。为 false 或缺省时，按常规解析旧版启用状态。默认：`false`。 |
+| `memory_v2.rollout` | `"off"`、`"record_only"`、`"shadow"`、`"active"` | — | `user` | 面向新 v2 会话的高级分阶段放量（staged-rollout）控制。启用 v2 后默认：`"active"`。大多数用户应保持不设置。 |
+| `memory_v2.capture_status_enabled` | `boolean` | — | `user` | 在 UI 中显示记忆 v2 捕获生命周期消息，便于调试。成功的捕获可展开，包含生成的内容以及指向已提交观察文件的链接。遥测与调试日志始终记录。默认：`false`。 |
+| `memory_v2.capture_enabled` | `boolean` | — | `user` | 启用记忆 v2 的提取与观察捕获。默认：`true`。 |
+| `memory_v2.automatic_dream_enabled` | `boolean` | — | `user` | 启用事件驱动的记忆 v2 Dream。默认：`true`。 |
+| `memory_v2.manual_dream_enabled` | `boolean` | — | `user` | 启用显式请求的记忆 v2 Dream。默认：`true`。 |
+| `memory_v2.batch_dream_enabled` | `boolean` | — | `user` | 以批量 Dream 方式运行激活的记忆 v2 Dream：批量地把笔记并入主题，并带完整的主题目录；本地值优先于远端 `memory_v2.batch_dream_enabled`，随后默认 `false`。 |
+| `memory_v2.batch_dream_max_run_secs` | `number` | — | `user` | 以秒为上限约束一次批量 Dream 运行，默认 `1800`，钳制在 `60`–`3600`；未完成的笔记留在收件箱。本地值优先于远端 `memory_v2.batch_dream_max_run_secs`。 |
+| `memory_v2.batch_dream_max_calls_per_batch` | `number` | — | `user` | 限制每个批量 Dream 批次的模型调用次数，默认 `6`，钳制在 `2`–`16`。本地值优先于远端 `memory_v2.batch_dream_max_calls_per_batch`。 |
+| `memory_v2.batch_dream_max_batch_note_bytes` | `number` | — | `user` | 限制一个批量 Dream 批次内的笔记字节数，默认 `98304`，钳制在 `16384`–`262144`。本地值优先于远端 `memory_v2.batch_dream_max_batch_note_bytes`。 |
+| `memory_v2.compact_index_enabled` | `boolean` | — | `user` | 向系统提示注入仅含标题的记忆索引（无主题描述、无待处理观察），让 8 KiB 预算容纳更多主题；带标题的条目按代理读取各主题的频次排序，磁盘上的 `MEMORY.md` 同样渲染。本地值优先于远端 `memory_v2.compact_index_enabled`。默认：`false`。 |
+| `memory_v2.file_writes_enabled` | `boolean` | — | `user` | 启用所有记忆 v2 的文件写入；`false` 会在脚手架创建前 fail closed（直接拒绝）。默认：`true`。 |
+| `memory_v2.archived_retention_days` | `number` | — | `user` | 归档的记忆 v2 观察文件保留的天数。默认：`30`。 |
+| `memory_v2.job_retention_days` | `number` | — | `user` | 已结束的记忆 v2 捕获任务元数据保留的天数。默认：`14`。 |
 
 ### `model`
 
@@ -399,19 +431,25 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `model.<id>.hidden` | `boolean` | `yes` | `user` | 在选择器中隐藏该模型。仍可用 `-m` 选用。 |
 | `model.<id>.inference_idle_timeout_secs` | `number` | `yes` | `user` | 该模型流式推理的空闲超时。 |
 | `model.<id>.max_completion_tokens` | `number` | `yes` | `user` | 按模型的最大补全 token 数。 |
+| `model.<id>.max_request_bytes` | `number` | `yes` | `user` | provider 请求体上限，内联图片会被逐出以保持不超过它。未设置时继承 `[model_providers.<id>]` 的值，再取 `api_backend` 默认值：`messages` 为 30 MB，其余为 50 MiB。 |
 | `model.<id>.max_retries` | `number` | `yes` | `user` | 该模型的推理重试次数。 |
 | `model.<id>.model` | `string` | `yes` | `user` | 发给 API 的模型 id。 |
 | `model.<id>.model_family` | `string` | `yes` | `user` | 用于压缩与能力分组的家族 id。 |
 | `model.<id>.model_provider` | `string` | `yes` | `user` | 该模型所用的具名 `[model_providers.<name>]` Provider id。 |
+| `model.<id>.mtls_cert_dir` | `string` | `yes` | `user` | 包含模型端点 mTLS 身份的目录，以 `client.crt` 与 `client.key`、或 `tls.crt` 与 `tls.key` 形式存在；除非同一模型恰好有一个 HTTPS `base_url` 且没有 `api_base_url`，否则配置会被拒绝，且请求不跟随重定向。 |
 | `model.<id>.name` | `string` | `yes` | `user` | 模型选择器中显示的标签。 |
+| `model.<id>.notice` | `table`（`severity` = `info / warning / critical`、`text`、`label`） | `yes` | `user` | 选择该模型时显示在提示框上方的消息；对该模型置空 `text` 即清除。 |
 | `model.<id>.query_params` | `map<string,string>` | `yes` | `user` | 该模型请求上的额外查询参数。 |
+| `model.<id>.rate_limit_retry_threshold` | `number` | `yes` | `user` | 被限流请求的总尝试次数上限，受解析后的 `max_retries` 封顶；配置后，会禁用独立的子代理 429 等待循环。 |
 | `model.<id>.reasoning_effort` | `string` | `yes` | `user` | 已弃用的按模型推理投入；请改用 `reasoning_efforts`。 |
-| `model.<id>.reasoning_efforts` | `array of tables` | `yes` | `user` | 该模型允许的推理投入取值。 |
+| `model.<id>.reasoning_efforts` | `array of tables` | `yes` | `user` | 该模型允许的推理投入取值。省略时，菜单取自端点 `/v1/models` 的对应行（`reasoning_efforts`，其缺省时取 `capabilities.reasoning_effort`）。 |
+| `model.<id>.reasoning_summary` | `none / auto / concise / detailed` | `yes` | `user` | 该模型的 Responses API `reasoning.summary`；默认 `concise`。`none` 会为拒绝该字段的端点（如 AWS Bedrock Mantle）省略它。 |
 | `model.<id>.show_model_fingerprint` | `boolean` | `yes` | `user` | 存在时在界面里显示 Provider 的模型指纹。 |
 | `model.<id>.stream_tool_calls` | `boolean` | `yes` | `user` | 按模型的工具调用流式请求形态。 |
+| `model.<id>.subagent_rate_limit_max_attempts` | `number` | `yes` | `user` | `rate_limit_retry_threshold` 未设置时，子代理 429 等待循环的最大尝试次数；默认 8，上限 32，`0` 禁用等待循环。 |
 | `model.<id>.supported_in_api` | `boolean` | `yes` | `user` | 该目录条目是否作为公开 API 模型提供。 |
 | `model.<id>.supports_backend_search` | `boolean` | `yes` | `user` | 该端点是否支持由上游托管的服务端搜索工具。 |
-| `model.<id>.supports_reasoning_effort` | `boolean` | `yes` | `user` | 已弃用；请改用 `reasoning_efforts`。 |
+| `model.<id>.supports_reasoning_effort` | `boolean` | `yes` | `user` | 已弃用；请改用 `reasoning_efforts`。显式 `false` 会让该模型不出现在它本可从端点或同模型 catalog 条目继承的任何菜单里。 |
 | `model.<id>.system_prompt_label` | `string` | `yes` | `user` | 按模型的系统提示身份标签。 |
 | `model.<id>.temperature` | `number` | `yes` | `user` | 按模型的采样温度。 |
 | `model.<id>.top_p` | `number` | `yes` | `user` | 按模型的 top_p。 |
@@ -428,7 +466,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `models.agent_type` | `string` | `yes` | `user` | 没有按模型覆盖时回退的 agent_type。 |
-| `models.allowed_models` | `string[]` | `pin` | `user` | 模型选择器、默认模型与 `-m` 的 glob 白名单。留空表示不限制。 |
+| `models.allowed_models` | `string[]` | `pin` | `user` | 模型选择器、默认模型与 `-m` 的 glob 白名单。当设置了 `auth_provider_command` 与自定义 models 端点时，在 `requirements.toml` 之外会被忽略。留空表示不限制。 |
 | `models.default` | `string` | `pin` | `user` | 新会话使用的模型。另见 `GROK_DEFAULT_MODEL`、`--model`、`-m`。 |
 | `models.default_reasoning_effort` | `string` | `yes` | `user` | 默认模型支持时，它所用的默认推理投入。 |
 | `models.disabled_models` | `string[]` | `yes` | `user` | 从目录中移除这些模型 ID。优先于 `hidden_models`。 |
@@ -439,8 +477,10 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `models.max_completion_tokens` | `number` | `yes` | `user` | 模型未设置时，最大补全 token 的全局默认值。 |
 | `models.max_retries` | `number` | `yes` | `user` | 模型未设置时，推理重试的全局默认值。 |
 | `models.prompt_suggestion` | `string` | `yes` | `user` | 下一条提示的幽灵文本所用模型。未设置时先回退到远端配置，再到会话模型。 |
+| `models.rate_limit_retry_threshold` | `number` | `yes` | `user` | 模型未设置时，被限流请求的全局总尝试次数上限，受解析后的 `max_retries` 封顶；配置后，会禁用独立的子代理 429 等待循环。 |
 | `models.session_summary` | `string` | `yes` | `user` | 用于会话标题与摘要的模型。 |
 | `models.stream_tool_calls` | `boolean` | `yes` | `user` | 工具调用流式请求的全局形态；某些 BYOK 端点需要设为 false。 |
+| `models.subagent_rate_limit_max_attempts` | `number` | `yes` | `user` | `rate_limit_retry_threshold` 未设置时，子代理 429 等待循环尝试次数的全局默认值；默认 8，上限 32，`0` 禁用等待循环。 |
 | `models.temperature` | `number` | `yes` | `user` | 模型未设置时，采样温度的全局默认值。 |
 | `models.top_p` | `number` | `yes` | `user` | 模型未设置时，top_p 的全局默认值。 |
 | `models.web_search` | `string` | `pin` | `user` | 客户端 `web_search` 工具使用的模型。另见 `GROK_WEB_SEARCH_MODEL`。 |
@@ -455,8 +495,8 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `paths.extra_rule_dirs` | `string[]` | `yes` | `user` | 更多规则目录（每个目录内含 `*.md`）。 |
-| `paths.extra_skill_dirs` | `string[]` | `yes` | `user` | 更多技能目录（每个目录内含 `<skill>/SKILL.md`）。 |
+| `paths.extra_rule_dirs` | `string[]` | `yes` | `user` | 更多规则目录（绝对路径或 `~/…`；每个目录内含 `*.md`），在 home 规则之后加载。 |
+| `paths.extra_skill_dirs` | `string[]` | `yes` | `user` | 记录 `/import-claude` 的技能目录；技能注入会忽略这些目录，而以 `[skills] paths` 为准。 |
 
 ### `permission`
 
@@ -523,13 +563,13 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `storage.cleanup_ttl_days` | `integer` | `yes` | `user` | 会话文件夹被删除前可闲置的天数；早于该天数的媒体与终端日志会从活跃会话中清理。默认 30。 |
+| `storage.cleanup_ttl_days` | `integer` | `yes` | `user` | 会话可闲置的天数，超过后其文件夹会被删除；早于该天数的媒体与终端日志会从活跃会话中清理。未设置或 `0` 表示禁用清理。 |
 
 ### `subagents`
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `subagents.enabled` | `boolean` | `pin` | `user` | 子代理 / 任务工具总开关。另见 GROK_SUBAGENTS。 |
+| `subagents.enabled` | `boolean` | `pin` | `user` | 子代理 / 任务工具总开关。即使设置了其他 `subagents.*` 键，默认仍为 true。另见 GROK_SUBAGENTS 或 `--no-subagents`。 |
 | `subagents.limit_behavior` | `queue / fail` | `yes` | `user` | 并发子代理达到上限时的处理方式。 |
 | `subagents.max_concurrent` | `integer` | `yes` | `user` | 并发子代理上限。 |
 | `subagents.max_depth` | `integer` | `yes` | `user` | 子代理嵌套深度上限（下限为 1）。 |
@@ -613,6 +653,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `ui.contextual_hints.undo` | `boolean` | `yes` | `user` | 提示 Ctrl+Z 可恢复被清掉的提示草稿。 |
 | `ui.contextual_hints.word_select` | `boolean` | `yes` | `user` | 在折叠/导航选择下双击后，指向设置里的 Word select。 |
 | `ui.cursor_blink` | `boolean` | `yes` | `user` | 强制方块光标闪烁（true）或常亮（false）。未设置则沿用终端设置。 |
+| `ui.dashboard_preview` | `boolean` | `yes` | `user` | 看板预览与回复面板默认出现（`/settings` 的外观项）。 |
 | `ui.default_selected_permission` | `string` | `yes` | `user` | 会话第一个提示上预选的审批行。另见 GROK_DEFAULT_SELECTED_PERMISSION。 |
 | `ui.display_refresh.auto_cadence_enabled` | `boolean` | `yes` | `user` | 让流式/滚动节奏匹配显示器刷新率。另见 GROK_DISPLAY_REFRESH_AUTO_CADENCE。 |
 | `ui.follow_up_behavior` | `queue / steer` | `yes` | `user` | 中局追加提示的路由方式。 |
@@ -700,6 +741,10 @@ Chaos 先读取 `/etc/grok/managed_config.toml`，再读取 `$CHAOS_HOME/managed
 | `fail_closed` | `boolean` | `false` | 当带签名的 requirements 或 version_overrides 无法应用时拒绝启动；默认 false。 |
 | `features.image_edit` | `boolean` | — | 钉住 image_edit 的可用性。仅限 requirements；写进用户文件会被视为无法识别，未设置则沿用远程配置的默认值。 |
 | `ui.disable_bypass_permissions_mode` | `boolean` | — | 锁定「始终批准」为关闭。该锁定仅在 requirements 层生效；写在用户文件或 managed 文件里的 true 会被忽略。 |
+
+诸如 `allow_managed_hooks_only`（见[钩子](10-hooks.md#只允许受管钩子)）以及 MCP 与市场（marketplace）清单（见[插件](09-plugins.md#限制可以运行哪些-mcp-服务器)）这类策略 pin，在 `requirements.toml` 与 `managed_config.toml` 中同样被接受，而且只会收紧。
+
+`[[hooks.<Event>]]` 表在每一份配置文件中都被接受。来自带签名的 requirements 缓存与 root 所有的 `/etc/grok` 文件的钩子会被强制执行；见[钩子](10-hooks.md#强制钩子)。
 
 ## 设置被拒绝时会发生什么
 

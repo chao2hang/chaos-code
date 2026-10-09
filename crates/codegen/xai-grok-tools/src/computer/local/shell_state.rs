@@ -8,17 +8,18 @@
 //! State is transported via extra file descriptors (fd 3 for input, fd 4 for output)
 //! so that dump traffic never pollutes stdout/stderr.
 
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use std::collections::HashMap;
 use std::time::Duration;
 
+use base64::Engine as _;
 use command_fds::FdMapping;
 use nix::libc;
 use tokio::io::AsyncReadExt;
-use tokio::io::unix::AsyncFd;
 
 // ============================================================================
 // Marker constants
@@ -47,6 +48,11 @@ const INIT_TIMEOUT: Duration = Duration::from_secs(15);
 /// reach the prompt then reads as "no dump", and the session silently keeps the
 /// state from before the command.
 pub const DUMP_COLLECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Maximum time to wait for the dump reader task after the child process exits.
+/// Uses a 5s close timeout. If a background process inherits fd 4,
+/// the reader would hang forever without this.
+const DUMP_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Environment overrides applied to every agent terminal / persistent shell spawn.
 /// Prevents color/pager noise in captured output and marks the process as agent-driven.
@@ -207,10 +213,9 @@ impl ShellKind {
         }
     }
 
-    /// Resolved absolute path to the shell binary. Falls back from `$SHELL` →
-    /// `which` → common dirs → `/bin/<name>`. Result is cached process-wide
-    /// in `xai_grok_config::shell::unix_shell_path`. See that function for
-    /// the full cascade. Returns `&'static str`.
+    /// Resolved absolute path to the shell binary. Falls back from `$SHELL` → `which` → common dirs
+    /// → `/bin/<name>`. Result is cached process-wide in `xai_grok_config::shell::unix_shell_path`.
+    /// See that function for the full cascade. Returns `&'static str`.
     pub fn binary_path(&self) -> &'static str {
         let kind = match self {
             Self::Bash => xai_grok_config::shell::UnixShellKind::Bash,
@@ -273,14 +278,14 @@ pub struct ShellState {
 }
 
 impl ShellState {
-    /// Initialize shell state by running an interactive login shell that loads
-    /// the user's rc files, then capturing the resulting environment.
-    ///
-    /// This is the expensive path — only called once (lazily on first command).
+    /// Initialize shell state by running an interactive login shell that loads the user's rc files,
+    /// then capturing the resulting environment. This is the expensive path — only called once
+    /// (lazily on first command).
     pub async fn init(
         shell: ShellKind,
         cwd: &Path,
         shell_env_policy: Option<&crate::util::ShellEnvironmentPolicy>,
+        sandbox_hook: Option<&dyn crate::sandbox_launch::SandboxLaunch>,
     ) -> Result<Self, crate::computer::types::ComputerError> {
         let dump_script = shell.dump_script();
         let dump_fn = shell.dump_function_name();
@@ -294,27 +299,14 @@ impl ShellState {
             ShellKind::Zsh => vec!["-o", "extendedglob", "-ilc", &script],
         };
 
-        // stderr is intentionally discarded (Stdio::null) — we never read it,
-        // and piping it would risk a deadlock if the user's rc files write >64KB
-        // to stderr (fills the pipe buffer, child blocks on write, parent blocks
-        // on stdout read).
+        // stderr is intentionally discarded (Stdio::null) — we never read it, and piping it would
+        // risk a deadlock if the user's rc files write >64KB to stderr (fills the pipe buffer,
+        // child blocks on write, parent blocks on stdout read).
         let mut cmd = tokio::process::Command::new(shell.binary_path());
-        cmd.args(&args)
-            .current_dir(cwd)
-            .stdin(xai_tty_utils::null_stdio())
-            .stdout(Stdio::piped())
-            .stderr(xai_tty_utils::null_stdio())
-            .kill_on_drop(true);
-        crate::util::detach_command(&mut cmd);
-        xai_grok_sandbox::restrict_child_network(&mut cmd);
-        // Apply the policy before the `export -p` snapshot so the replayed state
-        // is already filtered; otherwise the restore would undo it. No-op unless set.
-        //
-        // SECURITY: this filters the base env only. Variables an rc file exports
-        // during login are captured in the replay snapshot and are not
-        // re-filtered by `exclude`/`include_only` on the persistent backend, so
-        // warn when a policy is active. The non-persistent backend has no such
-        // gap (it filters login capture directly).
+        cmd.args(&args).current_dir(cwd);
+        // Apply the policy before the `export -p` snapshot so the replayed state is already filtered; otherwise the restore would undo it. No-op
+        // unless set. SECURITY: this filters the base env only. Variables an rc file exports during login are captured in the replay snapshot and are
+        // not re-filtered by `exclude`/`include_only` on the persistent backend, so warn when a policy is active.
         if shell_env_policy.is_some_and(|p| !p.is_noop()) {
             tracing::warn!(
                 "shell_environment_policy filters the persistent shell's base env only; \
@@ -323,6 +315,9 @@ impl ShellState {
         }
         crate::util::apply_shell_environment_policy(&mut cmd, shell_env_policy);
         cmd.envs(crate::util::pager_env());
+        let call = crate::sandbox_launch::CallId::shell_init("shell-state");
+        crate::sandbox_launch::prepare(sandbox_hook, &mut cmd, &call)?;
+        crate::sandbox_launch::wire_prepared(&mut cmd, xai_tty_utils::null_stdio());
         #[allow(clippy::disallowed_methods)] // one-shot init run, waited on here
         let mut child = cmd.spawn().map_err(|e| {
             crate::computer::types::ComputerError::io(format!(
@@ -372,21 +367,9 @@ impl ShellState {
         }
     }
 
-    /// Build the wrapper command and fd pipe pair for a persistent shell invocation.
-    ///
-    /// Returns `(shell_binary, args, state_in_fd, state_out_fd)` where:
-    /// - `state_in_fd` is a pipe the caller writes the prior snapshot to (fd 3 in the child)
-    /// - `state_out_fd` is a pipe the caller reads the new dump from (fd 4 in the child)
-    ///
-    /// The caller must:
-    /// 1. Write `self.snapshot` to `state_in_fd` then close it
-    /// 2. Spawn the child with the returned args + fd_mappings
-    /// 3. Read `state_out_fd` after the child exits
-    /// 4. Call `parse_dump()` on the result to update state
-    ///
-    /// `cwd_override`: if provided, the child uses this cwd instead of the
-    ///    persistent shell's tracked cwd. Used for per-call `working_directory`
-    ///    overrides from `TerminalRunRequest`.
+    /// Build the wrapper command and fd pipe pair for a persistent shell invocation. `state_in_fd` is a pipe the caller writes the prior snapshot
+    /// to (fd 3 in the child) `state_out_fd` is a pipe the caller reads the new dump from (fd 4 in the child) Write `self.snapshot` to
+    /// `state_in_fd` then close it Spawn the child with the returned args + fd_mappings Read `state_out_fd` after the child exits
     pub fn prepare_command(
         &self,
         user_command: &str,
@@ -410,46 +393,17 @@ impl ShellState {
         // where pipe+fcntl has a small race window).
         set_cloexec(&state_in_write)?;
         set_cloexec(&state_out_read)?;
-        // The child-bound ends (state_in_read, state_out_write) also have
-        // CLOEXEC from os_pipe(). This is fine: fd_mappings uses dup2()
-        // which clears CLOEXEC on the target fd (3/4), so the child keeps
-        // them across exec. The originals are closed on exec by CLOEXEC.
+        // The child-bound ends (state_in_read, state_out_write) also have CLOEXEC from os_pipe().
+        // This is fine: fd_mappings uses dup2() which clears CLOEXEC on the target fd (3/4), so the
+        // child keeps them across exec. The originals are closed on exec by CLOEXEC.
 
-        // The wrapper command:
-        // 1. Read prior snapshot from fd 3, eval it (restores env/funcs/aliases/opts)
-        // 2. Run the user's command (passed as $1)
-        // 3. Dump new state to fd 4
-        // 4. Exit with the user command's exit code
+        // Read prior snapshot from fd 3, eval it (restores env/funcs/aliases/opts) Run the user's
+        // command (passed as $1) Dump new state to fd 4 Exit with the user command's exit code
         let wrapper = match self.shell {
             ShellKind::Bash => format!(
-                // Merge the user command's stderr into its
-                // stdout via `2>&1` so the captured byte stream preserves
-                // chronological write order. Without this, the bash tool's
-                // separate stdout/stderr pipes (each read in lockstep)
-                // emit all-of-stdout-then-all-of-stderr in a single poll
-                // tick, so a command like `echo X 1>&2 && echo Y` shows
-                // up as `Y\nX\n` instead of the chronological `X\nY\n`.
-                // Shell-level diagnostics (eval syntax errors, etc.) still
-                // land on the outer shell's stderr — those are unaffected.
-                // Re-export GROK_AGENT=1 after snapshot eval so agent-definition
-                // selectors (or other values) from prior shells cannot clear the
-                // agent sentinel (process env alone is insufficient).
-                //
-                // Copy $1/$2 into plain variables and clear the positional
-                // parameters (`builtin set --`) BEFORE eval'ing the user
-                // command: `source <script>` with no arguments makes the
-                // sourced script inherit the caller's positional parameters,
-                // so e.g. conda's `bin/activate` (which forwards "$@" to
-                // `conda activate`) would receive the entire wrapped command
-                // string as an environment name. Clearing them matches the
-                // plain `bash -c "<command>"` execution path, where $# is 0.
-                //
-                // The snapshot can restore `allexport` (set -a), which would
-                // auto-export the temp variable — so strip the export
-                // attribute post-assignment (`declare +x`; inline `declare +x
-                // var=value` does NOT beat allexport) and unset it after the
-                // eval so it can never reach child processes or the state
-                // dump (`export -p`).
+                // Merge the user command's stderr into its stdout via `2>&1` so the captured byte stream preserves chronological write order. Shell-level
+                // diagnostics (eval syntax errors, etc.) still land on the outer shell's stderr — those are unaffected. Re-export GROK_AGENT=1 after snapshot
+                // eval so agent-definition selectors (or other values) from prior shells cannot clear the agent sentinel (process env alone is insufficient).
                 "{dump_script} \
                  snap=$(command cat <&3) && builtin shopt -s extglob && builtin eval -- \"$snap\" && \
                  {{ builtin set +u 2>/dev/null || true; \
@@ -461,10 +415,9 @@ impl ShellState {
                  builtin eval \"$__grok_user_cmd\" 2>&1; }}; \
                  COMMAND_EXIT_CODE=$?; builtin unset __grok_user_cmd 2>/dev/null; {dump_fn} >&4; builtin exit $COMMAND_EXIT_CODE"
             ),
-            // After snapshot restore: force nonomatch so login dumps cannot re-arm NOMATCH for model globs.
-            // See the bash wrapper comment for why positional parameters are
-            // cleared before the user-command eval (zsh's `source`/`.` inherits
-            // them identically).
+            // After snapshot restore: force nonomatch so login dumps cannot re-arm NOMATCH for
+            // model globs. See the bash wrapper comment for why positional parameters are cleared
+            // before the user-command eval (zsh's `source`/`.` inherits them identically).
             ShellKind::Zsh => format!(
                 "{dump_script} \
                  snap=$(command cat <&3); \
@@ -562,16 +515,9 @@ pub struct PreparedCommand {
 // Helpers
 // ============================================================================
 
-/// Create an OS pipe, returning `(read_end, write_end)` as `OwnedFd`.
-///
-/// On Linux, uses `nix::unistd::pipe2(O_CLOEXEC)` to atomically set
-/// close-on-exec, eliminating the race window between `pipe()` and
-/// `fcntl(F_SETFD)` where a concurrent `fork()` could leak fds to an
-/// unrelated child.
-///
-/// On macOS, `pipe2` is not exposed by `nix` 0.30 (the kernel added it
-/// in 10.15 but `nix`'s cfg gate hasn't caught up). Falls back to
-/// `pipe()` + `fcntl(FD_CLOEXEC)` with a best-effort race window.
+/// Create an OS pipe, returning `(read_end, write_end)` as `OwnedFd`. On Linux, uses `nix::unistd::pipe2(O_CLOEXEC)` to atomically set
+/// close-on-exec, eliminating the race window between `pipe()` and `fcntl(F_SETFD)` where a concurrent `fork()` could leak fds to an unrelated
+/// child. On macOS, `pipe2` is not exposed by `nix` 0.30 (the kernel added it in 10.15 but `nix`'s cfg gate hasn't caught up).
 fn os_pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     // Linux: atomic O_CLOEXEC via pipe2.
     #[cfg(target_os = "linux")]
@@ -593,11 +539,9 @@ fn os_pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     }
 }
 
-/// Set FD_CLOEXEC on a file descriptor so it is NOT inherited by child processes.
-///
-/// This is critical for pipe fds that should stay parent-only: without CLOEXEC,
-/// the child inherits both ends of a pipe after fork, preventing EOF from being
-/// signaled when the parent closes its end.
+/// Set FD_CLOEXEC on a file descriptor so it is NOT inherited by child processes. This is critical
+/// for pipe fds that should stay parent-only: without CLOEXEC, the child inherits both ends of a
+/// pipe after fork, preventing EOF from being signaled when the parent closes its end.
 fn set_cloexec(fd: &OwnedFd) -> std::io::Result<()> {
     let raw = fd.as_raw_fd();
     let flags = unsafe { libc::fcntl(raw, libc::F_GETFD) };
@@ -608,24 +552,6 @@ fn set_cloexec(fd: &OwnedFd) -> std::io::Result<()> {
     if ret < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok(())
-}
-
-/// Set `O_NONBLOCK` on one end of a pipe.
-///
-/// Only the end passed in is affected: the read and write ends of a pipe are
-/// separate open file descriptions, so making our read end non-blocking leaves
-/// the write end the child shell inherited blocking. That matters, because the
-/// dump is far larger than the 64 KiB pipe buffer and the writing shell relies
-/// on `write` waiting for us to drain it rather than failing short.
-fn set_nonblocking(fd: &OwnedFd) -> std::io::Result<()> {
-    use nix::fcntl::{FcntlArg, OFlag, fcntl};
-
-    // Reading the flags back first keeps any status flag we are not changing. Truncating unknown
-    // bits is safe on the way in: `F_SETFL` only applies the status flags fcntl(2) lists, and
-    // `OFlag` models every one of them, so a bit we dropped was never going to be applied.
-    let flags = OFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFL)?);
-    fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
     Ok(())
 }
 
@@ -643,12 +569,13 @@ fn parse_dump(shell: ShellKind, raw: &str) -> Option<(PathBuf, String)> {
     }
 
     // Strip markers
-    let without_markers = &raw[start_line.len()..raw.len() - end_line.len()];
+    let end = raw.len().checked_sub(end_line.len())?;
+    let without_markers = raw.get(start_line.len()..end)?;
 
     // First line is $PWD
     let newline_pos = without_markers.find('\n')?;
-    let cwd = &without_markers[..newline_pos];
-    let rest = &without_markers[newline_pos..]; // includes the leading \n
+    let cwd = without_markers.get(..newline_pos)?;
+    let rest = without_markers.get(newline_pos..)?; // includes the leading \n
 
     Some((PathBuf::from(cwd), rest.to_string()))
 }
@@ -658,8 +585,210 @@ fn parse_dump(shell: ShellKind, raw: &str) -> Option<(PathBuf, String)> {
 fn parse_after_marker<'a>(output: &'a str, marker: &str) -> &'a str {
     let needle = format!("{marker}\n");
     match output.find(&needle) {
-        Some(idx) => &output[idx + needle.len()..],
+        Some(idx) => output.get(idx + needle.len()..).unwrap_or(""),
         None => output,
+    }
+}
+
+/// The variables `snapshot` exports when it is replayed: its `export -p` (bash) or `typeset -xp`
+/// (zsh) block, decoded and read back. A name exported without a value is left out, and so is
+/// every command this does not read in full: nothing is guessed.
+pub fn snapshot_exports(snapshot: &str) -> Vec<(OsString, OsString)> {
+    let header = "grok_snap_ENV_VARS_B64=$(command base64 -d <<'GROK_SNAP_EOF_ENV_VARS_B64'";
+    let Some(payload) = snapshot.lines().skip_while(|line| *line != header).nth(1) else {
+        return Vec::new();
+    };
+    let Ok(script) = base64::engine::general_purpose::STANDARD.decode(payload.trim()) else {
+        return Vec::new();
+    };
+    shell_commands(&script)
+        .into_iter()
+        .flatten()
+        .flat_map(exported_assignments)
+        .collect()
+}
+
+/// `declare`/`typeset`/`export` assignments among a command's words. Arrays and tied parameters
+/// (`-a`, `-A`, `-T`) are not environment variables.
+fn exported_assignments(words: Vec<Vec<u8>>) -> Vec<(OsString, OsString)> {
+    let Some((verb, args)) = words.split_first() else {
+        return Vec::new();
+    };
+    if !matches!(verb.as_slice(), b"declare" | b"typeset" | b"export") {
+        return Vec::new();
+    }
+    let mut assignments = Vec::new();
+    for arg in args {
+        if arg.first() == Some(&b'-') {
+            if arg.iter().any(|b| matches!(b, b'a' | b'A' | b'T')) {
+                return Vec::new();
+            }
+            continue;
+        }
+        let Some(eq) = arg.iter().position(|&b| b == b'=') else {
+            continue;
+        };
+        let (name, value) = arg.split_at(eq);
+        let is_name = name.split_first().is_some_and(|(first, rest)| {
+            (first.is_ascii_alphabetic() || *first == b'_')
+                && rest.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        });
+        if is_name {
+            assignments.push((
+                OsString::from_vec(name.to_vec()),
+                OsString::from_vec(value.get(1..).unwrap_or_default().to_vec()),
+            ));
+        }
+    }
+    assignments
+}
+
+/// `script` as shell commands (split at unquoted newlines and `;`), each a list of words with
+/// their quoting removed: `'…'`, `"…"`, `$'…'` and a backslash outside quotes. `None` for a
+/// command that needs more than quote removal (an expansion, a subshell, a redirection); an
+/// unterminated quote ends the read.
+fn shell_commands(script: &[u8]) -> Vec<Option<Vec<Vec<u8>>>> {
+    let mut rest = script;
+    let mut commands = Vec::new();
+    let mut words = Some(Vec::new());
+    let mut word: Option<Vec<u8>> = None;
+    while let Some((&byte, tail)) = rest.split_first() {
+        rest = tail;
+        match byte {
+            b' ' | b'\t' => end_word(&mut word, &mut words),
+            b'\n' | b';' => {
+                end_word(&mut word, &mut words);
+                if words.as_ref().is_none_or(|words| !words.is_empty()) {
+                    commands.push(words.replace(Vec::new()));
+                }
+            }
+            b'\\' => {
+                if let Some((&escaped, tail)) = rest.split_first() {
+                    rest = tail;
+                    if escaped != b'\n' {
+                        word.get_or_insert_with(Vec::new).push(escaped);
+                    }
+                }
+            }
+            b'\'' => {
+                let Some(end) = rest.iter().position(|&b| b == b'\'') else {
+                    return commands;
+                };
+                let (quoted, tail) = rest.split_at(end);
+                word.get_or_insert_with(Vec::new).extend_from_slice(quoted);
+                rest = tail.get(1..).unwrap_or_default();
+            }
+            b'"' | b'$' if byte == b'"' || rest.first() == Some(&b'\'') => {
+                let quoted = word.get_or_insert_with(Vec::new);
+                let read = if byte == b'"' {
+                    double_quoted(rest, quoted)
+                } else {
+                    ansi_c_quoted(rest.get(1..).unwrap_or_default(), quoted)
+                };
+                let Some((tail, readable)) = read else {
+                    return commands;
+                };
+                rest = tail;
+                if !readable {
+                    words = None;
+                }
+            }
+            b'$' | b'`' | b'(' | b')' | b'|' | b'&' | b'<' | b'>' => words = None,
+            other => word.get_or_insert_with(Vec::new).push(other),
+        }
+    }
+    end_word(&mut word, &mut words);
+    if words.as_ref().is_none_or(|words| !words.is_empty()) {
+        commands.push(words);
+    }
+    commands
+}
+
+fn end_word(word: &mut Option<Vec<u8>>, words: &mut Option<Vec<Vec<u8>>>) {
+    if let (Some(word), Some(words)) = (word.take(), words.as_mut()) {
+        words.push(word);
+    }
+}
+
+/// The rest of a `"…"` word into `word`: what follows the closing quote (`None` when there is
+/// none) and whether the word is its text alone. A backslash escapes only `$`, `` ` ``, `"`, `\`
+/// and a newline, as in the shell; an unescaped `$` or `` ` `` is an expansion, not text.
+fn double_quoted<'a>(mut rest: &'a [u8], word: &mut Vec<u8>) -> Option<(&'a [u8], bool)> {
+    let mut readable = true;
+    loop {
+        let (&byte, tail) = rest.split_first()?;
+        rest = tail;
+        match byte {
+            b'"' => return Some((rest, readable)),
+            b'\\' => {
+                let (&escaped, tail) = rest.split_first()?;
+                rest = tail;
+                match escaped {
+                    b'$' | b'`' | b'"' | b'\\' => word.push(escaped),
+                    b'\n' => {}
+                    other => word.extend_from_slice(&[b'\\', other]),
+                }
+            }
+            b'$' | b'`' => readable = false,
+            other => word.push(other),
+        }
+    }
+}
+
+/// The rest of a `$'…'` word into `word` with its escapes decoded: what follows the closing quote
+/// (`None` when there is none) and whether every escape was one this decodes. `\u`, `\c` and the
+/// like are not, and leave the command unread rather than wrong.
+fn ansi_c_quoted<'a>(mut rest: &'a [u8], word: &mut Vec<u8>) -> Option<(&'a [u8], bool)> {
+    let mut readable = true;
+    loop {
+        let (&byte, tail) = rest.split_first()?;
+        rest = tail;
+        if byte == b'\'' {
+            return Some((rest, readable));
+        }
+        if byte != b'\\' {
+            word.push(byte);
+            continue;
+        }
+        let (&escaped, tail) = rest.split_first()?;
+        rest = tail;
+        let decoded = match escaped {
+            b'n' => Some(b'\n'),
+            b't' => Some(b'\t'),
+            b'r' => Some(b'\r'),
+            b'a' => Some(0x07),
+            b'b' => Some(0x08),
+            b'e' | b'E' => Some(0x1b),
+            b'f' => Some(0x0c),
+            b'v' => Some(0x0b),
+            b'\\' | b'\'' | b'"' | b'?' => Some(escaped),
+            b'0'..=b'7' | b'x' => {
+                let (radix, lead) = if escaped == b'x' {
+                    (16, String::new())
+                } else {
+                    (8, char::from(escaped).to_string())
+                };
+                let digits = rest
+                    .iter()
+                    .take_while(|b| char::from(**b).is_digit(radix))
+                    .take(2)
+                    .count();
+                let (more, tail) = rest.split_at(digits);
+                rest = tail;
+                let text: String = lead
+                    .chars()
+                    .chain(more.iter().map(|b| char::from(*b)))
+                    .collect();
+                u32::from_str_radix(&text, radix)
+                    .ok()
+                    .and_then(|value| u8::try_from(value).ok())
+            }
+            _ => None,
+        };
+        match decoded {
+            Some(decoded) => word.push(decoded),
+            None => readable = false,
+        }
     }
 }
 
@@ -681,75 +810,65 @@ pub async fn write_snapshot_to_pipe(snapshot: &str, fd: OwnedFd) -> std::io::Res
     .map_err(std::io::Error::other)?
 }
 
-/// Read the dump from the state-out pipe, ending at the END marker or at EOF.
-///
-/// No deadline of its own: the dump is written by the shell as its last act, so
-/// a pipe that has produced nothing only means the command is still running, and
-/// charging the command's own runtime against its dump loses state that was in
-/// fact written. The actor bounds the wait from the moment the child is known to
-/// have exited ([`DUMP_COLLECT_TIMEOUT`]), and the kill paths abort the reader
-/// rather than wait on it, so nothing here can wedge the actor. Aborting reaches
-/// this read because it waits on the reactor rather than on a blocking thread:
-/// cancelling it also closes our end of the pipe.
-///
-/// Terminating on the END marker rather than on EOF is what makes the read work
-/// at all:
-///
-/// When the user's command backgrounds a subprocess (`cmd &`), the bg
-/// shell inherits fd 4 (the dump pipe's write-end) and keeps it open
-/// until *it* exits. The parent shell finishes its dump and exits, but
-/// the kernel doesn't close the read-end's EOF until every write-end
-/// holder closes theirs. Without marker-driven termination we'd block
-/// on `read_to_string` for the entire bg lifetime, which manifests
-/// as `cd` / function / alias state silently failing to persist after
-/// any command that backgrounds something. (See harness scenarios
-/// "State persistence after backgrounded command" and the cd-roundtrip
-/// tests for shell state persistence parity.)
+/// Read the full dump output from the state-out pipe with a timeout. If a background process inherits fd 4, the pipe never closes and the
+/// reader hangs. The timeout (5s close timeout) prevents this from blocking the actor loop forever. On timeout, returns whatever was read so
+/// far (which is typically empty, so marker validation will fail and prior state is kept).
 pub async fn read_dump_from_pipe(fd: OwnedFd) -> std::io::Result<String> {
-    // Registered with the reactor instead of read from a pooled thread: waiting
-    // on a pipe nothing writes to then costs no worker, and a reader that is
-    // given up on has its end of the pipe closed with it, rather than staying
-    // parked there for as long as the command that inherited the write end
-    // happens to live.
-    set_nonblocking(&fd)?;
-    let fd = AsyncFd::new(fd)?;
-    let mut buf = String::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        let mut guard = fd.readable().await?;
-        match guard.try_io(|inner| {
-            nix::unistd::read(inner.get_ref(), &mut chunk).map_err(std::io::Error::from)
-        }) {
-            Ok(Ok(0)) => {
-                // EOF: every write-end holder closed fd 4 (the
-                // expected path when no bg subprocess was spawned).
-                break;
+    // Read until either of the END markers appears, *not* until EOF. When the user's command backgrounds a subprocess (`cmd &`), the bg shell
+    // inherits fd 4 (the dump pipe's write-end) and keeps it open until *it* exits. The parent shell finishes its dump and exits, but the kernel
+    // doesn't close the read-end's EOF until every write-end holder closes theirs.
+    match tokio::time::timeout(
+        DUMP_READ_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
+            std::mem::forget(fd);
+            let mut buf = String::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = file.read(&mut chunk)?;
+                if n == 0 {
+                    // EOF: every write-end holder closed fd 4 (the
+                    // expected path when no bg subprocess was spawned).
+                    break;
+                }
+                let Some(read) = chunk.get(..n) else { break };
+                buf.push_str(&String::from_utf8_lossy(read));
+                // Either marker suffices; we accept whichever shell the
+                // child happens to be (bash vs zsh).
+                if buf.contains(BASH_STATE_END_MARKER) || buf.contains(ZSH_STATE_END_MARKER) {
+                    break;
+                }
             }
-            Ok(Ok(n)) => buf.push_str(&String::from_utf8_lossy(&chunk[..n])),
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Ok(Err(e)) => return Err(e),
-            // A reactor read has to be told there is nothing more to take: the
-            // readiness it handed us only covered the bytes we have just read.
-            // `try_io` takes that back for us when the read says it would block,
-            // so waiting again suspends instead of answering immediately.
-            Err(_would_block) => continue,
-        }
-        // Either marker suffices; we accept whichever shell the
-        // child happens to be (bash vs zsh).
-        if buf.contains(BASH_STATE_END_MARKER) || buf.contains(ZSH_STATE_END_MARKER) {
-            break;
+            drop(file);
+            Ok(buf)
+        }),
+    )
+    .await
+    {
+        Ok(join_result) => join_result.map_err(std::io::Error::other)?,
+        Err(_timeout) => {
+            tracing::warn!(
+                "shell state dump read timed out after {}s (END marker never arrived)",
+                DUMP_READ_TIMEOUT.as_secs()
+            );
+            Ok(String::new())
         }
     }
-    Ok(buf)
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "shell_state_cli_facing_unchanged_tests.rs"]
+mod cli_facing_unchanged_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Stdio;
 
     #[test]
     fn shell_env_overrides_marks_agent_terminal() {
@@ -829,11 +948,9 @@ mod tests {
         assert_eq!(result, output);
     }
 
-    /// Returns true iff a usable bash binary exists at the resolved path.
-    /// Used to gate integration tests so they're skipped (rather than failing)
-    /// on systems where bash isn't installed (e.g. minimal containers).
-    /// On NixOS the resolver returns the nix-store / profile path, so this
-    /// guard works there too.
+    /// Returns true iff a usable bash binary exists at the resolved path. Used to gate integration tests so they're skipped
+    /// (rather than failing) on systems where bash isn't installed (e.g. minimal containers). On NixOS the resolver returns
+    /// the nix-store / profile path, so this guard works there too.
     fn bash_available() -> bool {
         std::path::Path::new(ShellKind::Bash.binary_path()).exists()
     }
@@ -896,6 +1013,87 @@ mod tests {
         assert_eq!(state.snapshot, "old stuff");
     }
 
+    /// A snapshot as the dump script writes one, with `script` as its `export -p` block.
+    fn snapshot_with_exports(script: &str) -> String {
+        let payload = base64::engine::general_purpose::STANDARD.encode(script);
+        format!(
+            "\ngrok_snap_ENV_VARS_B64=$(command base64 -d <<'GROK_SNAP_EOF_ENV_VARS_B64'\n\
+             {payload}\nGROK_SNAP_EOF_ENV_VARS_B64\n)\neval \"$grok_snap_ENV_VARS_B64\"\n"
+        )
+    }
+
+    fn utf8_exports(snapshot: &str) -> Vec<(String, String)> {
+        snapshot_exports(snapshot)
+            .into_iter()
+            .map(|(name, value)| (name.into_string().unwrap(), value.into_string().unwrap()))
+            .collect()
+    }
+
+    /// The exports a snapshot replays read back through the quoting both shells print: bash's
+    /// `declare -x NAME="…"` with its backslash escapes and a multi-line value, zsh's bare,
+    /// `'…'` and `$'…'` words. A name with no value, a tied parameter and a word needing an
+    /// expansion are left out rather than guessed.
+    #[test]
+    fn snapshot_exports_read_back_both_shells_quoting() {
+        let bash = "declare -x PYTHONUSERBASE=\"/opt/py user\"\n\
+                    declare -x ESCAPED=\"a\\\"b\\$c\\\\d\\`e\"\n\
+                    declare -x MULTI=\"one\ntwo\"\n\
+                    declare -x OLDPWD\n\
+                    declare -rx READONLY=\"r\"\n";
+        let zsh = "export XDG_DATA_HOME=/opt/share\n\
+                   export QUOTED='it'\\''s'\n\
+                   export ANSI=$'tab\\there\\041'\n\
+                   typeset -x EMPTY=''\n\
+                   export -T PATHLIKE pathlike=( /a /b )\n\
+                   export EXPANDS=\"$HOME\"\n";
+        let expected: Vec<(String, String)> = [
+            ("PYTHONUSERBASE", "/opt/py user"),
+            ("ESCAPED", "a\"b$c\\d`e"),
+            ("MULTI", "one\ntwo"),
+            ("READONLY", "r"),
+            ("XDG_DATA_HOME", "/opt/share"),
+            ("QUOTED", "it's"),
+            ("ANSI", "tab\there!"),
+            ("EMPTY", ""),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+        assert_eq!(
+            expected,
+            utf8_exports(&snapshot_with_exports(&format!("{bash}{zsh}")))
+        );
+        assert!(snapshot_exports("# no exports block\n").is_empty());
+    }
+
+    /// A real dump from each shell reads back to the value the shell exported, whatever quoting
+    /// the value needs.
+    #[tokio::test]
+    async fn snapshot_exports_read_back_a_real_dump() {
+        let value = "/opt/py user/it's \"q\" $HOME `x` \\ tab\there";
+        let policy = crate::util::ShellEnvironmentPolicy {
+            set: HashMap::from([("PYTHONUSERBASE".to_owned(), value.to_owned())]),
+            ..Default::default()
+        };
+        let cwd = std::env::current_dir().unwrap();
+        for (shell, available) in [
+            (ShellKind::Bash, bash_available()),
+            (ShellKind::Zsh, zsh_available()),
+        ] {
+            if !available {
+                continue;
+            }
+            let state = ShellState::init(shell, &cwd, Some(&policy), None)
+                .await
+                .unwrap();
+            let exports = utf8_exports(&state.snapshot);
+            assert!(
+                exports.contains(&("PYTHONUSERBASE".to_owned(), value.to_owned())),
+                "{shell:?}: {exports:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_init_bash() {
         // Integration test: actually runs bash and captures state.
@@ -904,13 +1102,18 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
         assert!(state.cwd.is_absolute());
         // The snapshot should contain at least some env var exports
         assert!(
             state.snapshot.contains("grok_snap_") || state.snapshot.is_empty(),
             "snapshot should contain encoded blocks or be empty: {:?}",
-            &state.snapshot[..state.snapshot.len().min(200)]
+            state
+                .snapshot
+                .get(..state.snapshot.len().min(200))
+                .unwrap_or(state.snapshot.as_str())
         );
     }
 
@@ -923,7 +1126,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // Run "export GROK_TEST_VAR=hello" and capture the new state
         let prep = state
@@ -972,7 +1177,7 @@ mod tests {
         assert!(
             state.update_from_dump(&dump),
             "dump should have valid markers, got: {:?}",
-            &dump[..dump.len().min(500)]
+            dump.get(..dump.len().min(500)).unwrap_or(dump.as_str())
         );
         // The snapshot contains base64-encoded env vars, so the variable name
         // won't appear in plaintext. Verify the dump was valid and non-empty.
@@ -1231,7 +1436,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // cd to /tmp (macOS resolves to /private/tmp via symlink)
         let (code, _) = run_command(&mut state, "cd /tmp").await;
@@ -1254,7 +1461,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // Export a variable
         let (code, _) = run_command(&mut state, "export MY_TEST_VAR=persistent_value").await;
@@ -1273,7 +1482,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         let (code, _) = run_command(&mut state, "export GPG_TTY=/grok-sentinel-tty").await;
         assert_eq!(code, 0);
@@ -1293,7 +1504,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Zsh, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Zsh, &cwd, None, None)
+            .await
+            .unwrap();
 
         let (code, _) = run_command(&mut state, "export GPG_TTY=/grok-sentinel-tty").await;
         assert_eq!(code, 0);
@@ -1313,7 +1526,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Zsh, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Zsh, &cwd, None, None)
+            .await
+            .unwrap();
 
         let prep = state
             .prepare_command(
@@ -1358,7 +1573,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // Define a function
         let (code, _) = run_command(&mut state, "greet() { echo \"hello $1\"; }").await;
@@ -1370,12 +1587,9 @@ mod tests {
         assert_eq!(stdout.trim(), "hello world");
     }
 
-    /// Regression test: a script sourced WITHOUT arguments by the user command
-    /// must not see the wrapper's positional parameters ($1 = the whole
-    /// command string, $2 = the spawn notice). Conda's `bin/activate` forwards
-    /// "$@" to `conda activate`, so a leak makes every `activate_conda`-
-    /// prefixed command fail with `EnvironmentLocationNotFound: Not a conda
-    /// environment: <cwd>/<the entire command string>`.
+    /// Regression test: a script sourced WITHOUT arguments by the user command must not see the wrapper's positional parameters ($1 = the whole
+    /// command string, $2 = the spawn notice). Conda's `bin/activate` forwards "$@" to `conda activate`, so a leak makes every
+    /// `activate_conda`-prefixed command fail with `EnvironmentLocationNotFound: Not a conda environment: <cwd>/<the entire command string>`.
     #[tokio::test]
     async fn test_sourced_script_does_not_inherit_wrapper_positional_args_bash() {
         if !bash_available() {
@@ -1386,7 +1600,9 @@ mod tests {
         std::fs::write(&probe, "echo \"SOURCED_ARGC=$#\"\n").unwrap();
 
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         let (code, stdout) = run_command(
             &mut state,
@@ -1401,10 +1617,9 @@ mod tests {
         assert!(stdout.contains("AFTER_SOURCE_OK"), "got: {stdout:?}");
     }
 
-    /// Regression test: with `allexport` active (restored from the snapshot
-    /// after the model runs `set -a`), the wrapper's `__grok_user_cmd` temp
-    /// variable must not leak into child-process environments or persist into
-    /// subsequent commands via the state dump.
+    /// Regression test: with `allexport` active (restored from the snapshot after the model runs
+    /// `set -a`), the wrapper's `__grok_user_cmd` temp variable must not leak into child-process
+    /// environments or persist into subsequent commands via the state dump.
     #[tokio::test]
     #[ignore = "flaky on CI: bash allexport + printenv exit 126 under certain CI bash configurations"]
     async fn test_user_cmd_var_not_exported_under_allexport_bash() {
@@ -1412,17 +1627,18 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // Turn on allexport; the option is captured by the dump and replayed
         // into every subsequent command's shell.
         let (code, _) = run_command(&mut state, "set -a").await;
         assert_eq!(code, 0);
 
-        // This command's wrapper assigns __grok_user_cmd under allexport.
-        // printenv only sees exported vars — it must not see the temp var
-        // (neither from this command's own assignment nor re-exported from a
-        // previous command's state dump).
+        // This command's wrapper assigns __grok_user_cmd under allexport. printenv only sees
+        // exported vars — it must not see the temp var (neither from this command's own assignment
+        // nor re-exported from a previous command's state dump).
         let (code, stdout) = run_command(
             &mut state,
             "printenv __grok_user_cmd >/dev/null 2>&1 && echo LEAKED_TO_ENV || echo ENV_CLEAN",
@@ -1447,7 +1663,9 @@ mod tests {
         std::fs::write(&probe, "echo \"SOURCED_ARGC=$#\"\n").unwrap();
 
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Zsh, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Zsh, &cwd, None, None)
+            .await
+            .unwrap();
 
         let (code, stdout) = run_command(
             &mut state,
@@ -1468,7 +1686,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // Define an alias
         let (code, _) = run_command(&mut state, "alias ll='ls -la'").await;
@@ -1495,7 +1715,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         let prep = state.prepare_command("true", None, shadows, None).unwrap();
         // Shadows enabled → the self-resolving find/grep functions are always
@@ -1534,7 +1756,9 @@ mod tests {
             return;
         }
         let cwd = std::env::current_dir().unwrap();
-        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None, None)
+            .await
+            .unwrap();
 
         // Set up some state
         let (_, _) = run_command(&mut state, "export SURVIVE_TEST=yes").await;

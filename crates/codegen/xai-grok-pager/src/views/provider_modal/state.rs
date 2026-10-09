@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 //! Provider modal state — multi-step form for `/provider` subcommands.
 //!
 //! Hub UX (OpenCode-style): bare `/provider` opens a selectable channel list.

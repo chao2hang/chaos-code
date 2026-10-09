@@ -71,7 +71,7 @@
 | 项目 | `<project>/.cursor/hooks.json` | 需要信任 | Cursor 兼容（可配置） |
 | 配置 | `~/.grok/config.toml` | 始终 | 你的钩子与配置的其余部分放在一起 |
 | 配置 | `managed_config.toml`（`$GROK_HOME` 与 `/etc/grok`） | 始终 | 组织分发的钩子（服务器同步与本地设备） |
-| 配置 | `requirements.toml`（用户与系统） | 始终 | requirements 层中组织分发的钩子 |
+| 配置 | `requirements.toml`（`$GROK_HOME` 签名缓存与 `/etc/grok`） | 始终 | requirements 层中组织强制的钩子；见[强制钩子](#强制钩子) |
 | 插件 | 内置于已安装的插件中 | 按插件 | 团队共享钩子 |
 
 配置文件中的钩子位于你的组织已经掌控的那个 TOML 里；格式见[配置文件中的钩子](#配置文件中的钩子)。兼容厂商的钩子源默认会被扫描。要禁用对特定厂商的扫描，在 `~/.grok/config.toml` 里设 `[compat.<vendor>] hooks = false`，或设置对应的环境变量。详见[配置](05-configuration.md#厂商兼容性开关)。
@@ -200,7 +200,7 @@ matcher 也保留原始名称，因此 `Bash` 同时匹配 `Bash` 和 `run_termi
 |------|------|-------------|
 | `~/.chaos/config.toml` | 用户 | 你 |
 | `managed_config.toml` (`$GROK_HOME`, `/etc/grok`) | managed / 系统 | 你的组织 |
-| `requirements.toml`（用户与系统） | requirements.toml 可否设置 | 你的组织 |
+| `requirements.toml`（`$GROK_HOME` 签名缓存与 `/etc/grok`） | requirements.toml 可否设置 | 你的组织 |
 
 这个 TOML 在结构上与 JSON 钩子对象完全一致，因此既有钩子可以直接转写：
 
@@ -228,8 +228,35 @@ timeout = 10
 优先使用内联形式，避免为每个处理器重复 `[[hooks.<Event>.hooks]]` 表头。
 
 - **跨层叠加。** 每一层的钩子都会运行；低优先级层会添加钩子，但从不替换另一层的块。在多个层中以相同方式定义的钩子会被去重，保留权威最高的那份。
-- **来源标签。** 配置钩子出现在 `/hooks` 中并按来源打标签（`managed:`、`requirements/user:`、`user:` 等），你可以看到每个钩子来自哪一层。
+- **来源标签。** 配置钩子出现在 `/hooks` 中并按来源打标签（`managed:`、`requirements/signed:`、`requirements/user:`、`user:` 等），你可以看到每个钩子来自哪一层。
 - **读取时不展开。** `command` 或 `url` 中字面的 `${VAR}` 会原样到达钩子运行器，与 JSON 钩子文件的语义一致；由运行器执行这唯一一次展开。
+
+### 强制钩子
+
+来自你的组织所控制配置层的钩子是被强制执行的：它们在 `/hooks` 中带 `[policy]` 徽标，`Space` 拒绝禁用它们，`~/.chaos/disabled-hooks` 里的条目不会跳过它们，且其来源不可移除。符合条件的有两层：
+
+- 根属主系统文件 `/etc/grok/requirements.toml` 与 `/etc/grok/managed_config.toml`（`requirements/system:` 与 `system_managed:` 名称）。
+- 部署同步写入的 `~/.chaos/requirements.toml`，只要其字节与服务器下发的签名策略一致（`requirements/signed:` 名称）。若该文件被编辑，或其签名文件缺失或不可读，其钩子会按你自己的钩子加载（`requirements/user:` 名称），可以再次被禁用；不可读的 `requirements.toml` 不贡献任何钩子。需要该文件保持完好的组织可在同一份 requirements 里设置 `fail_closed = true`：被编辑的副本或缺失的签名会拒绝启动（不可读的文件是读错误，仍会启动）。见[配置](26-config-reference.md#requirementstoml)。
+
+`~/.chaos/managed_config.toml` 与 `~/.chaos/config.toml` 中的钩子只是分发而非强制：你可以禁用它们。
+
+### 只允许受管钩子
+
+组织可以把一台机器限制到只运行它强制执行的钩子：
+
+```toml
+# /etc/grok/requirements.toml
+allow_managed_hooks_only = true
+```
+
+设置后：
+
+- **会运行的。** 只有[强制钩子](#强制钩子)：来自根属主的 `/etc/grok/requirements.toml` 与 `/etc/grok/managed_config.toml` 的那些，以及同步的 `~/.chaos/requirements.toml` 在与其签名一致时的那些。被编辑的同步文件会按你自己的钩子加载，这个 pin 会跳过它们。
+- **被跳过的。** 其余所有钩子，在分发时：`~/.chaos/hooks`、每个 `~/.chaos/*.toml` 文件、项目钩子、插件钩子、代理 frontmatter 钩子，以及 Claude 与 Cursor 兼容文件。在 `/hooks` 中它们显示 `[disabled]`，启用会被拒绝（提示 "Hooks outside managed policy are disabled by your organization."）；`chaos inspect` 会指名设置该 pin 的文件。
+- **仍会运行的。** 嵌入客户端经 ACP 注册的钩子（IDE 或桌面应用），与 Claude Code 的 `allowManagedHooksOnly` 之下相同。pager 的 `[[ui.notifications.hooks]]` 命令是另一套机制。
+- **Windows。** 没有根属主层（没有 `/etc/grok`），所以只有签名的同步 `requirements.toml` 钩子与 ACP 客户端钩子仍会运行。
+
+该键是一个只收紧的策略 pin：任何原生策略层（`$GROK_HOME` 或 `/etc/grok` 里的 `requirements.toml` 或 `managed_config.toml`，或 macOS MDM）以及 Claude 的 `managed-settings.json` 都可以设置它，驼峰的 `allowManagedHooksOnly` 到处都被接受，没有任何层能解除它，非布尔值也会启用它。与其他策略 pin 一样，它在启动时只读取一次，所以会话中途添加的 pin 在下一次启动才生效，而不是在 `/hooks` Reload 时。`chaos inspect` 在 **Enforced by policy**（由策略强制执行）下列出它，显示为 "Hooks outside managed policy disabled"，并指名设置它的文件。
 
 ---
 
@@ -374,14 +401,14 @@ timeout = 10
 - 会话退出时仍在排队中的报告：收尾会等待排队中的回合结束钩子半秒，然后丢弃剩余并中止仍在运行的钩子。
 - 已完成、已运行其 `Stop`、之后才写入磁盘失败的回合：它已报告 `Stop`，因此不再跟 `StopFailure`。失败仍会显示在会话中。
 
-`StopCancelled`'s input carries:
+`StopCancelled` 的输入携带：
 
-- `reason`: the classified cause, and the value the matcher tests. `user_interrupt` (Ctrl+C, a client stop button, or a client `session/cancel`), `permission_rejected` (you declined a tool call), `permission_cancelled` (you dismissed the prompt), `max_turns`, `no_progress` (the agent bailed out after repeated no-op rounds), or `unknown` (a cancel the runtime could not classify, and the forward-compatible fallback). The matcher tests this field only, so a hook that wants every user-initiated stop matches the reasons it cares about and reads `cancelledBy` from the payload. New reasons may be added over time, so treat an unrecognized value the way you treat `unknown`.
-- `cancelledBy`: `user` for an interrupt, a declined tool call, or a dismissed prompt; `runtime` for everything the agent decided itself, such as `max_turns` and `no_progress`; `unknown` when `reason` is `unknown`, because a cancel the runtime could not classify cannot claim the user was uninvolved. Derived from `reason`, so a new reason classifies automatically. Values may be added here too: treat one you do not recognize the way you treat `unknown`, rather than assuming anything that is not `user` was the runtime.
-- `cancelTrigger`: the gesture, when the client named one, clipped at 64 characters, since a gesture name is a token. The bundled pager sends one of three: `ctrl_c`, `mouse` (the on-screen stop button), or `dashboard_stop`. It never sends `esc` (Esc does not cancel a turn). Another client may send any string, including `esc`, and it is passed through verbatim. Every value here classifies as `user_interrupt`, including one that happens to spell an internal name such as `shutdown`, because a client asking to cancel is the user asking; read `cancelledBy` from the payload rather than parsing this string. Omitted for a bare `session/cancel` and for every runtime-initiated reason.
-- `reasonDetails`: the same kind of detail `StopFailure` puts in `errorDetails`, when the runtime has one. For a declined tool call it is `<tool>: <why>`. Clipped at 1000 characters, like `StopFailure`'s `errorDetails`.
-- `lastAssistantMessage`: whatever the turn had committed to the conversation at the interrupt, if any. A Ctrl+C during the final answer leaves the last committed text, or nothing if the turn never committed any. Clipped like the same field on `Stop` and `StopFailure`.
-- `subagentType`: the subagent's type when the turn ran inside one, so a hook can tell a nested agent's stop from the session's. Absent in the main session.
+- `reason`：分类后的原因，也是 matcher 测试的值。`user_interrupt`（Ctrl+C、客户端停止按钮、或客户端 `session/cancel`）、`permission_rejected`（你拒绝了工具调用）、`permission_cancelled`（你关掉了提示）、`max_turns`、`no_progress`（agent 在连续无进展回合后自行退出）、或 `unknown`（runtime 无法分类的取消，兼作前向兼容的兜底值）。matcher 只测试这个字段，所以想覆盖所有用户发起的停止的钩子，匹配它关心的 reason 即可，并从载荷里读 `cancelledBy`。将来可能新增 reason，请把不认识的取值按 `unknown` 对待。
+- `cancelledBy`：中断、被拒绝的工具调用或被关闭的提示是 `user`；agent 自己决定的一切（如 `max_turns`、`no_progress`）是 `runtime`；`reason` 为 `unknown` 时是 `unknown`——runtime 无法分类的取消不能断言用户没有参与。它由 `reason` 导出，所以新 reason 会自动归类。这里的取值也可能增加：把不认识的取值按 `unknown` 对待，而不要假定一切非 `user` 的都出自 runtime。
+- `cancelTrigger`：客户端指名的手势，截断到 64 字符——手势名是一个 token。随附的 pager 只发三者之一：`ctrl_c`、`mouse`（屏幕上的停止按钮）或 `dashboard_stop`。它从不发 `esc`（Esc 不会取消回合）。其它客户端可以发任意字符串（包括 `esc`），会被原样透传。这里的所有取值都归类为 `user_interrupt`，包括恰好拼成 `shutdown` 这类内部名字的值——客户端请求取消就是用户在请求；请从载荷读 `cancelledBy`，而不是解析这个字符串。裸 `session/cancel` 与所有 runtime 发起的 reason 都省略它。
+- `reasonDetails`：与 `StopFailure` 放进 `errorDetails` 的那类细节相同（runtime 有的话）。被拒绝的工具调用形如 `<tool>: <why>`，截断到 1000 字符，与 `StopFailure` 的 `errorDetails` 一致。
+- `lastAssistantMessage`：中断时刻该回合已写入对话的内容（若有的话）。Ctrl+C 落在最终回答中间，就留下最后一次已写入的文本；回合从未写入过任何内容，则为空。截断方式与 `Stop`、`StopFailure` 上的同名字段相同。
+- `subagentType`：回合运行在子代理内部时，该子代理的类型，让钩子能区分嵌套代理的停止与会话的停止。主会话中缺失。
 
 信封上的 `timestamp` 是在钩子分发时打上的，而不是回合结束的时刻。三个回合结束事件排在同一个 worker 后面，因此等待前方慢钩子的报告携带的时间戳晚于它所描述的时刻。用 `promptId` 关联，不要用时钟。
 

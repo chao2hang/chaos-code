@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 //! Provider modal rendering.
 //!
 //! Visual chrome matches the rest of the pager modals (settings / pickers):

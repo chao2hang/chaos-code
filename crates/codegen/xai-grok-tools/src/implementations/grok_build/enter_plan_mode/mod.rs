@@ -49,10 +49,8 @@ pub struct EnterPlanModeInput {
     pub note: Option<String>,
 }
 
-/// `EnterPlanMode` tool: signals plan mode entry and seeds the session plan
-/// file, returning a [`PlanFileSeedStatus`].
-///
-/// Params: `()` — no per-tool configuration.
+/// `EnterPlanMode` tool: signals plan mode entry and seeds the session plan file, returning a
+/// [`PlanFileSeedStatus`]. Params: `()` — no per-tool configuration.
 #[derive(Debug, Default)]
 pub struct EnterPlanModeTool;
 
@@ -190,10 +188,9 @@ impl xai_tool_runtime::Tool for EnterPlanModeTool {
     }
 }
 
-/// Probe the plan file; create an empty one only on not-found.
-///
-/// Never truncates existing content. Non-NotFound read errors fail closed as
-/// [`PlanFileSeedStatus::Missing`] without calling `write_file`.
+/// Probe the plan file; create an empty one only on not-found. Never truncates existing content.
+/// Non-NotFound read errors fail closed as [`PlanFileSeedStatus::Missing`] without calling
+/// `write_file`.
 async fn probe_or_create_empty_plan_file(
     fs: &dyn AsyncFileSystem,
     path: &Path,

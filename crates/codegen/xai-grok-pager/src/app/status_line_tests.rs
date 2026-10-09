@@ -530,9 +530,9 @@ fn section<'a>(guide: &'a str, heading: &str) -> &'a str {
         .find_map(|(english, translated)| (*english == heading).then_some(*translated))
         .unwrap_or(heading);
     let start = guide.find(heading).expect("the guide has this section");
-    let rest = &guide[start + heading.len()..];
+    let rest = guide.get(start + heading.len()..).unwrap_or("");
     match rest.find("\n## ") {
-        Some(end) => &rest[..end],
+        Some(end) => rest.get(..end).unwrap_or(rest),
         None => rest,
     }
 }

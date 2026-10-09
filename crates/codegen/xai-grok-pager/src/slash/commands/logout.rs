@@ -3,7 +3,8 @@
 //! Not registered in `builtin_commands()`. Clearing credentials is done by
 //! editing `config.toml` / env keys, not browser logout.
 
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
+use crate::slash::command::{AppCtx, CommandExecCtx, CommandResult, SlashCommand, slash_meta};
+use xai_grok_config::{Capability, Distribution};
 
 pub struct LogoutCommand;
 
@@ -12,6 +13,11 @@ impl SlashCommand for LogoutCommand {
         name: "logout",
         description: "Chaos 无需退出登录；请修改 config.toml 中的 Provider 配置",
         usage: "/logout",
+    }
+
+    /// Not offered where the build has no account; the router refuses a typed one.
+    fn visible(&self, _ctx: &AppCtx) -> bool {
+        Distribution::current().allows(Capability::AccountLogin)
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

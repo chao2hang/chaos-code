@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 //! Provider modal keyboard input handling.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};

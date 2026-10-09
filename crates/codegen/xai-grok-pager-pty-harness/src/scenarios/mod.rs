@@ -21,8 +21,21 @@ pub mod scroll_stress;
 pub mod streaming_render;
 pub mod x10_mouse_leak;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    ValueEnum,
+    Serialize,
+    Deserialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum Scenario {
     /// Inject rapid `j` keys against a large pre-rendered response.
     ScrollStress,
@@ -39,17 +52,7 @@ pub enum Scenario {
 }
 
 impl Scenario {
-    /// Every scenario, in dispatch order.
-    pub const ALL: &'static [Scenario] = &[
-        Scenario::ScrollStress,
-        Scenario::StreamingRender,
-        Scenario::ResizeStorm,
-        Scenario::LargeCodeblock,
-        Scenario::IdleCost,
-        Scenario::MixedInteraction,
-    ];
-
-    /// Stable slug used in JSON output and baseline files.
+    /// Stable identifier used in bench logs and result tables.
     pub fn as_str(self) -> &'static str {
         match self {
             Scenario::ScrollStress => "scroll_stress",
@@ -60,6 +63,16 @@ impl Scenario {
             Scenario::MixedInteraction => "mixed_interaction",
         }
     }
+
+    /// Every scenario, in dispatch order.
+    pub const ALL: &'static [Scenario] = &[
+        Scenario::ScrollStress,
+        Scenario::StreamingRender,
+        Scenario::ResizeStorm,
+        Scenario::LargeCodeblock,
+        Scenario::IdleCost,
+        Scenario::MixedInteraction,
+    ];
 
     /// Dispatch to the scenario implementation.
     pub async fn run(

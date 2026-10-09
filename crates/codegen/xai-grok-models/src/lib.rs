@@ -10,6 +10,8 @@
 //! At runtime each model is resolved via:
 //!   CLI flag > ENV var > config.toml > remote settings > these defaults
 
+#![deny(clippy::indexing_slicing)]
+
 use std::sync::LazyLock;
 
 /// The raw JSON, embedded at compile time.

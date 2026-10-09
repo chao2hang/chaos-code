@@ -1,3 +1,4 @@
+//! 按键所有权（KeyOwner）：定义不同界面焦点区域（输入框、滚动回溯、问答面板）的按键路由与焦点状态转移。
 //! Who the keyboard reaches, and what `Esc` means once it gets there.
 
 use super::{AgentPane, AgentView};
@@ -36,7 +37,6 @@ impl BlockingCard {
 }
 
 /// Who the keyboard reaches, in the order [`AgentView::handle_input`] asks for it.
-///
 /// The fullscreen takeovers ahead of these (the subagent view, the media viewers, `/gboom`, and the modal stack) answer for themselves.
 /// They draw their own chrome, so they are not ranked here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +54,6 @@ pub(crate) enum KeyOwner {
 }
 
 /// What `Esc` does on the focused card right now, one rung at a time: clear whatever the card has pending, then leave it.
-///
 /// Every hint that names `Esc` on a card reads this, and every handler that owns the key dispatches on it ([`AgentView::handle_card_esc`]).
 /// The bar therefore cannot promise a rung the key does not take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,10 +62,6 @@ pub(crate) enum EscStep {
     DismissFileSearch,
     /// Leave the card's text input for its rows (question free-text answer, permission followup message).
     LeaveTextInput,
-    /// Close the bare `/feedback` pane, which has no rows to leave the input for.
-    DismissFeedbackPane,
-    /// Skip the `/feedback` trace question (the report still sends).
-    SkipFeedbackTrace,
     /// Throw away an in-progress always-allow pattern edit.
     DiscardPatternEdit,
     /// Unmark this question's answer.
@@ -86,8 +81,6 @@ impl EscStep {
         match self {
             Self::DismissFileSearch => "关闭",
             Self::LeaveTextInput => "返回",
-            Self::DismissFeedbackPane => "关闭",
-            Self::SkipFeedbackTrace => "跳过",
             Self::DiscardPatternEdit => "取消",
             Self::ClearSelection => "取消选择",
             Self::BackOutOverlay => "仪表盘",
@@ -113,6 +106,14 @@ impl AgentView {
         } else {
             None
         }
+    }
+
+    /// Whether the running tool waits on a card only the user can answer. The cancel-turn confirm does not count.
+    pub(crate) fn is_awaiting_user_answer(&self) -> bool {
+        matches!(
+            self.blocking_card(),
+            Some(BlockingCard::Permission | BlockingCard::Question | BlockingCard::McpElicitation)
+        )
     }
 
     pub(crate) fn key_owner(&self) -> KeyOwner {
@@ -149,9 +150,7 @@ impl AgentView {
 
     /// A card that is still drawn and still waiting, with the keyboard handed to the scrollback so the context behind it can be read.
     /// The keyboard would come back to this card.
-    ///
     /// Asked through the same ranking as [`Self::key_owner`], because the scrollback's focus hint names where `Tab` goes.
-    /// A card the plan approval outranks is not the route back, and naming it would be the exact mismatch this ordering exists to prevent.
     pub(crate) fn parked_card(&self) -> Option<BlockingCard> {
         if self.active_pane != AgentPane::Scrollback {
             return None;
@@ -189,17 +188,9 @@ impl AgentView {
                 if qv.focus == QuestionFocus::InputMode {
                     if self.prompt.file_search_visible() {
                         EscStep::DismissFileSearch
-                    } else if qv.is_feedback() {
-                        EscStep::DismissFeedbackPane
                     } else {
                         EscStep::LeaveTextInput
                     }
-                } else if qv.is_feedback_trace() {
-                    // The trace question defaults to a selection, so the generic ladder would read Esc as unselect
-                    EscStep::SkipFeedbackTrace
-                } else if qv.is_feedback_report() {
-                    // Safety net: the report stage stays in InputMode by design, so this arm only fires if that ever changes
-                    EscStep::DismissFeedbackPane
                 } else if qv.active_tab_has_selection() {
                     EscStep::ClearSelection
                 } else if self.in_dashboard_overlay && qv.active_tab == 0 {
@@ -241,9 +232,6 @@ impl AgentView {
                     self.commit_question_freeform();
                 }
             }
-            EscStep::DismissFeedbackPane | EscStep::SkipFeedbackTrace => {
-                return self.submit_question_answers(true);
-            }
             EscStep::DiscardPatternEdit => {
                 self.permission_pattern_edit = None;
                 self.permission_back_to_options();
@@ -277,7 +265,6 @@ impl AgentView {
     }
 
     /// Hand the keyboard to the scrollback with the card still drawn.
-    ///
     /// Forced past the queued-prompt edit lock: opening a card stashes the composer and blanks it without leaving `EditingQueued`.
     /// An unforced switch would read the blank as a dirty edit and answer the card's only keyboard exit with a "press Enter to save" toast.
     pub(crate) fn park_focused_card(&mut self) {

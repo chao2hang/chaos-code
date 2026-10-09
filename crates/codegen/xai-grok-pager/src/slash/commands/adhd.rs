@@ -98,6 +98,7 @@ pub fn load_adhd_enabled_from(config: &std::path::Path) -> bool {
 }
 
 /// Set `[adhd].enabled` in `config`, leaving every other key untouched.
+#[allow(clippy::indexing_slicing)]
 fn persist_adhd_enabled_in(config: &std::path::Path, enabled: bool) -> std::io::Result<()> {
     if let Some(parent) = config.parent() {
         std::fs::create_dir_all(parent)?;

@@ -112,3 +112,7 @@ chaos
 - 仓库根 [CHAOS.md](../../../../../CHAOS.md) — 构建、模型配置、Token 统计、动态上下文裁剪
 - [Custom Models](11-custom-models.md) — BYOK / 兼容端点（若仍写 Grok 登录，以本文与 CHAOS.md 为准）
 - [Configuration](05-configuration.md) — `config.toml` 其他项
+
+密钥文件（配置根下的 `auth.json`，即 `~/.chaos/auth.json`；兼容读取的
+`~/.grok/auth.json` 同样生效）的改动会被自动察觉：在外部更新它（例如用脚本
+写入新令牌）之后，下一次 API 调用即使用新凭证，无需重启。

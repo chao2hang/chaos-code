@@ -24,10 +24,8 @@ use zip::ZipArchive;
 /// against zip bombs (the compressed input is already capped by the caller).
 const MAX_XML_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Extract plain text from PPTX bytes.
-///
-/// Returns the concatenated slide texts, or an error string suitable for
-/// `ReadFileOutput::FileReadError`.
+/// Extract plain text from PPTX bytes. Returns the concatenated slide texts, or an error string
+/// suitable for `ReadFileOutput::FileReadError`.
 pub(crate) fn extract_pptx_text_from_bytes(bytes: &[u8]) -> Result<String, String> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| format!("Failed to open PPTX archive: {e}"))?;

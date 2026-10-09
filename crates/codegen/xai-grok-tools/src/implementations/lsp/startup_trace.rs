@@ -82,7 +82,9 @@ impl StartupTrace {
         let mut kept = lock(&self.0.preview);
         let room = MAX_PREVIEW_BYTES.saturating_sub(kept.len());
         let take = room.min(bytes.len());
-        kept.extend_from_slice(&bytes[..take]);
+        if let Some(slice) = bytes.get(..take) {
+            kept.extend_from_slice(slice);
+        }
         if kept.len() >= MAX_PREVIEW_BYTES {
             self.0.quiet.store(true, Ordering::Relaxed);
         }
@@ -114,7 +116,10 @@ impl<R: AsyncRead + Unpin> AsyncRead for TraceReader<R> {
         let this = self.get_mut();
         let before = buf.filled().len();
         let ready = Pin::new(&mut this.inner).poll_read(cx, buf);
-        this.trace.record_read(&buf.filled()[before..]);
+        let filled = buf.filled();
+        if let Some(read_bytes) = filled.get(before..) {
+            this.trace.record_read(read_bytes);
+        }
         ready
     }
 }

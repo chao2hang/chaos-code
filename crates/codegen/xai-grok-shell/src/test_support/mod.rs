@@ -26,7 +26,6 @@ fn redirect_unified_log_for_tests() {
 
 /// Prepend the hermetic git binary (via `GIT_BIN_PATH`) to `PATH`.
 /// `Command::new("git")` in test helpers then resolves to the Bazel-provided static binary instead of system-installed git.
-///
 /// Safe to call multiple times; only the first call mutates `PATH`.
 pub(crate) fn ensure_hermetic_git_on_path() {
     use std::path::PathBuf;

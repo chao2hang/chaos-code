@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::fs::File;
@@ -42,12 +43,12 @@ const COMPLETED_TASK_TTL: Duration = Duration::from_secs(300);
 /// SIGTERM → SIGKILL grace period.
 const SIGTERM_GRACE: Duration = Duration::from_secs(1);
 /// Max background task lifetime; 10 hours to support long monitor and bash runs.
-const BACKGROUND_MAX_RUNTIME: Duration = Duration::from_secs(36_000);
+pub(crate) const BACKGROUND_MAX_RUNTIME: Duration = Duration::from_secs(36_000);
 /// Max time an auto-backgroundable foreground command blocks the turn before it is
 /// backgrounded (never killed), independent of `timeout`. Env: `GROK_FOREGROUND_BLOCK_BUDGET_MS`.
-const FOREGROUND_BLOCK_BUDGET: Duration = Duration::from_secs(15);
+pub(crate) const FOREGROUND_BLOCK_BUDGET: Duration = Duration::from_secs(15);
 
-fn foreground_block_budget_from_env() -> Duration {
+pub fn foreground_block_budget_from_env() -> Duration {
     std::env::var("GROK_FOREGROUND_BLOCK_BUDGET_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
@@ -235,6 +236,7 @@ enum TerminalCommand {
     },
 
     ListTasks {
+        include_output: bool,
         reply: oneshot::Sender<Vec<TaskSnapshot>>,
     },
 
@@ -398,7 +400,7 @@ impl ProcessState {
                 .nth(half)
                 .map(|(i, _)| i)
                 .unwrap_or(s.len());
-            self.front_buffer = Some(s[..front_end].as_bytes().to_vec());
+            self.front_buffer = Some(s.get(..front_end).unwrap_or("").as_bytes().to_vec());
         }
 
         let tail_start_char = char_count.saturating_sub(half);
@@ -407,7 +409,7 @@ impl ProcessState {
             .nth(tail_start_char)
             .map(|(i, _)| i)
             .unwrap_or(s.len());
-        self.output_buffer = s[tail_start_byte..].as_bytes().to_vec();
+        self.output_buffer = s.get(tail_start_byte..).unwrap_or("").as_bytes().to_vec();
         self.truncated = true;
     }
 
@@ -428,6 +430,10 @@ impl ProcessState {
 
     fn is_complete(&self) -> bool {
         self.lifecycle.is_complete()
+    }
+
+    fn is_running(&self) -> bool {
+        !self.lifecycle.has_exited() && !self.draining
     }
 
     /// The output is not final until `finish_output`.
@@ -470,6 +476,39 @@ impl ProcessState {
             output_file: self.output_file.clone(),
             truncated: self.truncated || short_of_full_log,
             output_total_bytes: self.total_bytes,
+            exit_code: self.lifecycle.exit_status().and_then(|s| s.exit_code),
+            signal: self.lifecycle.exit_status().and_then(|s| s.signal.clone()),
+            completed: self.is_complete(),
+            block_waited: self.block_waited,
+            explicitly_killed: self.explicitly_killed,
+            kill_result_delivered: self.kill_result_delivered,
+            kind: self.kind,
+            owner_session_id: self.owner_session_id.clone(),
+            description: self.description.clone(),
+            is_backgrounded: self.bg_status.is_backgrounded(),
+        }
+    }
+
+    /// Metadata-only row: no log reads, empty stdout.
+    fn to_task_snapshot_metadata(&self, task_id: &str) -> TaskSnapshot {
+        TaskSnapshot {
+            task_id: task_id.to_string(),
+            command: self.command.clone(),
+            display_command: self.display_command.clone(),
+            cwd: self.cwd.clone(),
+            start_time: self.start_wall_time,
+            end_time: if self.lifecycle.has_exited() {
+                Some(
+                    self.end_wall_time
+                        .unwrap_or_else(std::time::SystemTime::now),
+                )
+            } else {
+                None
+            },
+            output: String::new(),
+            output_file: self.output_file.clone(),
+            truncated: false,
+            output_total_bytes: 0,
             exit_code: self.lifecycle.exit_status().and_then(|s| s.exit_code),
             signal: self.lifecycle.exit_status().and_then(|s| s.signal.clone()),
             completed: self.is_complete(),
@@ -561,6 +600,10 @@ struct LocalTerminalActor {
     /// Baked in at construction; `None` inherits the full environment.
     shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
 
+    /// The daemon's per-command sandbox hook; `None` runs every command unwrapped. Baked in at
+    /// construction like the env policy, so a shared backend cannot be re-pointed by a session.
+    sandbox_launch: Option<Arc<dyn crate::sandbox_launch::SandboxLaunch>>,
+
     /// Lazily initialized on first command when `persistent_shell` is true.
     #[cfg(unix)]
     shell_state: Option<shell_state::ShellState>,
@@ -586,6 +629,7 @@ impl LocalTerminalActor {
         scope: crate::util::ProcessScope,
         session_scope: Option<crate::util::ProcessScope>,
         shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
+        sandbox_launch: Option<Arc<dyn crate::sandbox_launch::SandboxLaunch>>,
     ) -> Self {
         let ActorSettings {
             completed_task_ttl,
@@ -602,6 +646,7 @@ impl LocalTerminalActor {
             scope,
             session_scope,
             shell_env_policy,
+            sandbox_launch,
             processes: HashMap::new(),
             child_exit: ChildExitWake::new(),
             completion_waiters: HashMap::new(),
@@ -624,26 +669,35 @@ impl LocalTerminalActor {
         }
     }
 
+    fn sandbox_hook(&self) -> Option<&dyn crate::sandbox_launch::SandboxLaunch> {
+        self.sandbox_launch.as_deref()
+    }
+
     async fn spawn_command(
         &mut self,
         command: &str,
         cwd: &std::path::Path,
         env: &HashMap<String, String>,
+        tool_call_id: &str,
     ) -> Result<SpawnResult, ComputerError> {
         #[cfg(unix)]
         if self.persistent_shell {
-            return self.spawn_persistent_command(command, cwd, env).await;
+            return self
+                .spawn_persistent_command(command, cwd, env, tool_call_id)
+                .await;
         }
 
         #[cfg(unix)]
         if self.login_shell_capture && login_env_capture_enabled() {
             self.ensure_static_shell_initialized(cwd).await;
-            return self.spawn_static_command(command, cwd, env).await;
+            return self
+                .spawn_static_command(command, cwd, env, tool_call_id)
+                .await;
         }
 
         #[cfg(unix)]
         if self.login_env.is_none() {
-            self.login_env = Some(capture_login_env().await);
+            self.login_env = Some(capture_login_env(self.sandbox_hook()).await);
         }
 
         #[cfg(unix)]
@@ -658,6 +712,10 @@ impl LocalTerminalActor {
             login_env,
             self.search_shadows,
             self.shell_env_policy.as_ref(),
+            SpawnSandbox {
+                hook: self.sandbox_hook(),
+                tool_call_id,
+            },
         )?;
         Ok(SpawnResult {
             child,
@@ -671,17 +729,18 @@ impl LocalTerminalActor {
         if self.static_shell.is_some() && self.login_env.is_some() {
             return;
         }
+        let hook = self.sandbox_hook();
         let (snapshot, login_env) = tokio::join!(
             async {
                 if self.static_shell.is_none() {
-                    Some(super::static_shell::StaticShellSnapshot::init(cwd).await)
+                    Some(super::static_shell::StaticShellSnapshot::init(cwd, hook).await)
                 } else {
                     None
                 }
             },
             async {
                 if self.login_env.is_none() {
-                    Some(capture_login_env().await)
+                    Some(capture_login_env(hook).await)
                 } else {
                     None
                 }
@@ -701,6 +760,7 @@ impl LocalTerminalActor {
         command: &str,
         cwd: &std::path::Path,
         env: &HashMap<String, String>,
+        tool_call_id: &str,
     ) -> Result<SpawnResult, ComputerError> {
         use command_fds::CommandFdExt;
 
@@ -710,12 +770,7 @@ impl LocalTerminalActor {
             .map_err(|e| ComputerError::io(format!("prepare static command: {e}")))?;
 
         let mut cmd = tokio::process::Command::new(&prep.binary);
-        cmd.args(&prep.args)
-            .current_dir(cwd)
-            .stdin(xai_tty_utils::null_stdio())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        cmd.args(&prep.args).current_dir(cwd);
 
         apply_child_env(
             &mut cmd,
@@ -724,14 +779,14 @@ impl LocalTerminalActor {
             env,
         );
 
+        crate::sandbox_launch::prepare(
+            self.sandbox_hook(),
+            &mut cmd,
+            &crate::sandbox_launch::CallId::tool(tool_call_id),
+        )?;
         cmd.fd_mappings(prep.fd_mappings)
             .map_err(|e| ComputerError::io(format!("fd mapping: {e}")))?;
-
-        unsafe {
-            cmd.pre_exec(xai_tty_utils::detach_pre_exec_hook());
-        }
-
-        xai_grok_sandbox::restrict_child_network(&mut cmd);
+        crate::sandbox_launch::wire_prepared(&mut cmd, Stdio::piped());
 
         #[allow(clippy::disallowed_methods)] // attached to a process group below
         let child = cmd.spawn().map_err(|e| {
@@ -767,7 +822,14 @@ impl LocalTerminalActor {
             return;
         }
         let shell = shell_state::ShellKind::detect();
-        match shell_state::ShellState::init(shell, cwd, self.shell_env_policy.as_ref()).await {
+        match shell_state::ShellState::init(
+            shell,
+            cwd,
+            self.shell_env_policy.as_ref(),
+            self.sandbox_hook(),
+        )
+        .await
+        {
             Ok(state) => self.shell_state = Some(state),
             Err(e) => {
                 tracing::warn!("persistent shell init failed, using empty state: {e}");
@@ -788,6 +850,7 @@ impl LocalTerminalActor {
         command: &str,
         cwd: &std::path::Path,
         env: &HashMap<String, String>,
+        tool_call_id: &str,
     ) -> Result<SpawnResult, ComputerError> {
         use command_fds::CommandFdExt;
 
@@ -829,25 +892,21 @@ impl LocalTerminalActor {
             .map_err(|e| ComputerError::io(format!("prepare persistent command: {e}")))?;
 
         let mut cmd = tokio::process::Command::new(&prep.binary);
-        cmd.args(&prep.args)
-            .current_dir(&prep.cwd)
-            .stdin(xai_tty_utils::null_stdio())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        cmd.args(&prep.args).current_dir(&prep.cwd);
 
         // The persistent backend restores login state from its snapshot, so no
         // login-env layering here.
         apply_child_env(&mut cmd, self.shell_env_policy.as_ref(), None, env);
 
+        crate::sandbox_launch::prepare_restoring(
+            self.sandbox_hook(),
+            &mut cmd,
+            || shell_state::snapshot_exports(&shell_state.snapshot),
+            &crate::sandbox_launch::CallId::tool(tool_call_id),
+        )?;
         cmd.fd_mappings(prep.fd_mappings)
             .map_err(|e| ComputerError::io(format!("fd mapping: {e}")))?;
-
-        unsafe {
-            cmd.pre_exec(xai_tty_utils::detach_pre_exec_hook());
-        }
-
-        xai_grok_sandbox::restrict_child_network(&mut cmd);
+        crate::sandbox_launch::wire_prepared(&mut cmd, Stdio::piped());
 
         #[allow(clippy::disallowed_methods)] // attached to a process group below
         let child = cmd.spawn().map_err(|e| {
@@ -983,6 +1042,9 @@ impl LocalTerminalActor {
                 // Background waits register in completion_waiters, not the
                 // foreground oneshot; deliver them now, not on the next sweep.
                 self.notify_completion_waiters().await;
+                if !already_exited {
+                    self.evict_if_foreground(&task_id);
+                }
             }
             TerminalCommand::Run { request, reply } => {
                 self.handle_run(request, reply).await;
@@ -1013,14 +1075,29 @@ impl LocalTerminalActor {
                 self.handle_wait_for_completion(task_id, timeout, reply)
                     .await;
             }
-            TerminalCommand::ListTasks { reply } => {
+            TerminalCommand::ListTasks {
+                include_output,
+                reply,
+            } => {
                 let mut snapshots =
                     Vec::with_capacity(self.processes.len() + self.completed_task_snapshots.len());
                 for (id, p) in &self.processes {
-                    snapshots.push(p.to_task_snapshot(id).await);
+                    if include_output {
+                        snapshots.push(p.to_task_snapshot(id).await);
+                    } else {
+                        snapshots.push(p.to_task_snapshot_metadata(id));
+                    }
                 }
                 for snap in self.completed_task_snapshots.values() {
-                    snapshots.push(snap.clone());
+                    if include_output {
+                        snapshots.push(snap.clone());
+                    } else {
+                        let mut meta = snap.clone();
+                        meta.output.clear();
+                        meta.output_total_bytes = 0;
+                        meta.truncated = false;
+                        snapshots.push(meta);
+                    }
                 }
                 let _ = reply.send(snapshots);
             }
@@ -1043,7 +1120,7 @@ impl LocalTerminalActor {
                 } else if self.login_shell_capture && login_env_capture_enabled() {
                     self.ensure_static_shell_initialized(&cwd).await;
                 } else if self.login_env.is_none() {
-                    self.login_env = Some(capture_login_env().await);
+                    self.login_env = Some(capture_login_env(self.sandbox_hook()).await);
                 }
                 #[cfg(not(unix))]
                 let _ = cwd;
@@ -1124,7 +1201,12 @@ impl LocalTerminalActor {
             process_group,
             state_dump_handle,
         } = match self
-            .spawn_command(&request.command, &request.working_directory, &request.env)
+            .spawn_command(
+                &request.command,
+                &request.working_directory,
+                &request.env,
+                &request.tool_call_id,
+            )
             .await
         {
             Ok(r) => r,
@@ -1213,7 +1295,11 @@ impl LocalTerminalActor {
 
     async fn handle_kill(&mut self, terminal_id: &str, source: KillSource) -> KillOutcome {
         let Some(process) = self.processes.get_mut(terminal_id) else {
-            return KillOutcome::NotFound;
+            return if self.completed_task_snapshots.contains_key(terminal_id) {
+                KillOutcome::AlreadyExited
+            } else {
+                KillOutcome::NotFound
+            };
         };
 
         if process.lifecycle.has_exited() {
@@ -1265,7 +1351,12 @@ impl LocalTerminalActor {
             process_group,
             state_dump_handle,
         } = match self
-            .spawn_command(&request.command, &request.working_directory, &request.env)
+            .spawn_command(
+                &request.command,
+                &request.working_directory,
+                &request.env,
+                &request.tool_call_id,
+            )
             .await
         {
             Ok(r) => r,
@@ -1440,7 +1531,7 @@ impl LocalTerminalActor {
             let newest_id = self
                 .processes
                 .iter()
-                .filter(|(_, p)| !p.lifecycle.has_exited())
+                .filter(|(_, p)| p.is_running())
                 .max_by_key(|(_, p)| p.start_time)
                 .map(|(id, _)| id.clone());
 
@@ -1467,8 +1558,8 @@ impl LocalTerminalActor {
             .processes
             .iter()
             .filter(|(_, p)| {
-                p.bg_status.is_backgrounded()
-                    && !p.lifecycle.has_exited()
+                p.is_running()
+                    && p.bg_status.is_backgrounded()
                     && p.start_time.elapsed() > BACKGROUND_MAX_RUNTIME
             })
             .map(|(id, _)| id.clone())
@@ -1493,7 +1584,7 @@ impl LocalTerminalActor {
         let size_exceeded: Vec<String> = self
             .processes
             .iter()
-            .filter(|(_, p)| !p.lifecycle.has_exited() && p.total_bytes as u64 > output_cap)
+            .filter(|(_, p)| p.is_running() && p.total_bytes as u64 > output_cap)
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -1645,7 +1736,7 @@ impl LocalTerminalActor {
             if let Some(waiters) = self.completion_waiters.get_mut(&task_id) {
                 let mut i = 0;
                 while i < waiters.len() {
-                    if now >= waiters[i].deadline {
+                    if waiters.get(i).is_some_and(|w| now >= w.deadline) {
                         let waiter = waiters.swap_remove(i);
                         let _ = waiter.reply.send(snapshot.clone());
                         timed_out_tasks.push(task_id.clone());
@@ -1689,9 +1780,23 @@ impl LocalTerminalActor {
         // reservation bookkeeping need them; wait-suppression lives in the bridge.
         for task_id in newly_completed {
             if let Some(process) = self.processes.get(&task_id) {
+                crate::sandbox_launch::exited(
+                    self.sandbox_hook(),
+                    &crate::sandbox_launch::CallId::tool(&process.tool_call_id),
+                );
                 let snapshot = process.to_task_snapshot(&task_id).await;
                 process.notification_handle.send_task_complete(snapshot);
             }
+        }
+    }
+
+    fn evict_if_foreground(&mut self, task_id: &str) {
+        if self
+            .processes
+            .get(task_id)
+            .is_some_and(|p| !p.bg_status.is_backgrounded())
+        {
+            self.processes.remove(task_id);
         }
     }
 
@@ -1820,7 +1925,9 @@ impl LocalTerminalActor {
                         break;
                     }
                     Some(Ok(n)) => {
-                        new_bytes.extend_from_slice(&buf[..n]);
+                        if let Some(read) = buf.get(..n) {
+                            new_bytes.extend_from_slice(read);
+                        }
                     }
                     Some(Err(_)) => {
                         stdout_eof = true;
@@ -1841,7 +1948,9 @@ impl LocalTerminalActor {
                         break;
                     }
                     Some(Ok(n)) => {
-                        new_bytes.extend_from_slice(&buf[..n]);
+                        if let Some(read) = buf.get(..n) {
+                            new_bytes.extend_from_slice(read);
+                        }
                     }
                     Some(Err(_)) => {
                         stderr_eof = true;
@@ -1956,12 +2065,19 @@ impl LocalTerminalActor {
     }
 
     async fn shutdown_all(&mut self) {
+        let sandbox_hook = self.sandbox_launch.as_deref();
         for (_, process) in self.processes.iter_mut() {
             send_sigkill_to_group(process);
             // The dump reader holds our end of the state pipe; it must not
             // outlive the actor.
             if let Some(handle) = process.state_dump_handle.take() {
                 handle.abort();
+            }
+            if process.bg_status.is_backgrounded() && process.lifecycle.swept_at().is_none() {
+                crate::sandbox_launch::exited(
+                    sandbox_hook,
+                    &crate::sandbox_launch::CallId::tool(&process.tool_call_id),
+                );
             }
         }
         self.processes.clear();
@@ -2077,7 +2193,7 @@ impl LocalTerminalActor {
         let fg_ids: Vec<String> = self
             .processes
             .iter()
-            .filter(|(_, p)| !p.bg_status.is_backgrounded() && !p.lifecycle.has_exited())
+            .filter(|(_, p)| !p.bg_status.is_backgrounded() && p.is_running())
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -2119,7 +2235,7 @@ impl LocalTerminalActor {
             .filter(|(_, p)| {
                 p.owner_session_id.as_deref() == Some(owner_session_id)
                     && !p.bg_status.is_backgrounded()
-                    && !p.lifecycle.has_exited()
+                    && p.is_running()
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -2330,6 +2446,8 @@ struct LocalTerminalConfig {
     /// See [`LocalTerminalActor::scope`].
     scope: crate::util::ProcessScope,
     settings: ActorSettings,
+    /// See [`LocalTerminalActor::sandbox_launch`].
+    sandbox_launch: Option<Arc<dyn crate::sandbox_launch::SandboxLaunch>>,
 }
 
 impl Default for LocalTerminalConfig {
@@ -2344,6 +2462,7 @@ impl Default for LocalTerminalConfig {
             process_scope: None,
             scope: crate::util::global_process_scope().clone(),
             settings: ActorSettings::from_env(),
+            sandbox_launch: None,
         }
     }
 }
@@ -2351,6 +2470,15 @@ impl Default for LocalTerminalConfig {
 impl LocalTerminalBackend {
     pub fn new() -> Self {
         Self::new_inner(LocalTerminalConfig::default())
+    }
+
+    /// The default backend with the daemon's per-command sandbox hook: every spawn (tool commands
+    /// and the rc-sourcing shell captures) goes through [`crate::sandbox_launch::prepare`] first.
+    pub fn new_with_sandbox_launch(hook: Arc<dyn crate::sandbox_launch::SandboxLaunch>) -> Self {
+        Self::new_inner(LocalTerminalConfig {
+            sandbox_launch: Some(hook),
+            ..Default::default()
+        })
     }
 
     /// Env vars, cwd, functions, and aliases persist across commands; the login
@@ -2490,6 +2618,7 @@ impl LocalTerminalBackend {
             process_scope: session_scope,
             scope,
             settings,
+            sandbox_launch,
         } = config;
         // Consulted once per process, because a session that cannot have one will
         // not get one by asking again, and a warning per session would bury it.
@@ -2534,6 +2663,7 @@ impl LocalTerminalBackend {
                 scope,
                 session_scope,
                 shell_env_policy,
+                sandbox_launch,
             );
             actor.run().await;
         };
@@ -2664,7 +2794,26 @@ impl TerminalBackend for LocalTerminalBackend {
         let (reply_tx, reply_rx) = oneshot::channel();
         if self
             .cmd_tx
-            .send(TerminalCommand::ListTasks { reply: reply_tx })
+            .send(TerminalCommand::ListTasks {
+                include_output: true,
+                reply: reply_tx,
+            })
+            .await
+            .is_err()
+        {
+            return vec![];
+        }
+        reply_rx.await.unwrap_or_default()
+    }
+
+    async fn list_tasks_metadata(&self) -> Vec<TaskSnapshot> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(TerminalCommand::ListTasks {
+                include_output: false,
+                reply: reply_tx,
+            })
             .await
             .is_err()
         {
@@ -2862,7 +3011,7 @@ fn spawn_detached_drain(
                 loop {
                     match stdout.read(&mut buf).await {
                         Ok(0) | Err(_) => break,
-                        Ok(n) => output.extend_from_slice(&buf[..n]),
+                        Ok(n) => output.extend_from_slice(buf.get(..n).unwrap_or(&[])),
                     }
                 }
             }
@@ -2871,7 +3020,7 @@ fn spawn_detached_drain(
                 loop {
                     match stderr.read(&mut buf).await {
                         Ok(0) | Err(_) => break,
-                        Ok(n) => output.extend_from_slice(&buf[..n]),
+                        Ok(n) => output.extend_from_slice(buf.get(..n).unwrap_or(&[])),
                     }
                 }
             }
@@ -2899,10 +3048,12 @@ async fn drain_remaining_output(process: &mut ProcessState) {
                 match stdout.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        process.output_buffer.extend_from_slice(&buf[..n]);
+                        process
+                            .output_buffer
+                            .extend_from_slice(buf.get(..n).unwrap_or(&[]));
                         process.total_bytes += n;
                         if let Some(ref mut file) = process.file_handle {
-                            let _ = file.write_all(&buf[..n]).await;
+                            let _ = file.write_all(buf.get(..n).unwrap_or(&[])).await;
                         }
                     }
                 }
@@ -2915,10 +3066,12 @@ async fn drain_remaining_output(process: &mut ProcessState) {
                 match stderr.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        process.output_buffer.extend_from_slice(&buf[..n]);
+                        process
+                            .output_buffer
+                            .extend_from_slice(buf.get(..n).unwrap_or(&[]));
                         process.total_bytes += n;
                         if let Some(ref mut file) = process.file_handle {
-                            let _ = file.write_all(&buf[..n]).await;
+                            let _ = file.write_all(buf.get(..n).unwrap_or(&[])).await;
                         }
                     }
                 }
@@ -2971,7 +3124,7 @@ fn read_available(reader: &mut (impl tokio::io::AsyncRead + Unpin), out: &mut Ve
     loop {
         match try_read_nonblocking(reader, &mut buf) {
             Some(Ok(0)) | Some(Err(_)) | None => return,
-            Some(Ok(n)) => out.extend_from_slice(&buf[..n]),
+            Some(Ok(n)) => out.extend_from_slice(buf.get(..n).unwrap_or(&[])),
         }
     }
 }
@@ -3147,7 +3300,9 @@ fn parse_login_env_capture(stdout: &str) -> (Option<String>, HashMap<String, Str
 }
 
 #[cfg(unix)]
-async fn capture_login_env() -> HashMap<String, String> {
+async fn capture_login_env(
+    sandbox_hook: Option<&dyn crate::sandbox_launch::SandboxLaunch>,
+) -> HashMap<String, String> {
     use tokio::io::AsyncReadExt;
 
     let shell = shell_state::ShellKind::detect();
@@ -3161,14 +3316,15 @@ async fn capture_login_env() -> HashMap<String, String> {
 
     let result = tokio::time::timeout(Duration::from_secs(5), async {
         let mut cmd = tokio::process::Command::new(shell.binary_path());
-        cmd.args(["-lc", &script])
-            .stdin(xai_tty_utils::null_stdio())
-            .stdout(Stdio::piped())
-            .stderr(xai_tty_utils::null_stdio())
-            .kill_on_drop(true);
-        crate::util::detach_command(&mut cmd);
-        xai_grok_sandbox::restrict_child_network(&mut cmd);
+        cmd.args(["-lc", &script]);
         cmd.envs(crate::util::pager_env());
+        let call = crate::sandbox_launch::CallId::shell_init("login-env");
+        crate::sandbox_launch::prepare(sandbox_hook, &mut cmd, &call)
+            .inspect_err(|reason| {
+                tracing::warn!(%reason, "sandbox refused the login-env capture; using the plain environment")
+            })
+            .ok()?;
+        crate::sandbox_launch::wire_prepared(&mut cmd, xai_tty_utils::null_stdio());
         #[allow(clippy::disallowed_methods)] // probe killed on drop
         let mut child = cmd.spawn().ok()?;
 
@@ -3264,10 +3420,9 @@ fn layer_login_path(
     }
 }
 
-/// Fixed layer order: policy base, login capture (filtered), grok control vars,
-/// request env (filtered), pager vars, login `PATH`, agent marker last. Applied
-/// incrementally, not via `env_clear`: the no-op-policy path must inherit grok's
-/// environment untouched (non-UTF-8 vars included).
+/// Fixed layer order: policy base, login capture (filtered), grok control vars, request env (filtered), pager vars,
+/// login `PATH`, agent marker last. Applied incrementally, not via `env_clear`: the no-op-policy path must inherit
+/// grok's environment untouched (non-UTF-8 vars included).
 #[cfg(unix)]
 fn apply_child_env(
     cmd: &mut tokio::process::Command,
@@ -3295,6 +3450,14 @@ fn spawn_failed_in(e: &std::io::Error, cwd: &std::path::Path) -> std::io::Error 
     std::io::Error::new(e.kind(), format!("spawn shell in {}: {e}", cwd.display()))
 }
 
+/// The sandbox side of one shell spawn: the hook that may wrap the command (`None` runs it as
+/// is) and the tool call the spawn belongs to.
+#[derive(Clone, Copy)]
+struct SpawnSandbox<'a> {
+    hook: Option<&'a dyn crate::sandbox_launch::SandboxLaunch>,
+    tool_call_id: &'a str,
+}
+
 /// Attaches the child to a [`ProcessGroup`] for whole-tree teardown.
 fn spawn_shell_command(
     command: &str,
@@ -3303,6 +3466,7 @@ fn spawn_shell_command(
     login_env: Option<&HashMap<String, String>>,
     search_shadows: SearchShadowConfig,
     shell_env_policy: Option<&crate::util::ShellEnvironmentPolicy>,
+    sandbox: SpawnSandbox<'_>,
 ) -> std::io::Result<(tokio::process::Child, crate::util::ProcessGroup)> {
     // Keep unix-only args live on Windows to avoid unused-arg warnings.
     #[cfg(not(unix))]
@@ -3323,40 +3487,30 @@ fn spawn_shell_command(
         if matches!(shell, shell_state::ShellKind::Zsh) {
             cmd.arg("-o").arg("nonomatch");
         }
-        cmd.arg("-c")
-            .arg(&wrapped_command)
-            .current_dir(cwd)
-            .stdin(xai_tty_utils::null_stdio())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Do NOT set .process_group(0): std runs setpgid() before pre_exec
-            // hooks, so setsid() in the detach hook would fail with EPERM.
-            .kill_on_drop(true);
+        cmd.arg("-c").arg(&wrapped_command).current_dir(cwd);
 
         apply_child_env(&mut cmd, shell_env_policy, login_env, env);
 
-        // Detach from the controlling terminal so subprocesses cannot open
-        // /dev/tty and compete with the TUI for terminal input.
-        crate::util::detach_command(&mut cmd);
-
-        xai_grok_sandbox::restrict_child_network(&mut cmd);
+        crate::sandbox_launch::prepare(
+            sandbox.hook,
+            &mut cmd,
+            &crate::sandbox_launch::CallId::tool(sandbox.tool_call_id),
+        )?;
+        // Detached from the controlling terminal, so subprocesses cannot open /dev/tty and
+        // compete with the TUI for terminal input
+        crate::sandbox_launch::wire_prepared(&mut cmd, Stdio::piped());
         cmd
     };
 
     #[cfg(not(unix))]
-    let mut build_cmd = |with_breakaway: bool| {
+    let mut build_cmd = |with_breakaway: bool| -> std::io::Result<tokio::process::Command> {
         use windows::Win32::System::Threading::{
             CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
         };
 
         let inv = xai_grok_config::shell::shell_command_argv(command);
         let mut cmd = tokio::process::Command::new(&inv.program);
-        cmd.args(&inv.args)
-            .current_dir(cwd)
-            .stdin(xai_tty_utils::null_stdio())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        cmd.args(&inv.args).current_dir(cwd);
 
         // Mirrors the unix `apply_child_env` order; `inv.env` is grok's trusted
         // shell setup, so it is not filtered.
@@ -3366,6 +3520,22 @@ fn spawn_shell_command(
         layer_request_env(&mut cmd, env, active_policy);
         cmd.envs(crate::util::pager_env());
         crate::util::apply_grok_agent_marker(&mut cmd);
+        // After the env layers so a policy PATH is prepended, not replaced. A
+        // policy base env replaced the inherited one; grok's own PATH must not
+        // come back through the prepend (`inherit = none`, an excluded PATH).
+        let path_base = if active_policy.is_some() {
+            xai_tty_utils::PathBase::ExplicitOnly
+        } else {
+            xai_tty_utils::PathBase::Process
+        };
+        xai_tty_utils::prepend_bundled_git_path(cmd.as_std_mut(), path_base);
+        crate::sandbox_launch::prepare(
+            sandbox.hook,
+            &mut cmd,
+            &crate::sandbox_launch::CallId::tool(sandbox.tool_call_id),
+        )
+        .map_err(std::io::Error::from)?;
+        crate::sandbox_launch::wire_prepared(&mut cmd, Stdio::piped());
 
         // Flags set inline: tokio's creation_flags is a SET, not OR, so the detach
         // helpers don't compose. CREATE_BREAKAWAY_FROM_JOB fails with os error 5 when
@@ -3375,7 +3545,7 @@ fn spawn_shell_command(
             flags |= CREATE_BREAKAWAY_FROM_JOB;
         }
         cmd.creation_flags(flags.0);
-        cmd
+        Ok(cmd)
     };
 
     #[cfg(unix)]
@@ -3388,7 +3558,7 @@ fn spawn_shell_command(
     #[allow(clippy::disallowed_methods)] // attached to the process group built in this block
     let (child, mut group) = {
         let group = crate::util::ProcessGroup::new()?;
-        let mut cmd = build_cmd(true);
+        let mut cmd = build_cmd(true)?;
         match cmd.spawn() {
             Ok(child) => (child, group),
             Err(e) if e.raw_os_error() == Some(5) => {
@@ -3399,8 +3569,8 @@ fn spawn_shell_command(
                      retrying without breakaway (process-tree teardown disabled for this child)"
                 );
                 drop(cmd);
-                let mut cmd = build_cmd(false);
-                let child = cmd.spawn().map_err(|e| spawn_failed_in(&e, cwd))?;
+                let mut cmd = build_cmd(false)?;
+                let child = cmd.spawn()?;
                 (child, group)
             }
             Err(e) => return Err(spawn_failed_in(&e, cwd)),
@@ -3432,10 +3602,15 @@ fn extract_exit_status(status: std::process::ExitStatus) -> ExitStatus {
 // Tests
 // ============================================================================
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "terminal_cli_facing_unchanged_tests.rs"]
+mod cli_facing_unchanged_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::computer::types::TaskKind;
+    use std::ffi::OsString;
 
     fn make_request(command: &str) -> TerminalRunRequest {
         let output_file = std::env::temp_dir().join(format!(
@@ -3747,7 +3922,10 @@ mod tests {
             1,
             "the running command was backgrounded"
         );
-        assert_eq!(backgrounded[0].tool_call_id, tool_call_id);
+        assert_eq!(
+            backgrounded.first().map(|t| t.tool_call_id.as_str()),
+            Some(tool_call_id)
+        );
 
         let result = run.await.unwrap().unwrap();
         assert_eq!(
@@ -4147,7 +4325,9 @@ mod tests {
             chunks.len()
         );
 
-        let initial = &chunks[0];
+        let Some(initial) = chunks.first() else {
+            panic!("expected an initial chunk");
+        };
         assert_eq!(initial.base.tool_call_id, "test-call-123");
         assert!(!initial.base.command.is_empty());
         assert!(
@@ -4155,7 +4335,9 @@ mod tests {
             "Initial chunk should have empty output"
         );
 
-        let first_with_output = &chunks[1];
+        let Some(first_with_output) = chunks.get(1) else {
+            panic!("expected a follow-up chunk");
+        };
         assert!(!first_with_output.base.output.is_empty());
 
         assert!(
@@ -4210,11 +4392,12 @@ mod tests {
         }
 
         for w in chunks.windows(2) {
+            let [a, b] = w else { continue };
             assert!(
-                w[1].base.total_bytes >= w[0].base.total_bytes,
+                b.base.total_bytes >= a.base.total_bytes,
                 "total_bytes regressed: {} < {}",
-                w[1].base.total_bytes,
-                w[0].base.total_bytes
+                b.base.total_bytes,
+                a.base.total_bytes
             );
         }
 
@@ -4539,6 +4722,28 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn draining_foreground_command_survives_a_kill() {
+        let backend = std::sync::Arc::new(LocalTerminalBackend::new_with_tick_interval(
+            Duration::from_millis(20),
+        ));
+        let run = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.run(make_request("sleep 5 &\necho done")).await }
+        });
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        backend.kill_foreground_commands().await;
+
+        let result = run.await.unwrap().expect("run returns a result");
+        assert_eq!(result.exit_code, Some(0), "signal={:?}", result.signal);
+        assert!(
+            result.combined_output.contains("done"),
+            "output={:?}",
+            result.combined_output
+        );
+    }
+
     #[test]
     fn new_local_runs_on_current_thread_runtime() {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -4606,6 +4811,166 @@ mod tests {
                 "kill should succeed: {outcome:?}"
             );
         });
+    }
+
+    /// A hook that leaves every command alone and records the calls reported exited.
+    #[derive(Default)]
+    struct ExitRecordingHook {
+        exited: std::sync::Mutex<Vec<crate::sandbox_launch::CallId>>,
+    }
+
+    impl crate::sandbox_launch::SandboxLaunch for ExitRecordingHook {
+        fn prepare(
+            &self,
+            _cmd: &mut tokio::process::Command,
+            _original: &crate::sandbox_launch::OriginalArgv,
+            _call: &crate::sandbox_launch::CallId,
+        ) -> Result<
+            Option<crate::sandbox_launch::LaunchReceipt>,
+            crate::sandbox_launch::SandboxLaunchError,
+        > {
+            Ok(None)
+        }
+
+        fn exited(&self, call: &crate::sandbox_launch::CallId) {
+            self.exited.lock().unwrap().push(call.clone());
+        }
+    }
+
+    impl ExitRecordingHook {
+        fn exits(&self) -> Vec<String> {
+            let mut exits: Vec<String> = self
+                .exited
+                .lock()
+                .unwrap()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            exits.sort();
+            exits
+        }
+
+        async fn wait_for_exits(&self, count: usize) -> Vec<String> {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while self.exits().len() < count && std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            self.exits()
+        }
+    }
+
+    /// Every backgrounded spawn is reported exited to the sandbox hook exactly once, whether it
+    /// ends on its own, is killed or is torn down with the terminal; a foreground one never is.
+    #[tokio::test]
+    async fn backgrounded_spawns_are_reported_exited_to_the_sandbox_hook_once() {
+        let hook = Arc::new(ExitRecordingHook::default());
+        let backend = LocalTerminalBackend::new_with_sandbox_launch(hook.clone());
+        let call = |id: &str| crate::sandbox_launch::CallId::tool(id).to_string();
+
+        let mut foreground = make_request("true");
+        foreground.tool_call_id = "fg-exit".to_owned();
+        backend.run(foreground).await.expect("foreground run");
+        let mut done = make_request("sleep 0.2");
+        done.tool_call_id = "bg-done".to_owned();
+        backend
+            .run_background(done)
+            .await
+            .expect("background spawn");
+        let mut killed = make_request("sleep 60");
+        killed.tool_call_id = "bg-killed".to_owned();
+        let killed = backend
+            .run_background(killed)
+            .await
+            .expect("background spawn");
+        backend.kill_task(&killed.task_id).await;
+
+        let expected = vec![call("bg-done"), call("bg-killed")];
+        assert_eq!(expected, hook.wait_for_exits(2).await);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(expected, hook.exits(), "reported once each");
+
+        let mut torn_down = make_request("sleep 60");
+        torn_down.tool_call_id = "bg-torn-down".to_owned();
+        backend
+            .run_background(torn_down)
+            .await
+            .expect("background spawn");
+        backend.cancel();
+        assert_eq!(
+            vec![call("bg-done"), call("bg-killed"), call("bg-torn-down")],
+            hook.wait_for_exits(3).await
+        );
+    }
+
+    /// A spawn's call id and the variables its shell restored.
+    type RestoredSpawn = (String, Vec<(OsString, OsString)>);
+
+    /// A hook that leaves every command alone and records what a replaying shell restores.
+    #[derive(Default)]
+    struct RestoredRecordingHook {
+        restored: std::sync::Mutex<Vec<RestoredSpawn>>,
+    }
+
+    impl crate::sandbox_launch::SandboxLaunch for RestoredRecordingHook {
+        fn prepare(
+            &self,
+            _cmd: &mut tokio::process::Command,
+            _original: &crate::sandbox_launch::OriginalArgv,
+            _call: &crate::sandbox_launch::CallId,
+        ) -> Result<
+            Option<crate::sandbox_launch::LaunchReceipt>,
+            crate::sandbox_launch::SandboxLaunchError,
+        > {
+            Ok(None)
+        }
+
+        fn prepare_restoring(
+            &self,
+            _cmd: &mut tokio::process::Command,
+            _original: &crate::sandbox_launch::OriginalArgv,
+            restored: &[(OsString, OsString)],
+            call: &crate::sandbox_launch::CallId,
+        ) -> Result<
+            Option<crate::sandbox_launch::LaunchReceipt>,
+            crate::sandbox_launch::SandboxLaunchError,
+        > {
+            self.restored
+                .lock()
+                .unwrap()
+                .push((call.to_string(), restored.to_vec()));
+            Ok(None)
+        }
+    }
+
+    /// The persistent shell hands the sandbox hook what its snapshot exports: part of the
+    /// environment the next command runs under, though that command's `Command` never sets it.
+    #[tokio::test]
+    async fn the_persistent_shell_hands_the_sandbox_hook_what_its_snapshot_exports() {
+        let hook = Arc::new(RestoredRecordingHook::default());
+        let backend = LocalTerminalBackend::new_inner(LocalTerminalConfig {
+            persistent_shell: true,
+            sandbox_launch: Some(hook.clone()),
+            ..Default::default()
+        });
+        let mut export = make_request("export PYTHONUSERBASE=/opt/grok-restored");
+        export.tool_call_id = "export".to_owned();
+        backend.run(export).await.expect("export run");
+        let mut next = make_request("true");
+        next.tool_call_id = "next".to_owned();
+        backend.run(next).await.expect("next run");
+
+        let base = (
+            OsString::from("PYTHONUSERBASE"),
+            OsString::from("/opt/grok-restored"),
+        );
+        let next_call = crate::sandbox_launch::CallId::tool("next").to_string();
+        let restored = hook.restored.lock().unwrap().clone();
+        assert!(
+            restored
+                .iter()
+                .any(|(call, vars)| *call == next_call && vars.contains(&base)),
+            "{restored:?}"
+        );
     }
 
     #[test]

@@ -51,14 +51,9 @@ pub struct ExitPlanModeInput {
     pub note: Option<String>,
 }
 
-/// `ExitPlanMode` tool.
-///
-/// Reads the plan file from disk and signals to the orchestration layer that
-/// the agent is done planning. The client receives a `PlanModeExited`
-/// notification with the plan content and is responsible for presenting the
-/// approval UI.
-///
-/// Params: `()` — no per-tool configuration.
+/// `ExitPlanMode` tool. Reads the plan file from disk and signals to the orchestration layer that the agent is done
+/// planning. The client receives a `PlanModeExited` notification with the plan content and is responsible for
+/// presenting the approval UI. Params: `()` — no per-tool configuration.
 #[derive(Debug, Default)]
 pub struct ExitPlanModeTool;
 

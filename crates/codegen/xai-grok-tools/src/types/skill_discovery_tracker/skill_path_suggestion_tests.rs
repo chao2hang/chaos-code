@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::implementations::skills::types::SkillInfo;
+use crate::implementations::skills::types::{SkillInfo, SkillScope};
 
 use super::SkillManager;
 
@@ -41,6 +41,28 @@ fn skill(name: &str, path: &str) -> SkillInfo {
         path: root_str(path),
         ..SkillInfo::default()
     }
+}
+
+#[test]
+fn registered_scope_matches_the_directory_and_not_a_name_prefix() {
+    let mut info = skill(
+        "secret-skill-name",
+        "/opt/repo/.grok/skills/secret-skill-name/SKILL.md",
+    );
+    info.scope = SkillScope::Bundled;
+    let manager = seeded_manager(vec![info]);
+    assert_eq!(
+        manager.registered_scope(Path::new(
+            "/opt/repo/.grok/skills/secret-skill-name/references/guide.md"
+        )),
+        Some(SkillScope::Bundled)
+    );
+    assert_eq!(
+        manager.registered_scope(Path::new(
+            "/opt/repo/.grok/skills/secret-skill-name-extra/SKILL.md"
+        )),
+        None
+    );
 }
 
 fn seeded_manager(skills: Vec<SkillInfo>) -> SkillManager {
@@ -103,10 +125,9 @@ fn suggests_nothing_for_ambiguous_disabled_non_skill_or_exact_requests() {
 
 #[test]
 fn requested_path_among_same_named_registrations_is_ambiguous() {
-    // The failed read targets one registered path for "review"; another
-    // same-named registration exists. Counting the requested path as a match
-    // keeps this ambiguous (no suggestion) rather than treating the sibling
-    // as a unique alternate.
+    // The failed read targets one registered path for "review"; another same-named registration
+    // exists. Counting the requested path as a match keeps this ambiguous (no suggestion) rather
+    // than treating the sibling as a unique alternate.
     let manager = seeded_manager(vec![
         skill("review", "/repo/.grok/skills/review/SKILL.md"),
         skill("review", "/home/user/.grok/skills/review/SKILL.md"),

@@ -203,10 +203,32 @@ Grok 从当前目录逐级向上走到 git 仓库根，每层都加载 `.chaos/c
 
 ## 工具命名
 
-MCP 工具以服务器名作命名空间，避免重名：
+MCP 工具以服务器名作命名空间，避免重名。目录键是 `server__tool`（两个下划线）：
 
 - 服务器 `filesystem` 的 `read_file` 工具成为 `filesystem__read_file`
 - 服务器 `github` 的 `create_issue` 工具成为 `github__create_issue`
+- 工具段可以以数字开头：服务器 `auth` 的 `2fa_enable` 工具成为 `auth__2fa_enable`
+
+### Chaos 接纳哪些工具
+
+Chaos 在以下条件全部满足时，才把一个已列出的工具接纳进会话目录（`xai-grok-mcp` 的 `qualify_mcp_tool_name`）：
+
+| 部分 | 规则 |
+| --- | --- |
+| 服务器名 | 以字母或下划线开头；其后只允许 ASCII 字母、数字、下划线和连字符。 |
+| 工具名 | 非空；只允许 ASCII 字母、数字、下划线和连字符；可以以数字开头。 |
+| 分隔符 | 恰好一个 `__`；出现第二个 `__` 或 `___` 的名字会被跳过。 |
+| 目录键 | `server` + `__` + `tool` 至多 **256** 个字符。 |
+
+被拒绝的工具会被跳过：日志行是 `Skipping MCP tool` 加原因，该服务器其余的工具照常加载。
+
+**64 字符**上限是服务商的**函数名**预算，只适用于元工具 `search_tool` 与 `use_tool` 本身，而**不**适用于目录键。超过 64 字符的 `server__tool` 名字仍留在目录里，模型仍然通过 `use_tool` 用完整名字调用它。过去版本会在 64 字符处丢弃这些工具，现在不再这样。
+
+`[mcp_servers.<name>]` / `chaos mcp add` 里的服务器名是目录前缀。以数字开头的名字是合法的 TOML 键，但目录接纳仍会拒绝它（`InvalidServerName`）；把服务器改名为以字母或下划线开头。
+
+以 `_` 结尾的服务器名会让 `server__tool` 里出现 `___`；接纳时该键会被跳过（`InvalidOrAmbiguousQualifiedName`）。
+
+`search_tool` / `use_tool` 接收的是限定后的目录键，而不是原始 MCP 工具名。例如 `github__create_issue`，而不是 `create_issue`。
 
 ---
 
@@ -240,6 +262,41 @@ MCP 工具以服务器名作命名空间，避免重名：
 - `search_tool` —— 在所有已启用的 MCP 服务器中发现可用的集成工具。按名字或描述查找。
 - `use_tool` —— 调用通过 `search_tool` 发现的集成工具。需要给出完整限定的工具名
   （例如 `github__create_issue`）。
+
+---
+
+## 基于文件的 MCP 参数
+
+在 Rust-shell 的本地文件系统上（Linux、macOS 与 Windows），`use_tool` 只接受以下三种形式之一：
+
+| 形式 | 调用 | 文件内容 |
+|------|------|---------------|
+| 内联 | `{"tool_name":"example__update_page","tool_input":{"body":"Hello"}}` | 无 |
+| 参数文件 | `{"tool_name":"example__update_page","tool_input_file":"/tmp/mcp-arguments.json"}` | 完整的远端对象，例如 `{"body":"Hello"}`；它不能覆盖目标。 |
+| 调用文件 | `{"file":"/tmp/mcp-call.json"}` | 规范形式的 `{"tool_name":"example__update_page","tool_input":{"body":"Hello"}}`。 |
+
+处理大文档、或服务器要求 JSON 嵌在字符串内时，用序列化器：
+
+```python
+import json
+from pathlib import Path
+
+body = Path("/tmp/page.html").read_text(encoding="utf-8")
+arguments = {"input": json.dumps({"page_id": "123", "body": body})}
+Path("/tmp/mcp-arguments.json").write_text(json.dumps(arguments), encoding="utf-8")
+Path("/tmp/mcp-call.json").write_text(
+    json.dumps({"tool_name": "example__update_page", "tool_input": arguments}),
+    encoding="utf-8",
+)
+```
+
+嵌套的 JSON 字符串不会被再次解码；远端的 `file` 与 `tool_input_file` 键仍属于服务器数据。不要混用形式、不要把调用委托给另一个文件、也不要命名原生工具。即使包装器参数被改名，磁盘上的调用键仍保持规范形式。
+
+来源必须是完整、规范的 UTF-8 JSON 对象，至多 **8 MiB**。格式错误或带尾随内容的 JSON、重复的信封键、缺失的字段、null 路径、非对象的调用参数都会被拒绝。每个准备好的批次允许 **16 MiB** 的源输入与 **32 MiB** 的序列化后有效调用（含钩子改写）。文件操作有 **10 秒**截止（权限等待除外）。这些上限不改变普通读取窗口、不保证远端接受、也不会中断内核 I/O。
+
+读取授权以及路径、内存、符号链接和已选忽略文件的限制在加载前生效；传输层读取不满足先读后改。目标钩子随后看到的是加载后的参数，单独的 MCP 审批会显示解析后的目标与来源。钩子可以改写参数，但不能改换目标或加载另一个文件。认证重试即使文件变了也复用已批准的快照。历史保留所写下的引用；有上限的钩子/审批看到的是有效参数。服务器回显与钩子追加的上下文保持不变。
+
+ACP 客户端文件系统尚不支持有界获取，并在没有代理本地回退时拒绝文件模式。基于文件的调用只通过 Rust-shell 的 `use_tool` 支持；其他嵌入宿主会拒绝未解析的文件输入，直接 MCP API 保持不变。
 
 ---
 
@@ -318,6 +375,18 @@ enabled = true
 headers = { "Authorization" = "Bearer ${INTERNAL_MCP_TOKEN}" }
 ```
 
+当另一个进程把短期 token 存在文件里（凭据助手、sidecar 或 cron 任务）时，把 `bearer_token_file` 指向它。Chaos 对服务器的每次请求都会读取该文件并发送 `Authorization: Bearer <内容>`（去除首尾空白），这样轮换后的 token 在下一个请求即生效，不必重启 Chaos 或重连服务器：
+
+```toml
+[mcp_servers.internal-tools]
+url = "https://mcp.internal.example.com/mcp"
+bearer_token_file = "~/.config/internal-tools/token"
+```
+
+路径必须是绝对路径或以 `~/` 开头，并且可以引用 `${VAR}`；其他任何路径都会让该服务器以错误失败。`bearer_token_file` 对 HTTP 与 SSE 服务器都有效，并取代 `Authorization` 头或 `bearer_token_env_var`。带 token 文件的服务器会跳过 OAuth 发现。文件缺失、为空、超过 16 KiB、不是 UTF-8、或含有 HTTP 头不允许的字符时，请求会失败并给出指明该路径的错误。
+
+请原子地替换 token 文件：先把新 token 写入同目录下的临时文件，再重命名覆盖旧文件。就地截断重写的写入方式可能与请求竞争，导致请求失败或发出半截 token。
+
 ### 本地 stdio
 
 必须在本地运行的工具（文件系统访问、本地数据库、自建服务）用 stdio。
@@ -373,6 +442,8 @@ tool_timeouts = { slow_analysis = 300, quick_lookup = 10 }
 
 ## 子代理与 MCP
 
+当同一个服务器名同时出现在 `config.toml` / `.mcp.json` 与当前激活代理的 `mcpServers` frontmatter 中时，**agent.md 优先**（包括 HTTP 头）。配置热重载、插件重载与切换代理时都会重新应用这层覆盖，磁盘上的重新物化无法恢复 toml 里的头。切换代理时，覆盖层只换成新代理的那一份：新代理未列出的服务器会被丢弃，而没有 `mcpServers` 的代理会清空此前的覆盖层。
+
 子代理默认继承父会话已连接的 MCP 服务器，插件提供的代理也一样。可以用代理 frontmatter
 里的 `mcpInheritance` 收窄这个集合（`all`、`none`、`named`、`except`）。详见
 [子代理 —— MCP 继承](16-subagents.md#mcp-继承)。
@@ -415,6 +486,17 @@ tail -f ~/.chaos/logs/mcp/filesystem.stderr.log
 服务器；Claude 文件只约束由外部定义的服务器。`chaos inspect` 会显示这些名单、锁定范围
 以及每个仍然保留的服务器。细节与示例见
 [限制哪些 MCP 服务器可运行](09-plugins.md#限制可以运行哪些-mcp-服务器)。
+
+### 已列出的工具从未出现
+
+服务器起来了、`tools/list` 也返回了该工具，但 `/mcps` 和 `search_tool` 里没有它。
+
+1. 在 `GROK_LOG_FILE` / `--debug` 里查 `Skipping MCP tool`。原因会指出失败的规则（服务器名非法、工具名非法、`__` 歧义、或目录键超过 256 字符）。
+2. 确认服务器配置键以字母或下划线开头。以数字开头的键永远不会进入目录；以 `_` 结尾的键会因 `___` 歧义被跳过。
+3. 确认工具名只使用 `[A-Za-z0-9_-]`。原始 MCP 名字里的点和冒号会被跳过。
+4. 不要把 `server__tool` 键截短到 64 字符。目录键可以到 256；64 字符上限只针对作为函数名的 `search_tool` / `use_tool`。见[工具命名](#工具命名)。
+
+这与另一种情况不同：**第一条**提示时工具缺失，是因为握手还在进行。等服务器起来后再发一条提示，或运行 `chaos mcp doctor`。
 
 ### 查看服务器状态
 

@@ -10,7 +10,7 @@ Chaos 从中心主题绘制全部 TUI 颜色。运行时可切换主题、跟随
 
 ## 可用主题
 
-内置五套主题，外加跟随系统外观的 `auto`：
+内置六套主题，外加跟随系统外观的 `auto`：
 
 | 主题 | 配置项 | 说明 | 需要 Truecolor |
 |-------|-------------|-------------|--------------------|
@@ -19,8 +19,38 @@ Chaos 从中心主题绘制全部 TUI 颜色。运行时可切换主题、跟随
 | **Tokyo Night**（内部 `TokyoNight`） | `tokyonight`, `tokyo-night`, `tokyo` | 取自 Tokyo Night 配色的深蓝调背景。量化后会失去自身特色。 | 是 |
 | **Rose Pine Moon**（内部 `RosePineMoon`） | `rosepine`, `rose-pine`, `rosepine-moon`, `rose-pine-moon` | 柔和深色配淡紫强调色，出自 Rosé Pine 家族。 | 是 |
 | **Oscura Midnight**（内部 `OscuraMidnight`） | `oscura`, `oscura-midnight` | 深黑底配紫色强调色。 | 是 |
+| **Terminal**（内部 `Terminal`） | `terminal`, `terminal-default`, `transparent`, `native` | 终端自己的颜色：没有自己的背景，终端画布（透明度、背景图）直接透出来。 | 否 |
 
 主题名不区分大小写。`auto` 选项（别名 `system`）见[自动主题（跟随系统外观）](#自动主题跟随系统外观)。
+
+### Terminal 主题
+
+`terminal` 不绘制任何表面背景，自身也几乎不定义颜色 —— 一切都来自你的终端
+配置。回滚区、提示框、模态框与状态行都让终端画布可见（半透明窗口或有背景
+图的窗口会像透过 shell 一样透过 Chaos），正文使用终端默认前景色，强调色
+（错误、diff、链接、语法）来自配置里的 16 色 ANSI 调色板。因为它借用你配置
+的颜色而不预设浅/深背景，无需外观检测，在任何配置下都保持可读，且在所有色深
+下渲染一致。
+
+该主题完全不画背景：你的消息以粗体显示而不是画在色带上，菜单与提示面板直接
+落在终端画布上，任何菜单里选中或悬停的行使用反显（你终端自己的前景/背景互
+换），所以任何组合在任何配置下都保持可读。装饰 —— 空闲边框、分隔线、滚动条
+滑块 —— 以前景色使用 ANSI *亮黑*，也就是你的配置调成自己暗色调的那个调色板
+槽位。聚焦的装饰（如活动提示框边框）保持完整默认前景色，让焦点依然醒目。
+Chaos 在这个主题上也不动你的光标颜色（其他主题会把它改成各自的强调色）。
+
+```toml
+[ui]
+theme = "terminal"
+```
+
+对比度只取决于你的终端配置：如果配置的亮黑槽位非常暗，分隔线就会渲染得淡，
+因为 Chaos 从你的调色板派生一切颜色，而不是硬编码。
+
+该主题正在逐步放量。在放量到达之前，它从 `/theme` 与 `/settings` 中隐藏，
+其名字不可解析，已配置的 `theme = "terminal"` 会回退到默认主题。设置
+`GROK_TERMINAL_THEME=1`（或 `config.toml` 里的 `[features] terminal_theme = true`）
+可在放量前在本地启用。
 
 ### 最小模式没有主题
 
@@ -34,7 +64,7 @@ Chaos 从中心主题绘制全部 TUI 颜色。运行时可切换主题、跟随
 
 ### 在 TUI 中
 
-运行 `/theme` 斜杠命令（别名 `/t`）打开主题选择器。用方向键在列表中移动时，Chaos 会实时预览每个主题。按 Enter 应用并保存所选主题，或按 Escape 放弃。
+运行 `/theme` 斜杠命令（别名 `/t`）打开主题选择器。用方向键在列表中移动时，Chaos 会实时预览每个主题。按 Enter 应用并保存所选主题，或按 Escape 放弃。输入可按主题的任意配置名过滤列表，例如 `/theme transparent` 会收窄到 Terminal 那一行。
 
 不想用选择器时，也可以直接传名字：
 
@@ -229,8 +259,8 @@ wave_rows = 32     # Rows per wave cycle for accent animation
 [scrollback.blocks.edit]
 indent = true                   # Indent diff content
 vpad = false                    # Vertical padding around diffs
-# expanded_by_default = true    # Unset: follows [ui] collapsed_edit_blocks in config.toml
-                                # (flag on = collapsed one-liner); uncomment to pin either shape
+# expanded_by_default = true    # Unset follows Collapsed edit blocks. When that setting is on,
+                                # edits start collapsed even if this line is true.
 hunk_separator = "…"            # Separator between hunks ("…", "───", "⋯", or "" for none)
 dual_line_numbers = false       # Two-column line numbers (old + new, like GitHub)
 # line_summary = false          # Show +N/-M in the collapsed header; unset follows the same flag

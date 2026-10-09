@@ -97,11 +97,9 @@ mod ns_lockdown {
         mount_mutation_syscalls()
     }
 
-    /// Classic BPF namespace lockdown.
-    ///
-    /// The mount API, `unshare`, `setns`, and legacy `clone(CLONE_NEW*)` return EPERM.
-    /// `clone3` returns ENOSYS: its flags live in a pointed-to struct classic BPF cannot inspect.
-    /// ENOSYS makes libc fall back to legacy clone for ordinary spawn, while direct malicious clone3 cannot create namespaces.
+    /// The mount API, `unshare`, `setns`, and legacy `clone(CLONE_NEW*)` return EPERM. `clone3` returns ENOSYS: its flags
+    /// live in a pointed-to struct classic BPF cannot inspect. ENOSYS makes libc fall back to legacy clone for ordinary
+    /// spawn, while direct malicious clone3 cannot create namespaces.
     pub fn build_namespace_lockdown_filter() -> Vec<sock_filter> {
         use libc::{
             BPF_ABS, BPF_JEQ, BPF_JMP, BPF_JSET, BPF_K, BPF_LD, BPF_RET, BPF_W, SYS_clone,
@@ -218,11 +216,9 @@ fn build_child_network_filter() -> Vec<libc::sock_filter> {
     f
 }
 
-/// The fixed child-network deny BPF program, built once before child spawn.
-///
-/// `pre_exec` closures run between `fork` and `exec` in a multi-threaded process.
-/// Another thread can hold the allocator lock at fork, so any heap allocation there can deadlock the child.
-/// Installation only reads this already-initialized buffer.
+/// The child-network BPF program, built once in the parent process. `pre_exec` closures run between `fork` and `exec` in
+/// a multi-threaded process. Another thread can hold the allocator lock at fork, so any heap allocation there can
+/// deadlock the child. Install therefore only references this parent-built buffer.
 #[cfg(target_os = "linux")]
 static CHILD_NETWORK_FILTER: std::sync::OnceLock<Vec<libc::sock_filter>> =
     std::sync::OnceLock::new();
@@ -252,6 +248,9 @@ fn validate_filter_len(len: usize) -> std::io::Result<()> {
 /// this returns. This performs syscalls only and must not allocate, lock, log,
 /// format, or read the environment. The policy slice must be the crate-built
 /// deny filter; callers must use `restrict_child_network*` to obtain it.
+/// # Safety
+/// After fork / before exec only. Async-signal-safe: two `prctl`s on the
+/// parent-built program; never allocate, lock, log, format, or read env.
 #[cfg(target_os = "linux")]
 pub(crate) unsafe fn install_child_network_filter(
     filter: &[libc::sock_filter],
@@ -283,9 +282,7 @@ pub(crate) unsafe fn install_child_network_filter(
     Ok(())
 }
 
-/// Deny nested namespace creation on all threads (TSYNC).
-/// Ordinary process creation uses legacy clone after clone3 returns ENOSYS.
-///
+/// Deny nested namespace creation (TSYNC). Legacy clone after clone3 ENOSYS.
 /// # Safety
 /// Irreversibly installs a TSYNC seccomp policy on every thread in the current
 /// process. Call only after the bwrap re-exec / at apply point, after all threads
@@ -299,19 +296,9 @@ pub unsafe fn install_namespace_lockdown_filter() -> std::io::Result<()> {
     ns_lockdown::install(&mut filter)
 }
 
-/// Deny child networking on `cmd` when the active sandbox restricts it.
-///
-/// The launch-time runtime-socket masks (see [`crate::runtime_sockets`]) only cover sockets that existed at startup.
-/// They do not survive a daemon unlink/recreate, so the session-long guarantee is this per-spawn seccomp filter.
-/// It denies the network syscalls themselves for the child's whole lifetime, regardless of when a socket appears.
-///
-/// This function and [`restrict_child_network_std`] draw the boundary between restricted and trusted children.
-/// Every spawn of an approved user- or workspace-authored executable must call one of them instead of hand-rolling the `pre_exec` install.
-/// That covers terminal commands, stdio MCP servers, hook commands, alternate bash tools, and shell state capture.
-/// It also covers LSP servers, notification hooks, and `.envrc` evaluators.
-/// Trusted infrastructure children the agent itself drives intentionally keep the parent's network.
-/// Those are git/VCS, the bwrap re-exec, clipboard/image helpers, and the updater.
-/// No-op when the sandbox does not restrict child networking, and on non-Linux targets.
+/// They do not survive a daemon unlink/recreate, so the session-long guarantee is this per-spawn seccomp filter. Every
+/// spawn of an approved user- or workspace-authored executable must call one of them instead of hand-rolling the
+/// `pre_exec` install. No-op when the sandbox does not restrict child networking, and on non-Linux targets.
 pub fn restrict_child_network(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "linux")]
     if crate::should_restrict_child_network() {
@@ -369,7 +356,7 @@ mod tests {
         let mut pc = 0usize;
         let mut a = 0u32;
         for _ in 0..filter.len().saturating_mul(2) {
-            let insn = &filter[pc];
+            let Some(insn) = filter.get(pc) else { break };
             let op = insn.code as u32;
             if op == (BPF_LD | BPF_W | BPF_ABS) {
                 a = match insn.k {

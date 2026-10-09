@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 //! `/fallback` -- manage the fallback model chain.
 //!
 //! When a session's model can no longer be served -- it left the catalog, or the

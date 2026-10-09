@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 //! `/client` — request-client profile selection and management.
 //!
 //! Client profiles describe the public identity used on requests. They never

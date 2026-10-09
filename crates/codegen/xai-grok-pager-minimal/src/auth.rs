@@ -32,7 +32,6 @@ pub(super) enum MinimalAuthHint {
 }
 
 /// Map the app's auth and trust state to what the no-agent live region should show.
-///
 /// Mirrors the welcome screen's gate order: trust is only offered after auth is `Done`, when the user has access and is not ZDR-blocked.
 /// Those gates already block sessions, and the input interceptor only answers trust under the same conditions.
 pub(super) fn minimal_auth_hint(
@@ -159,8 +158,11 @@ fn render_url(
             return bottom;
         }
         let x = area.x + col;
-        if x < max_x && y < max_y {
-            buf[(x, y)].set_char(ch).set_style(style);
+        if x < max_x
+            && y < max_y
+            && let Some(cell) = buf.cell_mut((x, y))
+        {
+            cell.set_char(ch).set_style(style);
         }
         col += 1;
     }
@@ -462,6 +464,7 @@ mod tests {
         render_auth(&mut buf, area, &theme, &hint);
         let text = buffer_text(&buf, area);
         assert!(text.contains("登录 Chaos"), "header: {text:?}");
+
         assert!(text.contains("accounts.x.ai/device"), "url: {text:?}");
         assert!(text.contains("ABCD-EFGH"), "device code: {text:?}");
         assert!(text.contains("等待批准"), "waiting line: {text:?}");
@@ -476,7 +479,7 @@ mod tests {
             workspace: PathBuf::from("/home/agent/project"),
         };
         render_auth(&mut buf, area, &theme, &hint);
-        let text = buffer_text(&buf, area);
+        let text = crate::buffer_text(&buf);
         assert!(
             text.contains("是否信任该目录下的内容？"),
             "question: {text:?}"

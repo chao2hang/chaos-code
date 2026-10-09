@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-09
+
+### 同步：对齐上游 xai-org/grok-build main 分支（至 commit 2bdd1d6a，版本 1.0.17–1.0.45）
+
+- **对齐基线**：全量合并上游 9 个提交，更新 `SOURCE_REV` 为 `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`。
+- **保护原则**：
+  - 认证层：引入 `xai-grok-login` crate，保留 Chaos 的全 BYOK 免登录架构，拒绝强制浏览器登录墙。
+  - 遥测层：合流上游遥测采集代码，默认保持 `telemetry.mode = "disabled"` 有效生效。
+  - 品牌与中文化：严格遵循 L10n Guard 门禁，保留全部 Chaos 中文提示词、界面文案、状态栏与快捷键。
+- **上游新特性合流**：
+  - 终端 PTY harness 模块化解耦为独立 `xai-grok-pager-pty-harness`。
+  - 支持会话上下文窗口选项及模型推理力度（Reasoning Effort）多级调节（max / xhigh / high / medium / low）。
+  - 支持工作区会话列表快照及锁状态展示。
+  - 修复多处终端转义、滚动吸底与转录回放缺陷。
+
+
 ### 改进：一轮回答不再占住提问它的那一帧 —— engine 异步产出事件、Web 宿主订阅并转发、停止真的中断，代价是逼出两处真缺陷
 
 `TODO.md` 里与 ZCode 差距最大的一条（M1.1 的「Web 端没有服务端推送」）今天做掉了一大半。之前

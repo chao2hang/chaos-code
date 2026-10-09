@@ -149,7 +149,6 @@ fn make_hunk_at(file_lines: &[&str], close_i: usize) -> Option<DiffHunk> {
     let mut hunk = Vec::new();
     for (idx, text) in file_lines.iter().enumerate().take(end).skip(start) {
         let ln = idx + 1;
-        let text = *text;
         let tag = if text.contains("field_b:") {
             ChangeTag::Insert
         } else {

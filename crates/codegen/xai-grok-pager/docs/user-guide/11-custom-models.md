@@ -96,6 +96,7 @@ description = "Model description"          # Optional description
 api_key = "sk-..."                        # API key for this provider (optional)
 env_key = "XAI_API_KEY"                   # Env var holding the API key (optional; string or array)
 api_backend = "chat_completions"          # "chat_completions", "responses", or "messages"
+reasoning_summary = "concise"             # Responses API only: "none", "auto", "concise", or "detailed"
 temperature = 0.7                         # Sampling temperature
 top_p = 0.95                              # Nucleus sampling parameter
 max_completion_tokens = 8192              # Maximum tokens per response
@@ -115,6 +116,28 @@ Chaos 按以下顺序解析 API 密钥：
 ### 上下文窗口
 
 `context_window` 的取值告诉 Chaos 何时触发自动压缩。覆盖一个已知模型时，Chaos 继承该模型的上下文窗口。定义新模型且省略 `context_window` 时，Chaos 默认使用 200,000 个 token，所以请显式设置成与你 Provider 一致的值。
+
+### 请求大小上限
+
+`max_request_bytes` 是你的端点能接受的最大请求体。Chaos 会把较旧的内联图片从对话中逐出，以保持在限制之下，这样带大量截图的会话也能继续工作，而不是被拒绝。省略时，Chaos 按 `api_backend` 取默认值：`messages` 为 30 MB，`chat_completions` 与 `responses` 为 50 MiB。只有当你的宿主执行不同的上限时才设置它。
+
+该上限是端点的属性，所以它也作用于共享的 `[model_providers.<id>]` 块：指向该 provider 的每个模型都继承它；模型自身的 `max_request_bytes` 覆盖 provider 的值。
+
+```toml
+[model_providers.messages-gateway]
+base_url = "https://gateway.example/v1"
+api_backend = "messages"
+max_request_bytes = 25000000   # every model on this provider inherits it
+
+[model.claude-sonnet]
+model = "claude-sonnet"
+model_provider = "messages-gateway"   # inherits 25 MB
+
+[model.claude-opus]
+model = "claude-opus"
+model_provider = "messages-gateway"
+max_request_bytes = 20000000   # per-model override
+```
 
 ### 全局默认请求头
 
@@ -137,6 +160,7 @@ temperature                 = 0.7
 top_p                       = 0.95
 max_completion_tokens       = 8192
 max_retries                 = 8
+rate_limit_retry_threshold  = 4
 inference_idle_timeout_secs = 600
 subagent_rate_limit_max_attempts = 8
 stream_tool_calls           = true
@@ -144,7 +168,52 @@ stream_tool_calls           = true
 
 这是一组小而固定的全局开关。用于标识具体模型的设置（`model`、`base_url`、`api_key`、`context_window` 等）不能用这种方式设默认值；另有少数设置各有专属配置位置——自动压缩在 `[session]`、系统提示词标签在 `[agent]`、推理强度在 `[models].default_reasoning_effort`——它们仍留在原处。
 
+`rate_limit_retry_threshold` 与 `subagent_rate_limit_max_attempts` 为子代理选择不同的 429 重试路径。配置了 `rate_limit_retry_threshold` 后，这些重试由采样器（sampler）接管，独立的子代理等待循环被禁用——包括它的 150 秒累计等待预算与等待遥测。`subagent_rate_limit_max_attempts` 仅在未设置采样器阈值时生效。
+
 > **关于 `stream_tool_calls`：** 它影响的是请求的*形状*，不只是采样。少数端点（某些 BYOK Provider）希望这一项不被设置；若全局的 `stream_tool_calls = true` 让这类模型出问题，请在该模型的 `[model.<id>]` 块里用 `stream_tool_calls = false` 把它单独排除。
+
+### 请求查询参数
+
+有些网关按查询串做路由或版本选择。`query_params` 会为 Chaos 为该模型发出的每个请求追加百分号编码的查询参数。例如按这种方式选择 API 版本的网关：
+
+```toml
+[model.my-gateway]
+model = "my-model"
+base_url = "https://gateway.example/v1"
+api_backend = "responses"
+env_key = "GATEWAY_API_KEY"
+query_params = { api-version = "2026-07-22" }
+```
+
+与 `base_url` 查询串中同名的键会被覆盖（最后一个值胜出），而不是重复。查询参数会保存在会话里，所以不要放密钥：密钥请用 `env_http_headers`。
+
+### 环境变量请求头
+
+`env_http_headers` 把请求头映射到提供其值的环境变量名，这样每次请求的密钥就不必写进 `config.toml`：
+
+```toml
+[model.gateway]
+model = "my-model"
+base_url = "https://gateway.example/v1"
+env_http_headers = { "X-Tenant-Token" = "GATEWAY_TENANT_TOKEN" }
+```
+
+Chaos 在为会话构建客户端时读取每个变量，值只放在请求头里，从不落盘。变量未设置或为空白时该头被跳过；解析出的值覆盖 `extra_headers` 中同名的条目。静态值用 `extra_headers`，来自环境的值用 `env_http_headers`。
+
+这两个字段也作用于共享的 `[model_providers.<id>]` 块。通过 `model_provider = "<id>"` 指向 provider 的模型，在自己都没设置时继承 provider 的 `query_params` 与 `env_http_headers`，与 `extra_headers` 的继承方式一致。
+
+### 模型通告
+
+`notice` 在该模型被选中期间，在提示框上方显示一条消息。横幅无法收起；切换到没有通告的模型时它才会消失。
+
+```toml
+[model.legacy]
+model = "legacy-model"
+base_url = "https://gateway.example/v1"
+notice = { severity = "warning", text = "This model is deprecated on Oct 15. Switch to grok-4.6.", label = "deprecated" }
+```
+
+`severity` 设置横幅颜色，取 `info`、`warning` 或 `critical`，默认 `info`。`text` 必填，长文本会换行。`label` 是显示在文本前的可选短标签。自定义模型端点也可以在模型条目上以 `notice` 或 `_meta.notice` 下发同一个对象。要移除内置或远端模型自带的通告，设置 `notice = { text = "" }`。
 
 ---
 
@@ -216,6 +285,27 @@ api_backend = "responses"
 env_key = "OPENAI_API_KEY"
 ```
 
+在 Responses API 上，Chaos 默认请求 `concise` 推理摘要——UI 中显示的推理文本就来自它。`reasoning_summary` 会改变请求：`detailed` 或 `auto` 得到更完整的摘要，`none` 则省略该字段（供会拒绝它的网关使用）。
+
+### AWS Bedrock (Mantle)
+
+Bedrock 的 OpenAI 兼容网关会拒绝 `reasoning.summary`，所以要设置 `reasoning_summary = "none"`。它用 Bedrock API key 作为 bearer token 认证；下面的例子通过一个按名字配置的认证提供程序签发短期 token：
+
+```toml
+[auth_provider.bedrock]
+command = "aws-bedrock-token"   # prints a Bedrock API key on stdout (e.g. via aws-bedrock-token-generator)
+token_ttl_secs = 3600
+
+[model."bedrock-grok-4.6"]
+model = "xai.grok-4.6"
+base_url = "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
+name = "Grok 4.6 (Bedrock)"
+api_backend = "responses"
+reasoning_summary = "none"
+auth_provider = "bedrock"
+context_window = 500000
+```
+
 ### Ollama（本地模型）
 
 用 [Ollama](https://ollama.ai) 在本地运行模型：
@@ -284,11 +374,11 @@ models_base_url = "https://api.acme.com/v1"
 api_key = "my-api-key"
 ```
 
-把 `[endpoints]` 与部分模型覆盖一起使用时，Chaos 会从 endpoints 配置继承 `base_url`，因此不必在每个 `[model.*]` 段里重复指定。
+把 `[endpoints]` 与部分模型覆盖一起使用时，Chaos 会从 endpoints 配置继承 `base_url`，因此不必在每个 `[model.*]` 段里重复指定。`XAI_API_KEY` 仍然必填；每模型的 `api_key` 或 `env_key` 为该模型的推理请求认证；启动时的模型列表抓取始终使用 `XAI_API_KEY`。
 
 ### 认证行为
 
-设置 `models_base_url` 后，Chaos 改用 API key 认证（`Authorization: Bearer`），而不是会话认证。有 API key 就够了，无需其它登录步骤。
+设置 `models_base_url` 后，Chaos 改用 API key 认证（`Authorization: Bearer`），而不是会话认证。有 API key 就够了，无需其它登录步骤。模型列表请求只用 `XAI_API_KEY` 认证（`Authorization: Bearer`）；若配置了外部认证提供程序（`auth_provider_command`）且没有 `XAI_API_KEY`，请求改发该提供程序的 token；否则（未设置 `XAI_API_KEY` 时）抓取会失败，并提示你设置它。指向自定义主机的推理请求单独认证；每个模型上的 `api_key` 或 `env_key` 会让这些请求也使用 API key。
 
 ---
 

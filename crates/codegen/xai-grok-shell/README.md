@@ -1814,9 +1814,17 @@ matcher = "Bash|Write|Edit"
 其 schema 与钩子文件里使用的 JSON `hooks` 对象一致。钩子会从每一层读取，并以叠加的方式合并：低优先级的层可以新增钩子，但永远不能删除或替换另一层的块。每个钩子在 `/hooks-list` 里的名字都会带上它来自的层作为前缀（例如 `managed:` 或
 `requirements/user:`）。
 
-来自**由 root 拥有的**那些层的钩子（系统目录里的 `requirements.toml`，例如
-`/etc/grok/requirements.toml`，或 `/etc/grok/managed_config.toml`）是被强制实施的：
-无法从钩子面板、启用/禁用 API 或 `disabled-hooks` 文件里禁用它们，低优先级层里一份逐字节相同的副本也不能夺走它们的来源归属。这种强制依赖操作系统的文件属主——请把这些文件以 root 属主部署（或通过 MDM 分发）；没有签名校验。`$CHAOS_HOME` 各层（`requirements.toml`、`managed_config.toml`、`config.toml`）里的钩子仍然只是便利分发，不是强制边界：那个目录归用户所有，用户可以编辑或改指别处。
+来自两类层的钩子是被强制实施的：无法从钩子面板、启用/禁用 API 或 `disabled-hooks` 文件里禁用它们，低优先级层里一份逐字节相同的副本也不能夺走它们的来源归属。
+
+- **由 root 拥有的**系统层（系统目录里的 `requirements.toml`，例如 `/etc/grok/requirements.toml`，或 `/etc/grok/managed_config.toml`）。这种强制依赖操作系统的文件属主——请把这些文件以 root 属主部署（或通过 MDM 分发）；没有签名校验。
+- **带签名的** `$CHAOS_HOME/requirements.toml`（部署同步写入）。文件字节与服务器签名的信封（`requirements/signed:` 名称）一致时，其中的钩子被强制实施；被编辑过的副本、或签名文件缺失/不可读的，又变回用户自己的文件（`requirements/user:` 名称，可禁用）；不可读的 `requirements.toml` 不提供任何钩子。请搭配 `fail_closed = true`——它在遇到被编辑的副本或缺失签名时拒绝该会话（不可读文件算读取错误而非篡改，仍会启动）。
+
+`$CHAOS_HOME` 其他各层（`managed_config.toml`、`config.toml`）里的钩子仍然只是便利分发，不是强制边界：那个目录归用户所有，用户可以编辑或改指别处。
+`allow_managed_hooks_only = true` (also `allowManagedHooksOnly`) in any policy
+layer is a tighten-only pin that skips every hook that is not managed policy:
+user, project, plugin, agent-frontmatter, and vendor-compat hooks are left out of
+dispatch and show `[disabled]` in the modal, and enabling them is refused.
+ACP client-registered hooks are unaffected. A non-boolean value engages the pin.
 
 ---
 
@@ -1845,8 +1853,7 @@ context_window = 256000               # Total context window in tokens (for auto
 
 **凭据解析顺序：** `api_key` → `env_key` → 缓存的 `auth_provider` token（终态：缓存未命中就解析为没有凭据，绝不会用会话 token）→ 会话 token → `XAI_API_KEY`。见[每个模型的 Auth Provider](#per-model-auth-providers)。
 
-`context_window` 参数用于计算自动压缩何时触发。没有指定时，Chaos 对已知模型回退到内置默认值。
-
+`context_window` 参数用于计算自动压缩何时触发。没有指定时，Chaos 对已知模型回退到内置默认值。要提供可选的窗口列表，设置 `context_windows = [256000, 500000]`；`context_window` 保持为默认（未设置时取列表第一个），旧客户端忽略该列表。
 ### 行内 `<think>` 推理
 
 有些 OpenAI 兼容的推理模型会把思考文本放在 `content` 里以 `<think>...</think>` 的形式返回，而不是用 `reasoning_content`。开启按模型提取，就能把这些片段引导到可折叠的推理通道：
@@ -2070,10 +2077,9 @@ models_base_url = "https://api.acme.com/v1"
 api_key = "my-api-key"
 ```
 
-在使用 `[endpoints]` 加部分模型覆盖时，`base_url` 会从 endpoints 配置继承——你不需要在每个 `[model.*]` 段里再写一遍。
+在使用 `[endpoints]` 加部分模型覆盖时，`base_url` 会从 endpoints 配置继承——你不需要在每个 `[model.*]` 段里再写一遍。仍需要 `XAI_API_KEY`；每个模型的 `api_key`/`env_key` 用于该模型的推理请求鉴权；启动时的模型列表拉取仍使用 `XAI_API_KEY`。
 
-**认证行为：** 设置了 `models_base_url` 后，Chaos 使用 API key 认证（`Authorization: Bearer`）而不是会话认证。不需要 `chaos login`，只要有 API key。
-
+**认证行为：** 设置了 `models_base_url` 后，模型列表请求用 `XAI_API_KEY`（`Authorization: Bearer`）认证，从不使用 `chaos login` 会话；配置了外部认证提供器（`auth_provider_command`）且没有 `XAI_API_KEY` 时，改发提供器的 token；`XAI_API_KEY` 未设置时该请求会以要求设置它的错误失败。发往自定义主机的推理请求用各模型的 `api_key`/`env_key` 认证。
 ---
 
 ## MCP 服务器
@@ -2711,8 +2717,7 @@ tail -f ~/.chaos/debug/latest.txt
 
 ```bash
 # Debug auth, info for everything else
-GROK_LOG_FILE=/tmp/grok-debug.log RUST_LOG="info,xai_grok_shell::auth=debug" chaos
-```
+GROK_LOG_FILE=/tmp/grok-debug.log RUST_LOG="info,xai_grok_login=debug" chaos```
 
 ### 认证失败
 

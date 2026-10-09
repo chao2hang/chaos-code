@@ -52,7 +52,7 @@ fn outcome_label(outcome: &Result<TurnOutcome, agent_client_protocol::Error>) ->
         Ok(TurnOutcome::Completed { .. }) => "Ok(Completed)",
         Ok(TurnOutcome::Cancelled { .. }) => "Ok(Cancelled)",
         Ok(TurnOutcome::MaxTurnsReached { .. }) => "Ok(MaxTurnsReached)",
-        Ok(TurnOutcome::StationarityEnded { .. }) => "Ok(StationarityEnded)",
+        Ok(TurnOutcome::StationarityEnded) => "Ok(StationarityEnded)",
         Err(_) => "Err(inference terminal)",
     }
 }
@@ -131,6 +131,7 @@ async fn run_plan_only_turn(
             None,
             None,
             &mut length_salvage::LengthSalvage::new(None),
+            &mut Default::default(),
         ),
     )
     .await
@@ -158,7 +159,7 @@ async fn run_plan_only_turn(
                 item,
                 ConversationItem::User(user)
                     if user.synthetic_reason
-                        == Some(xai_grok_sampling_types::SyntheticReason::AutoRecovery)
+                        == xai_grok_sampling_types::SyntheticReason::AutoRecovery
             )
         })
         .count();
@@ -305,6 +306,7 @@ fn a_tool_free_round_never_triggers_the_incomplete_end_turn_retry() {
                     None,
                     None,
                     &mut length_salvage::LengthSalvage::new(None),
+                    &mut Default::default(),
                 ),
             )
             .await
@@ -327,7 +329,7 @@ fn a_tool_free_round_never_triggers_the_incomplete_end_turn_retry() {
                         item,
                         ConversationItem::User(user)
                             if user.synthetic_reason
-                                == Some(xai_grok_sampling_types::SyntheticReason::AutoRecovery)
+                                == xai_grok_sampling_types::SyntheticReason::AutoRecovery
                     )
                 })
                 .count();

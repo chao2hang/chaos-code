@@ -1309,7 +1309,7 @@ async fn test_stdio_prompt_then_immediate_load_session() {
     with_local_set(|| async {
         let server = MockInferenceServer::start().await.expect("start mock server");
         let workdir = git_workdir();
-        let mut writer = GrokStdioClient::spawn(&server, workdir.workspace()).await;
+        let writer = GrokStdioClient::spawn(&server, workdir.workspace()).await;
 
         let init_resp = writer.initialize_with_timeout().await;
         assert!(
@@ -1327,8 +1327,7 @@ async fn test_stdio_prompt_then_immediate_load_session() {
             stderr_tail(&writer.stderr(), 1200)
         );
 
-        let shared_sandbox = writer.take_sandbox();
-        drop(writer);
+        let shared_sandbox = writer.into_sandbox();
 
         let reader = GrokStdioClient::spawn_with_sandbox(
             &server,

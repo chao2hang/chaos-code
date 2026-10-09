@@ -11,15 +11,21 @@ use crate::render::color::{indexed_to_rgb, nearest_indexed};
 use crate::terminal::{TerminalName, terminal_context};
 
 /// Terminal color support level (ordered low to high).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::AsRefStr, strum::IntoStaticStr,
+)]
 pub enum ColorLevel {
     /// No color support (monochrome).
+    #[strum(serialize = "none")]
     None,
     /// Basic 16-color ANSI (SGR 30–37 / 90–97).
+    #[strum(serialize = "basic")]
     Basic,
     /// 256-color indexed palette (SGR 38;5;N).
+    #[strum(serialize = "256")]
     Ansi256,
     /// 24-bit truecolor RGB (SGR 38;2;R;G;B).
+    #[strum(serialize = "truecolor")]
     TrueColor,
 }
 
@@ -35,22 +41,11 @@ impl ColorLevel {
     pub fn has_truecolor(self) -> bool {
         self >= Self::TrueColor
     }
-
-    /// Canonical lowercase spelling that round-trips through the `GROK_FORCE_COLOR_LEVEL` parser.
-    /// Use this in user-facing diagnostics (not `{:?}` Debug, which yields `Basic` / `Ansi256` / `TrueColor` / `None`).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Basic => "basic",
-            Self::Ansi256 => "256",
-            Self::TrueColor => "truecolor",
-        }
-    }
 }
 
 impl std::fmt::Display for ColorLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(self.as_ref())
     }
 }
 
@@ -221,14 +216,7 @@ pub fn set(level: ColorLevel) -> Result<(), ColorLevel> {
 
 // ── Color quantization ──────────────────────────────────────────────────
 
-/// Downgrade a [`Color`] to the highest representation the terminal supports.
-///
-/// | Terminal level | `Rgb`            | `Indexed`         | Named (`Red`…) |
-/// |----------------|------------------|--------------------|----------------|
-/// | TrueColor      | pass-through     | pass-through       | pass-through   |
-/// | Ansi256        | → nearest idx    | pass-through       | pass-through   |
-/// | Basic          | → nearest ANSI16 | → nearest ANSI16   | pass-through   |
-/// | None           | → `Reset`        | → `Reset`          | → `Reset`      |
+/// Downgrade to what the terminal can show: Ansi256 nearest-index, Basic nearest ANSI16, None to `Reset`.
 pub fn quantize_color(color: Color, level: ColorLevel) -> Color {
     match level {
         ColorLevel::TrueColor => color,
@@ -310,10 +298,7 @@ fn indexed_to_ansi16(n: u8) -> Color {
     }
 }
 
-/// Find the nearest ANSI 16 color for an RGB triplet.
-///
-/// Uses a simple squared-Euclidean distance over the standard xterm ANSI 16 palette.
-/// That is good enough for a fallback; 16-color terminals are very rare.
+/// Nearest xterm ANSI 16 by squared-Euclidean distance. Fallback only; 16-color terminals are rare.
 fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> Color {
     // Standard xterm ANSI 16 palette (same values used by indexed_to_rgb for 0–15).
     const PALETTE: [(u8, u8, u8, Color); 16] = [

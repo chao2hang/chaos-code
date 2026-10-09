@@ -22,17 +22,14 @@ pub struct DiagnosticsSummary {
     pub diagnostic_count: usize,
 }
 
-/// How many diagnostics one file may contribute to a summary.
-///
-/// A file with forty errors is usually one mistake seen forty times, and the
-/// fortieth line teaches the reader nothing the first ten did not.
+/// How many diagnostics one file may contribute to a summary. A file with forty errors is usually
+/// one mistake seen forty times, and the fortieth line teaches the reader nothing the first ten did
+/// not.
 const MAX_PER_FILE: usize = 10;
 
-/// How many a whole summary may carry.
-///
-/// A refresh re-opens every document at once, so without a ceiling the first
-/// one on a large solution could put every problem in the workspace into a
-/// single tool result.
+/// How many a whole summary may carry. A refresh re-opens every document at once, so without a
+/// ceiling the first one on a large solution could put every problem in the workspace into a single
+/// tool result.
 const MAX_PER_SUMMARY: usize = 30;
 
 /// What a drain found: the lines to show, and the counts that go with them.
@@ -55,13 +52,9 @@ struct Reopened {
 }
 
 impl CollectedDiagnostics {
-    /// Add the reportable diagnostics for one file. A file with nothing worth
-    /// showing — clean, or only hints and information — adds no header.
-    ///
-    /// Errors come before warnings, and both are capped, so what survives a
-    /// trim is the part worth reading. The line each was reported on breaks
-    /// ties, so the order does not depend on how the server happened to sort
-    /// them.
+    /// Add the reportable diagnostics for one file. A file with nothing worth showing — clean, or only hints and information — adds no header.
+    /// Errors come before warnings, and both are capped, so what survives a trim is the part worth reading. The line each was reported on breaks
+    /// ties, so the order does not depend on how the server happened to sort them.
     fn append_file(&mut self, uri: &str, items: Vec<Diagnostic>) {
         let mut reportable: Vec<(&str, &Diagnostic)> = items
             .iter()
@@ -104,11 +97,9 @@ impl CollectedDiagnostics {
         }
     }
 
-    /// The line that tells the reader something was left out, if anything was.
-    ///
-    /// Silently truncating would be worse than not reporting at all: the reader
-    /// would take a partial list for the whole truth and conclude the rest of
-    /// the file was fine.
+    /// The line that tells the reader something was left out, if anything was. Silently truncating
+    /// would be worse than not reporting at all: the reader would take a partial list for the whole
+    /// truth and conclude the rest of the file was fine.
     fn trimmed_note(&self) -> Option<String> {
         let hidden = self.diagnostic_count.saturating_sub(self.shown);
         (hidden > 0).then(|| format!("… and {hidden} more not shown"))
@@ -188,11 +179,9 @@ impl LspManager {
         lifecycle_id
     }
 
-    /// Start waiting for the server's verdict on `uri`.
-    ///
-    /// `version` is the document version the change was sent as — a verdict on
-    /// that version or a later one settles it, and one on an earlier version
-    /// does not. See [`PendingEdits`].
+    /// Start waiting for the server's verdict on `uri`. `version` is the document version the
+    /// change was sent as — a verdict on that version or a later one settles it, and one on an
+    /// earlier version does not. See [`PendingEdits`].
     pub fn mark_uri_pending_diagnostics(
         &mut self,
         server_name: &str,
@@ -236,11 +225,9 @@ impl LspManager {
             {
                 Ok(mut client) => {
                     if !client.enroll(self.process_scope.as_ref()) {
-                        // Session teardown raced this start: the closed scope
-                        // killed the child at registration. Installing the
-                        // client would advertise a dead server and feed the
-                        // restart monitor respawn churn, so stop starting
-                        // servers for this manager instead.
+                        // Session teardown raced this start: the closed scope killed the child at registration. Installing the client would
+                        // advertise a dead server and feed the restart monitor respawn churn, so stop starting servers for this manager
+                        // instead.
                         tracing::info!(server = %name, "session scope closed during LSP start; discarding server");
                         self.shutting_down = true;
                         return;
@@ -444,13 +431,9 @@ impl LspManager {
             .unwrap_or(false)
     }
 
-    /// Take the verdicts the servers have given on the files we are waiting on,
-    /// and report the problems among them.
-    ///
-    /// Every file this settles leaves the pending set, whether or not it
-    /// produced a line to show: "no problems" is a verdict, and a file that
-    /// keeps waiting for one it has already had is what makes the set grow
-    /// without bound.
+    /// Take the verdicts the servers have given on the files we are waiting on, and report the problems among them. Every
+    /// file this settles leaves the pending set, whether or not it produced a line to show: "no problems" is a verdict, and
+    /// a file that keeps waiting for one it has already had is what makes the set grow without bound.
     fn take_answered_diagnostics(&mut self) -> Option<DiagnosticsSummary> {
         let now = Instant::now();
         let mut collected = CollectedDiagnostics::default();
@@ -634,20 +617,18 @@ impl LspManager {
     }
 }
 
-/// Wait, up to `timeout`, for the servers to say something about the files we
-/// have told them about, and report whatever they said.
-///
-/// Drops the lock across the wait so `notify_file_changed` isn't blocked.
+/// Wait, up to `timeout`, for the servers to say something about the files we have told them about,
+/// and report whatever they said. Drops the lock across the wait so `notify_file_changed` isn't
+/// blocked.
 pub async fn drain_lsp_diagnostics(
     lsp_manager: &tokio::sync::Mutex<LspManager>,
     timeout: std::time::Duration,
 ) -> Option<DiagnosticsSummary> {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut lsp = lsp_manager.lock().await;
-    // Set once the budget is spent. Checked only *after* collecting, so the
-    // store is always read one final time before we conclude there was nothing:
-    // a report can land between the wait's last poll and our re-taking the
-    // lock, and it would otherwise sit unread.
+    // Set once the budget is spent. Checked only *after* collecting, so the store is always read
+    // one final time before we conclude there was nothing: a report can land between the wait's
+    // last poll and our re-taking the lock, and it would otherwise sit unread.
     let mut out_of_time = false;
 
     loop {
@@ -684,10 +665,9 @@ pub async fn drain_lsp_diagnostics(
         notified.as_mut().enable();
         drop(lsp);
 
-        // Every document shares this notification, so being woken is not proof
-        // that *our* files were answered — a publish for some other file wakes
-        // us just the same. Go back and look, and if it was not for us, keep
-        // waiting until it is or the budget runs out.
+        // Every document shares this notification, so being woken is not proof that *our* files
+        // were answered — a publish for some other file wakes us just the same. Go back and look,
+        // and if it was not for us, keep waiting until it is or the budget runs out.
         out_of_time = tokio::time::timeout_at(deadline, notified).await.is_err();
         lsp = lsp_manager.lock().await;
     }
@@ -772,12 +752,18 @@ mod tests {
         collected.append_file("file:///a.cs", items);
 
         assert!(
-            collected.lines[1].contains("an error"),
+            collected
+                .lines
+                .get(1)
+                .is_some_and(|l| l.contains("an error")),
             "{:?}",
             collected.lines
         );
         assert!(
-            collected.lines[2].contains("a warning"),
+            collected
+                .lines
+                .get(2)
+                .is_some_and(|l| l.contains("a warning")),
             "{:?}",
             collected.lines
         );

@@ -7,13 +7,8 @@ use crate::terminal::{TerminalName, terminal_context};
 
 use super::{ActionDef, ActionId, Category, When};
 
-/// True when `Ctrl+.` is not a reliable primary key for the shortcuts cheatsheet.
-///
-/// Callers pick an alternate primary that can arrive (`Ctrl+X` on the agent screen, `?` on the dashboard).
-/// Both keys stay registered either way; this only chooses which the UI advertises.
-///
-/// Driven by [`crate::terminal::TerminalContext::ctrl_dot_unreliable`] (any KKP skip: brand, tmux `extended-keys off`, screen, unknown host).
-/// Host-OS signals add to it: native Windows on a non-branded console, or a Linux binary inside Win32's console pipeline (WSL).
+/// True when `Ctrl+.` is not a reliable primary key for the shortcuts cheatsheet. Both keys stay registered either
+/// way; this only chooses which the UI advertises.
 pub fn ctrl_dot_unreliable() -> bool {
     terminal_context().ctrl_dot_unreliable() || cfg!(target_os = "windows") || crate::host::is_wsl()
 }
@@ -519,7 +514,10 @@ pub(super) fn default_actions(
             description: "循环模式（普通 / 计划 / 总是批准）",
             // All Shift+Tab encodings — see `input::key::shift_tab_keys()`.
             default_key: crate::input::key::shift_tab_keys()[0],
-            alt_keys: crate::input::key::shift_tab_keys()[1..].to_vec(),
+            alt_keys: crate::input::key::shift_tab_keys()
+                .get(1..)
+                .map(<[_]>::to_vec)
+                .unwrap_or_else(Vec::new),
             category: Category::GettingStarted,
             context: When::PromptFocused,
             hint_priority: None,
@@ -580,7 +578,7 @@ pub(super) fn default_actions(
             description: "打开会话列表",
             default_key: key!(F(3)),
             alt_keys: vec![],
-            category: Category::Panels,
+            category: Category::Session,
             context: When::AgentScreen,
             hint_priority: None,
             hint_key_display: None,
@@ -672,11 +670,8 @@ pub(super) fn default_actions(
             long_help: None,
         },
         ActionDef {
-            // Voice capture chord (the same capture as `/voice`; Esc/Enter stop)
-            // Bound to both Ctrl+Space and F8
-            // Ctrl+Space decodes on every terminal (without the Kitty protocol it collapses to NUL, reported as `Char(' ')`+CONTROL)
-            // F8 is a fallback for OSes/terminals that intercept Ctrl+Space (e.g. macOS input-source switching; use Fn+F8 on a laptop).
-            // The event loop maps a press to hold-to-talk or tap-toggle per `[ui].voice_capture_mode` before normal routing
+            // Voice capture chord (the same capture as `/voice`; Esc/Enter stop). Ctrl+Space decodes on every terminal
+            // (without the Kitty protocol it collapses to NUL, reported as `Char(' ')`+CONTROL).
             id: ActionId::VoiceToggle,
             label: "麦克风",
             description: "语音听写（Ctrl+Space / F8）",
@@ -692,7 +687,7 @@ pub(super) fn default_actions(
                 "用于听写的麦克风采集，绑定 Ctrl+Space（或 F8：在 Ctrl+Space 被占用时更方便，例如 macOS 的输入法切换；笔记本上请用 Fn+F8）。\n行为取决于「语音采集」设置：切换（按一下开始、再按一下停止）或按住说话（按住录音、松开停止），后者需要 Kitty 协议的终端，否则回退为切换。`/voice` 在所有地方都可切换。\n语音会直接转写进提示框。",
             ),
         },
-        // Prompt history has no key chord (Ctrl+R is deliberately unbound):
+        // Prompt history has no key chord of its own:
         // `/history` opens the search panel; Up on an empty prompt browses.
         ActionDef {
             id: ActionId::ToggleMultiline,
@@ -862,12 +857,8 @@ pub(super) fn default_actions(
         },
     ];
 
-    // Toggle terminal mouse reporting (mouse capture). Opt-in via `[ui] mouse_reporting_toggle = true` in config.toml.
-    // Disabling capture hands mouse selection back to the terminal for native click-drag copy/paste; re-enabling restores in-app mouse support
-    //
-    // Single binding: Ctrl+R on scrollback only (not prompt, where Ctrl+R remains prompt history search)
-    // Plain Ctrl+letter passes through Apple Terminal; this avoids Ctrl+Shift+… chords that Terminal.app often swallows
-    // Under Panels (not Essentials): advanced/opt-in only
+    // Toggle terminal mouse reporting (mouse capture). Single binding: Ctrl+R on scrollback only, which takes that
+    // chord from OpenSessions while scrollback is focused. Under Panels (not Essentials): advanced/opt-in only.
     if mouse_reporting_toggle_enabled {
         actions.push(ActionDef {
             id: ActionId::ToggleMouseCapture,
@@ -884,14 +875,9 @@ pub(super) fn default_actions(
         });
     }
 
-    // Agent Dashboard ----------------------------------------------------
-    //
-    // The `Ctrl+\` entry point and every in-dashboard shortcut are registered here
-    // They all share the dedicated `Category::Dashboard` section so the cheatsheet groups them under a single "Dashboard" header
-    // That keeps them out of Panels / Session / Navigation
-    //
-    // `Ctrl+\` (OpenDashboard) is registered against `Always` (global) so it works from any view, including the dashboard itself (which Esc closes)
-    // Configurable through the standard config.toml mechanism
+    // They all share the dedicated `Category::Dashboard` section so the cheatsheet groups them under a single
+    // "Dashboard" header. `Ctrl+\` (OpenDashboard) is registered against `Always` (global) so it works from any view,
+    // including the dashboard itself (which Esc closes).
     actions.extend([
         ActionDef {
             id: ActionId::OpenDashboard,
@@ -996,7 +982,10 @@ pub(super) fn default_actions(
             // Registry `matches` is exact-modifier, so the SHIFT-bearing
             // forms must be alts.
             default_key: crate::input::key::shift_tab_keys()[0],
-            alt_keys: crate::input::key::shift_tab_keys()[1..].to_vec(),
+            alt_keys: crate::input::key::shift_tab_keys()
+                .get(1..)
+                .map(<[_]>::to_vec)
+                .unwrap_or_else(Vec::new),
             category: Category::Dashboard,
             context: When::DashboardFocused,
             hint_priority: None,
@@ -1075,13 +1064,9 @@ pub(super) fn default_actions(
             requires_confirmation: false,
             long_help: None,
         },
-        // `DashboardExit` is registered as a discoverable action with its default key set to Esc
-        // The in-dashboard Esc behaviour is a multi-tier cascade (peek, then input/filter, then exit) that no single action can express
-        // The Esc cascade in `state::handle_key` runs before this registry lookup, so Esc always cascades
-        // A user who rebinds Esc to something else gains a discoverable exit shortcut for the rebound key
-        // The original Esc cascade still works because the cascade is keyed on `KeyCode::Esc` directly
-        // The contract is therefore: "Esc always cascades; any other key bound to `DashboardExit` exits directly."
-        // The hint key shows the effective binding via `Esc` as a fallback
+        // `DashboardExit` is registered as a discoverable action with its default key set to Esc. The Esc cascade in
+        // `state::handle_key` runs before this registry lookup, so Esc always cascades. The original Esc cascade still
+        // works because the cascade is keyed on `KeyCode::Esc` directly. The contract is therefore: "Esc always cascades.
         ActionDef {
             id: ActionId::DashboardExit,
             label: "退出",
@@ -1131,10 +1116,8 @@ pub(super) fn default_actions(
                 "打开选择器，设置新派发的看板代理所运行的工作目录。\n不用离开看板就能让代理在别的仓库或目录中启动。\n只影响新派发的代理，不影响已在运行的代理。",
             ),
         },
-        // Toggle worktree-dispatch mode
-        // Ctrl+W ("worktree") makes the next dashboard-dispatched session spawn in a fresh git worktree
-        // The dispatcher gates it on the cwd being a git repo
-        // Free under `DashboardFocused` (Ctrl+W only binds the overlay-exit fallback under `DashboardOverlay`, a different context)
+        // Toggle worktree-dispatch mode. Free under `DashboardFocused` (Ctrl+W only binds the overlay-exit fallback under
+        // `DashboardOverlay`, a different context).
         ActionDef {
             id: ActionId::DashboardToggleWorktree,
             label: "工作树",

@@ -512,7 +512,7 @@ fn config_diff_clears_tools_of_the_removed_server() {
     let qualified = |server: &str, tool: &str| format!("{server}{MCP_TOOL_NAME_DELIMITER}{tool}");
 
     let mut state = McpState::new(vec![dropped.clone(), kept.clone()]);
-    let generation_before = state.generation();
+    let generation_before = state.current_generation();
     state
         .mcp_tool_meta
         .insert(qualified("dropped", "secret_tool"), json!({}));
@@ -546,13 +546,24 @@ fn config_diff_clears_tools_of_the_removed_server() {
         state.is_tool_disabled("dropped", "off_tool"),
         "disabled_tools is persisted config and survives the server being removed"
     );
-    assert_eq!(state.generation(), generation_before + 1);
+    let generation_after_change = state.current_generation();
+    assert!(
+        generation_before.is_cancelled(),
+        "removing a server must replace the generation"
+    );
+    assert!(
+        !generation_after_change.is_cancelled(),
+        "the fresh generation must not already be replaced"
+    );
 
     assert!(
         state.update_configs_diff(vec![kept]).is_none(),
         "an identical config list must be a no-op, so healthy servers are not torn down"
     );
-    assert_eq!(state.generation(), generation_before + 1);
+    assert!(
+        !generation_after_change.is_cancelled(),
+        "a no-op config update must not replace the generation"
+    );
 }
 
 /// Whether `pid` exists as a running (or sleeping, or stopped) process.

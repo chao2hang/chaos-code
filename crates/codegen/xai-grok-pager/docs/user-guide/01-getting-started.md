@@ -22,7 +22,54 @@ cargo build -p xai-grok-pager-bin --release
 cargo run -p xai-grok-pager-bin
 ```
 
-（上游官方安装脚本安装的是 `grok`，与本 fork 无关。）
+（上游官方安装脚本安装的是 `grok`，与本 fork 无关。以下安装说明均指上游产品，
+供对照参考。）
+
+**Windows (PowerShell)** 下，上游提供原生 PowerShell 安装器：
+
+```powershell
+irm https://x.ai/cli/install.ps1 | iex
+```
+
+安装指定版本：
+
+```powershell
+$env:GROK_VERSION="0.1.42"; irm https://x.ai/cli/install.ps1 | iex
+```
+
+上游 PowerShell 安装器会自动把 `%USERPROFILE%\.grok\bin` 加入用户 PATH；
+也可改用 [Git for Windows](https://gitforwindows.org/)（Git Bash）或 MSYS2
+运行上面的 bash 脚本。WSL 用户会自动得到 Linux 二进制。
+
+验证安装（上游命令）：
+```bash
+grok --version
+```
+
+随时更新到最新版（上游命令）：
+```bash
+grok update
+```
+
+若通过 WinGet 安装了 Grok Build，请改用 WinGet 更新：先退出 Grok，再运行：
+```powershell
+winget upgrade --id xAI.GrokBuild -e
+```
+
+WinGet 安装下，`grok update`（上游命令）只会打印该命令、不做任何改动。
+WinGet 包跟踪稳定频道，新版本可能需要几天才会到达。
+
+通过 Grove（macOS 上为 NFS、Linux 上为 FUSE）获取仓库时，可以用 Grove 配置
+的 `[clone] enabled = true`、`GROK_CLONE=1`，或"两者都开"的便捷开关
+`GROK_GROVE=1` / `~/.grok/config.toml` 中的 `[cli] grove = true` 来启用
+`grok clone`（上游功能，本分叉不含，兼容说明）：
+```bash
+grok clone <url> [dir]
+```
+
+默认为所选分支的 depth-1 检出；加 `--full-history` 做完整克隆。克隆的启用
+与会话 / `-w` Grove 工作树相互独立（上面的便捷开关会同时打开两者，具体开关
+仍优先）。详见[配置参考](26-config-reference.md)。
 
 ---
 
@@ -51,7 +98,7 @@ Chaos **不会**打开浏览器登录 grok.com。缺少凭证时，欢迎页会�
 
 输入消息后按 `Enter` 发送。助手会按需读文件、跑命令、改代码；工具输出实时进入回滚区。
 
-按 `Tab` 可在提示框与回滚区之间切换焦点。回合运行期间，输入框为空时 `Ctrl+C` 会取消该回合；若输入框里还有草稿，第一次按下只会清空草稿。`Esc` 从不取消回合——回合进行中按下它只会提示你改用 `Ctrl+C`。空闲时，800ms 内连按两次 `Esc` 可清空非空的提示框；若提示框为空且已有对话消息，则会打开回滚——见[键盘快捷键](03-keyboard-shortcuts.md#escape)。回滚区获得焦点后，可用方向键选中条目并折叠或展开它们。若想改用 `j`/`k` 导航、`h`/`l` 折叠，请启用 Vim 模式。
+按 `Tab` 可在提示框与回滚区之间切换焦点。回合运行期间，输入框为空时 `Ctrl+C` 会取消该回合；若输入框里还有草稿，第一次按下只会清空草稿。`Esc` 从不取消回合——回合进行中按下它只会提示你改用 `Ctrl+C`。空闲时，800ms 内连按两次 `Esc` 可清空非空的提示框；若提示框为空且已有对话消息，则会打开回退（rewind）选择器——见[键盘快捷键](03-keyboard-shortcuts.md#escape)。回滚区获得焦点后，可用方向键选中条目并折叠或展开它们。若想改用 `j`/`k` 导航、`h`/`l` 折叠，请启用 Vim 模式。
 
 ### 文件引用
 

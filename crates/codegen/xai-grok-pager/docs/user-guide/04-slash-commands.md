@@ -24,20 +24,15 @@
 
 它不是 `/config-agents`（别名 `/agents`）—— 后者管理代理*定义*与人设。最小模式下隐藏；用 `GROK_AGENT_DASHBOARD=0` 或 `[dashboard].enabled = false` 关闭。
 
-### `/compact [context]`
+### `/compact`
 
-压缩对话历史，回收上下文窗口的空间。可以带一段说明，告诉 Chaos 要保留什么：
-
-```
-/compact
-/compact keep the auth implementation details
-```
+压缩对话历史，回收上下文窗口的空间。
 
 上下文窗口用到 85% 时 Chaos 也会自动压缩（用 `[session] auto_compact_threshold_percent` 调这个阈值）。
 
 ### `/context`
 
-展示上下文窗口的使用情况：按类别拆分（系统提示、消息、推理与开销、剩余空间），外加若干信息行 —— 工具定义、技能清单，以及 MCP 服务器通告及其估算的 token 开销。
+展示上下文窗口的使用情况：按类别拆分（系统提示、消息、推理与开销、剩余空间），外加若干信息行 —— 工具定义、技能清单，以及 MCP 服务器通告及其估算的 token 开销。这些行已计入上述合计，不重复累加。
 
 ### `/session-info`
 
@@ -99,12 +94,13 @@
 
 ### `/model <name>`
 
-切换模型。接受模型 ID 或显示名（不区分大小写），还可以把推理等级作为第二个参数传进去。没有等级元数据的模型使用内置的回退等级。别名：`/m`。
+切换模型。接受模型 ID 或显示名（不区分大小写）。模型支持多个上下文窗口时，可以在其后追加窗口大小；推理模型可以把推理等级放在最后。选择器按同样的顺序询问：模型、窗口、等级。没有等级元数据的模型使用内置的回退等级。别名：`/m`。
 
 ```
 /model grok-4.6
 /model Grok 4.6
 /model Reasoning X high
+/model Reasoning X 500k high
 ```
 
 ### `/effort <level>`（别名 `/think`）
@@ -113,6 +109,17 @@
 
 ```
 /effort high
+```
+
+### `/context-window <size>`
+
+为当前模型设置上下文窗口。仅当模型支持多种大小时才会列出这条命令，接受短
+标签或原始 token 数。在这里做的选择在本会话内持续有效，并带到支持同一大小的
+新模型上。小于当前用量的大小会启动一次自动压缩。
+
+```
+/context-window 500k
+/context-window 256000
 ```
 
 ### `/always-approve` 与 `/auto`
@@ -128,7 +135,7 @@
 
 ### `/multiline`
 
-切换多行输入。打开时 `Enter` 插入换行，`Shift+Enter`（或 `Alt+Enter`）发送消息。回合进行中，在空的输入框里光按一下 `Enter` 仍然会强制发送队列里最上面那条后续消息。别名：`/ml`。
+切换多行输入。打开时 `Enter` 插入换行，`Shift+Enter`（或 `Alt+Enter`）发送消息。回合进行中，在空的输入框里光按一下 `Enter` 仍然会强制发送队列里最上面那条后续消息。别名：`/ml`。关闭多行时，草稿非空后底部栏会显示换行组合键。
 
 ### `/history`
 
@@ -174,24 +181,23 @@
 
 ## 记忆
 
-`/flush` 与 `/dream` 要求记忆已启用 —— 通过 `GROK_MEMORY=1`、`[memory] enabled = true`，或托管的远程设置。`/memory` 的要求不一样：只要记忆后端**已配置**就能用，哪怕记忆当前是关的，这样你关掉之后还能用 `/memory` 把它打开。`/remember` 始终可用。
+`/flush` 与 `/dream` 要求记忆已启用 —— 通过 `GROK_MEMORY=1`、`[memory] enabled = true`，或托管的远程设置。`/memory` 的要求不一样：只要本会话配置了记忆后端就能用，哪怕 `[memory] enabled = false` 把记忆关了，这样你还能在模态里浏览已保存的笔记、并在本会话内把记忆打开。只有当没有配置任何记忆后端，或 `--no-memory` / `GROK_MEMORY=0` 在整个进程范围内关闭了记忆时，它才会被隐藏。`/remember` 始终可用。
 
 ### `/memory`
 
-浏览、查看和管理已保存的记忆。传 `on` 或 `off` 可以打开或关闭记忆。别名：`/mem`。
+浏览、查看和管理已保存的记忆。别名：`/mem`。在模态内，`t` 在本会话内打开或关闭记忆，`x` 删除选中的笔记，`s` 显示不含内容的队列、租约、保留与固定放量诊断。`t` 开关只作用于本会话：它不改 `config.toml`，新会话仍按配置来，也覆盖不了 `--no-memory` 或 `GROK_MEMORY=0`。
 
 ```
 /memory
-/memory off
 ```
 
 ### `/flush`
 
-立刻把当前会话的知识写进记忆，触发一次由模型归纳的「最重要内容」摘要。压缩之前值得用一次，任何时候想把上下文钉下来也可以用。回滚区里会给出一行提示，写明这次的触发原因与保存路径；headless 下则输出保存结果。
+立刻把当前会话的知识写进记忆，触发一次由模型归纳的「最重要内容」摘要。压缩之前值得用一次，任何时候想把上下文钉下来也可以用。运行期间状态行会显示「Flushing memory…」，回滚区里的一行会报告结果（例如 "Memory flushed through turn 12"）；headless 下则输出保存结果。
 
 ### `/dream`
 
-执行记忆整理 —— 把工作区的会话日志交给模型归纳，折叠回工作区那份 `MEMORY.md`，然后删掉已经处理过的会话日志。成功时**没有**用户可见输出；只有被跳过时才会说明原因。
+执行记忆整理 —— 把会话日志合并进整理好的主题。运行期间状态行会显示「Consolidating memory…」，回滚区里的一行会报告发生了什么：多少条观察合并进了多少个主题、没有可整理的内容、或另一个会话正在整理。
 
 ### `/remember`
 
@@ -328,7 +334,7 @@ shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`�
 
 ### `/feedback [message]`
 
-报告问题或发送反馈。会打开一个报告面板：`Enter` 发送，`Esc` 丢弃。带的消息会预先填进面板，方便你在发送前修改。在 `--minimal` 下，带的消息仍然立即发送。
+报告问题或发送反馈。裸 `/feedback` 在任何模式下（包括 `--minimal`）都会打开反馈表单。其 **Write** 标签是报告框：`Enter` 发送，`Esc` 关闭；其 **Drafts** 标签（`Ctrl+Tab` 切换）存放留待稍后发送的报告 —— 发送失败的，以及代理替你起草的 —— 在 Write 中按 `Enter` 可把选中的一份载入，审阅、选类型并发送。`/feedback <message>` 在任何模式下都立即发送该消息；发送失败时，消息会存入 Drafts。
 
 ```
 /feedback
@@ -339,8 +345,16 @@ shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`�
 
 给代理发一句题外话，不打断当前任务。在最小模式（`--minimal`）下，回答会显示在提示框上方一个可关闭的面板里：`Esc` 关掉它，已经写好的回答会存进原生回滚区，而给一个已经关掉的面板送来的迟到回复会被丢弃。这条旁问和它的回答不属于主回合。
 
+`/btw` 也可以出现在消息中间：整条消息（去掉该标记后）成为旁问，什么都不会
+发给主回合。只有 `/btw` 这样工作；其他命令必须位于消息开头。多行的旁问请用
+`Alt+Enter`（SSH 上）或 `Shift+Enter`、行尾 `\`，或 `/ml`。不要依赖
+`Cmd+Enter`：Apple Terminal 会通过 CoreGraphics 在本地插入换行；送达的
+`SUPER+Enter`（Kitty）也是插入换行而非发送；SSH 上 Cmd 修饰键到不了，该组合
+会直接发送。
+
 ```
 /btw also check the error handling
+fix the retry loop first. /btw what does WBC stand for?
 ```
 
 ### `/mcps`
@@ -418,7 +432,7 @@ Chaos 没有需要退出的登录会话。这条命令只打印一条提示，�
 /usage manage
 ```
 
-它打开的是一个三标签的会话内模态：Context usage / Usage limit / Session info，默认停在 Usage limit。配置了外部认证提供方的安装里，这条命令会被隐藏。
+它打开的是一个三标签的会话内模态：Context usage / Usage limit / Session info，默认停在 Usage limit。从[代理看板](23-dashboard.md)也能打开同一个模态 —— 看板上没有会话，所以只有 **Usage limit** 标签有数据。配置了外部认证提供方的安装里，这条命令会被隐藏。
 
 要查看任何本地会话逐回合的 token 与费用累计，用 shell 里的 `chaos usage <session-id> [turn]`。见[会话管理](17-sessions.md#chaos-usage-子命令)。
 

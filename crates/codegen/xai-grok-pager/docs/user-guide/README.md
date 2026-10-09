@@ -58,3 +58,5 @@
 | 22 | [权限与安全](22-permissions-and-safety.md) | 权限与安全 |
 | 23 | [代理看板](23-dashboard.md) | 本地会话总览 |
 | 24 | [用量监视（外部 OpenTelemetry）](24-monitoring-usage.md) | 外部 OTEL 导出 |
+| 25 | [状态栏](25-status-line.md) | 底部状态行：内置段、命令脚本与 stdin JSON 契约 |
+| 26 | [配置参考](26-config-reference.md) | `config.toml`、`managed_config.toml` 与 `requirements.toml` 的字段列表 |

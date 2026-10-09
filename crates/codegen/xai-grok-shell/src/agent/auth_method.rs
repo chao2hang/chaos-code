@@ -2,15 +2,11 @@ use crate::util::shared_guard::ReadWriteOrRecover;
 use agent_client_protocol as acp;
 
 use crate::agent::config::ModelEntry;
-use crate::auth::PreferredAuthMethod;
+use xai_grok_login::PreferredAuthMethod;
 
-/// Shared, live handle to the agent's current ACP auth method id.
-///
-/// `Arc` so a clone can cross the per-session-thread boundary at spawn.
-/// The `ArcSwapOption` interior lets the agent's `authenticate` handler publish a new method without re-spawning sessions.
-/// Every running session's per-turn auth gate observes the new method on its next turn.
-/// `None` until the first `authenticate`.
-/// Auth is process-global (one user, one `AuthManager`), so all sessions sharing one cell is correct.
+/// Shared, live handle to the agent's current ACP auth method id. `Arc` so a clone can cross the per-session-thread boundary at spawn.
+/// The `ArcSwapOption` interior lets the agent's `authenticate` handler publish a new method without re-spawning sessions. Every running session's per-turn auth gate observes the new method on its next turn.
+/// `None` until the first `authenticate`. Auth is process-global (one user, one `AuthManager`), so all sessions sharing one cell is correct.
 pub(crate) type SharedAuthMethodId = std::sync::Arc<arc_swap::ArcSwapOption<acp::AuthMethodId>>;
 
 /// Construct a [`SharedAuthMethodId`]. `None` is the pre-`authenticate` state.
@@ -147,10 +143,7 @@ where
     has_byok || (has_xai_api_key_env() && first_party_env_ok)
 }
 
-/// Inputs to [`build_auth_methods`].
-///
-/// The caller (`MvpAgent::initialize()`) computes the booleans.
-/// They depend on async side effects (token refresh) and shared mutable state (`AuthManager`).
+/// Inputs to [`build_auth_methods`]. The caller (`MvpAgent::initialize()`) computes the booleans. They depend on async side effects (token refresh) and shared mutable state (`AuthManager`).
 /// The list-construction logic itself is pure so it can be unit-tested without any of that machinery.
 ///
 /// CHAOS BEHAVIOR: the struct keeps upstream's field set so the ported call site stays readable, but
@@ -377,7 +370,8 @@ pub fn is_session_based_method(method_id: &acp::AuthMethodId) -> bool {
 }
 
 /// Per-model BYOK status: whether the selected model carries its own `[model.*]` `api_key`/`env_key`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::AsRefStr, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum ModelByok {
     /// Model has its own per-model key (not refreshable).
     Byok,
@@ -819,7 +813,10 @@ mod tests {
         assert_eq!(default_id(&built), Some(XAI_API_KEY_METHOD_ID));
         // The pager-side predicate: the first method must not require interactive login.
         assert!(
-            !AuthMethodKind::from_id(built.methods[0].id()).needs_interactive_login(),
+            built
+                .methods
+                .first()
+                .is_some_and(|m| !AuthMethodKind::from_id(m.id()).needs_interactive_login()),
             "first method MUST NOT need interactive login when xai.api_key is available",
         );
     }
@@ -851,6 +848,7 @@ mod tests {
     ///
     /// The unset branch is the non-vacuity control for the set branch. It asserts only the
     /// predicate, because in Chaos the advertised list is the same either way.
+
     #[test]
     #[serial]
     fn enterprise_byok_config_does_not_require_login() {
@@ -863,6 +861,7 @@ mod tests {
 
         let dm = crate::models::default_model();
         let toml = byok_config(TEST_ENV_VAR);
+
         let cfg = Config::new_from_toml_cfg(&toml).expect("config should parse");
         let models = resolve_model_list(&cfg, None);
         let model = models.get(dm).expect("enterprise-style model should exist");
@@ -895,7 +894,10 @@ mod tests {
                  ordering sends enterprise users to the login screen",
             );
             assert!(
-                !AuthMethodKind::from_id(built.methods[0].id()).needs_interactive_login(),
+                built
+                    .methods
+                    .first()
+                    .is_some_and(|m| !AuthMethodKind::from_id(m.id()).needs_interactive_login()),
                 "auth_methods.first() MUST NOT need interactive login -- this \
                  is the exact predicate the pager's startup_auth_metadata() uses \
                  to decide whether to show the login screen",
@@ -961,6 +963,7 @@ mod tests {
         let _byok = EnvGuard::set(TEST_ENV_VAR, "enterprise-secret-token");
 
         let toml = byok_config(TEST_ENV_VAR);
+
         let cfg = Config::new_from_toml_cfg(&toml).expect("config should parse");
         let models = resolve_model_list(&cfg, None);
         assert!(
@@ -1009,8 +1012,8 @@ mod tests {
     /// login screen either.
     #[test]
     #[serial]
-    fn legacy_grok_auth_env_is_loaded_but_never_advertised() {
-        use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
+    fn grok_login_legacy_token_does_not_require_login() {
+        use xai_grok_login::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
 
         let _runtime = EnvOnlyKeys::new();
         let _g1 = EnvGuard::unset("GROK_AUTH_PATH");
@@ -1062,7 +1065,7 @@ mod tests {
     #[test]
     #[serial]
     fn no_legacy_token_means_no_current_credential() {
-        use crate::auth::{AuthManager, GrokComConfig};
+        use xai_grok_login::{AuthManager, GrokComConfig};
 
         let _runtime = EnvOnlyKeys::new();
         let _g1 = EnvGuard::unset("GROK_AUTH");

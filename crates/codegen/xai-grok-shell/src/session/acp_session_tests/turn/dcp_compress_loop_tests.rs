@@ -116,6 +116,7 @@ async fn run_compress_call(strategy: CompactionStrategy) -> CompressTurn {
             None,
             None,
             &mut length_salvage::LengthSalvage::new(None),
+            &mut Default::default(),
         ),
     )
     .await

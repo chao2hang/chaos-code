@@ -31,6 +31,10 @@ Chaos 从配置文件、环境变量和 CLI flags 读取设置。本页覆盖常
 [cli]
 auto_update = true                     # check for updates on launch
 
+[agent]
+# name = "grok-build"                  # 交互式 `chaos` 的默认代理（无 --plan / --agent-profile 时）
+# definition = "/path/to/agent.md"     # path wins over name if both are set
+
 [models]
 default = "gpt-5"                      # catalog key from [model.*] (required for BYOK)
 # web_search / image_description / session_summary 未设时回落到 default
@@ -58,8 +62,7 @@ group_tool_verbs = true                # fold runs of read/search/list tool call
                                        # — and finished thoughts among them — into one row (default: true)
 collapsed_edit_blocks = false          # show edits as one-line +N/-M diffstat summaries and merge
                                        # back-to-back same-file edits into one row, expand for the
-                                       # diffs (default: false; pager.toml [scrollback.blocks.edit]
-                                       # expanded_by_default/line_summary override its fold shape)
+                                       # diffs (default: false)
 page_flip_on_send = true               # pin a just-sent prompt at the top of the viewport so the
                                        # response starts on a fresh page (default: true); set false
                                        # so sending never moves the scroll position
@@ -97,6 +100,22 @@ respect_gitignore = false              # default: false; set true to make every 
 # max_parallel_image_gen_calls = 8
 # max_parallel_video_gen_calls = 4
 ```
+
+### 默认代理
+
+未传 `--plan`、`--ask-user` 或 `--agent-profile` 时，交互式 `chaos` 使用
+`config.toml` 里的 `[agent]`：
+
+```toml
+[agent]
+name = "my-custom-agent"
+# definition = "/path/to/agent.md"   # path wins over name
+```
+
+`definition` 是一个带 YAML frontmatter 的 markdown 文件。`name` 是内置或
+已发现的代理（`~/.chaos/agents/`、`.chaos/agents/`）。所命名的代理缺失时，
+回退到 `GROK_AGENT`，再到内置默认。`--agent-profile`、`--plan` 与
+`--ask-user` 仍会覆盖该会话。字段清单：[26-config-reference.md](26-config-reference.md)。
 
 #### 输入模式
 
@@ -686,8 +705,8 @@ dim_accent = 0.5                      # dimming factor for collapsed accents (0.
 [scrollback.blocks.edit]
 indent = true                         # indent diff content
 vpad = false                          # vertical padding
-# expanded_by_default = true          # unset: follows [ui] collapsed_edit_blocks in config.toml
-                                      # (flag on = collapsed one-liner); uncomment to pin either shape
+# expanded_by_default = true          # Unset follows Collapsed edit blocks. When that setting is on,
+                                      # edits start collapsed even if this line is true.
 dual_line_numbers = false             # two-column line numbers (old + new)
 # line_summary = false                # show +N/-M in the collapsed header; unset follows the same flag
 hunk_separator = "…"                  # separator between diff hunks (default: "…")
@@ -795,6 +814,17 @@ disable_plugins = false               # hide hooks/plugins UI entirely
 | `.chaos/agents/` 或 `.grok/agents/` | 项目级智能体定义 |
 | `.chaos/hooks/` 或 `.grok/hooks/` | 项目级钩子 |
 | `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP 服务器配置 |
+
+### Chaos 如何保存 `config.toml`
+
+对 **`~/.chaos/config.toml`**（`/settings`、`/vim-mode` 与其他用户配置保存）
+的写入会跟随叶符号链接：原子重命名写的是链接指向的文件（例如你 dotfiles
+仓库里的那份），链接本身保持为链接。若链接悬空，写入会把目标创建为普通文件。
+
+对**项目** `.chaos/config.toml`（MCP / 插件 / 权限编辑）的写入会**替换**叶
+符号链接为普通文件，避免之后的保存顺着链接写出仓库。
+
+无法解析的用户 `config.toml` 不会被覆盖。修好语法（或恢复备份）再保存即可。
 
 ---
 

@@ -927,7 +927,6 @@ impl PagerArgs {
         self.local_workspace_cwd.as_deref()
     }
     /// Get the session ID to resume, from either --resume or --load (hidden alias).
-    ///
     /// Returns `None` when `--resume` was used without a value (the empty-string sentinel).
     /// Use [`resume_most_recent`] to detect that case.
     pub fn session_to_resume(&self) -> Option<&str> {
@@ -982,21 +981,14 @@ impl PagerArgs {
     }
     /// Resolve the sandbox profile to apply at startup, accounting for the profile the resumed session was created with.
     /// `saved` is the resumed session's persisted profile (read once via [`Self::saved_resume_profile`]).
-    ///
-    /// A session's profile is fixed at creation. Resuming restores it.
     /// An explicit `--sandbox`/`GROK_SANDBOX` that differs from the saved profile is refused: changing a session's sandbox on resume would be unsafe.
-    /// A matching flag, or no flag, resumes with the saved profile.
     pub fn startup_sandbox_profile(&self, saved: Option<&str>) -> SandboxStartup {
         let explicit = self.sandbox.as_deref().filter(|s| !s.is_empty());
         Self::resolve_startup_sandbox(explicit, saved.map(String::from))
     }
-    /// Pin an explicit non-UUID, non-chat resume/load target to its canonical local session id, before the (irreversible) OS sandbox is applied.
-    ///
-    /// Resolving once makes the saved-profile peek and materialization consume the same immutable target.
     /// `resume_target_pinned` records the pin so materialization never re-runs local title selection.
     /// Re-selecting after the sandbox would race a concurrent rename/create.
     /// Listing failures and ambiguity are hard errors here, reported before the sandbox (fail closed).
-    /// A definitive no-match keeps the raw arg for the legacy remote/worktree id path.
     pub fn pin_local_resume_target(&mut self) -> anyhow::Result<()> {
         let cwd_buf = std::env::current_dir().ok();
         let cwd_str = cwd_buf.as_deref().map(|p| p.to_string_lossy());

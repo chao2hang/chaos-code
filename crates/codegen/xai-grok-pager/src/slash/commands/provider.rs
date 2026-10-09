@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 //! `/provider` — 渠道管理命令（交互式 TUI 模态框）。
 //!
 //! - 裸 `/provider`（无参数）→ 渠道列表 hub：↑↓ 选择，Enter 进操作菜单，末行「+ 添加渠道」
@@ -1260,9 +1262,9 @@ fn parse_reasoning_meta(item: &serde_json::Value) -> ReasoningMeta {
         .or_else(|| item.get("reasoningEfforts"))
         .and_then(|v| v.as_array())
         .map(|arr| {
-            parse_reasoning_effort_options(arr)
+            parse_reasoning_effort_options(arr, "reasoning_efforts")
                 .into_iter()
-                .map(|opt| opt.value.as_str().to_string())
+                .map(|opt| opt.value.to_string())
                 .collect()
         })
         .unwrap_or_default();
@@ -1272,7 +1274,7 @@ fn parse_reasoning_meta(item: &serde_json::Value) -> ReasoningMeta {
         .or_else(|| item.get("reasoningEffort"))
         .and_then(|v| v.as_str())
         .and_then(|s| match s.parse::<ReasoningEffort>() {
-            Ok(effort) => Some(effort.as_str().to_string()),
+            Ok(effort) => Some(effort.to_string()),
             Err(err) => {
                 tracing::warn!(
                     value = %s,

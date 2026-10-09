@@ -14,7 +14,7 @@
 - 长会话变慢了？`/compact` 腾出上下文；`/context` 显示它花在哪了。
 - 什么都能自动化：`chaos -p "summarize new TODOs" --output-format json` 以无头模式运行——很适合脚本与 CI。
 - 用 `chaos update` 保持最新；用 `/release-notes` 看看改了什么。
-- 感觉哪里不对？`/feedback` 直达团队。
+- 感觉哪里不对？`/feedback <text>` 直达团队；裸 `/feedback` 打开表单，里面带着你存下的草稿。
 
 ## 重新打开本教程
 

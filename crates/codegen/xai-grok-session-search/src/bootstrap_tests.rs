@@ -7,10 +7,9 @@ use crate::fts::META_KEY_SCHEMA_VERSION;
 /// `list_sessions` has to report a non-zero count for the single-flight test, which asserts that exactly one of two racing gates ran the reindex.
 struct FakeSource {
     sessions: Vec<IndexableSession>,
-    /// Latched when a gate task returns.
-    /// `list_sessions` runs only in the gate that won the claim, so waiting on this holds the lease until the other gate finishes its wait window.
-    /// Without it the fake enumerates so fast that the loser's first claim can land after the winner already released.
-    /// A launch's first claim always reindexes, so both gates would run the reindex.
+    /// `list_sessions` runs only in the gate that won the claim, so waiting on this holds the lease until the other gate
+    /// finishes its wait window. Without it the fake enumerates so fast that the loser's first claim can land after the
+    /// winner already released. A launch's first claim always reindexes, so both gates would run the reindex.
     peer_done: Option<Arc<AtomicBool>>,
 }
 
@@ -25,7 +24,7 @@ impl FakeSource {
         }
     }
 
-    fn with_ids(ids: &[&str], peer_done: Arc<AtomicBool>) -> Self {
+    fn with_session_ids(ids: &[&str]) -> Self {
         Self {
             sessions: ids
                 .iter()
@@ -37,7 +36,14 @@ impl FakeSource {
                     updates_path: None,
                 })
                 .collect(),
+            peer_done: None,
+        }
+    }
+
+    fn with_ids(ids: &[&str], peer_done: Arc<AtomicBool>) -> Self {
+        Self {
             peer_done: Some(peer_done),
+            ..Self::with_session_ids(ids)
         }
     }
 }
@@ -119,14 +125,15 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = search_db_path(tmp.path());
     stamp_marker(&db_path, "123");
+    let epoch_before = recovery::current_epoch();
+    let progress = Arc::new(BootstrapProgress::default());
 
     let source = FakeSource::empty();
-    let epoch_before = recovery::current_epoch();
     bootstrap_with_lease_inner(
         tmp.path(),
         &source,
         no_content,
-        &Arc::new(BootstrapProgress::default()),
+        &progress,
         &TEST_TIMING,
         BootstrapRole::Launch,
     )
@@ -134,6 +141,11 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
     .unwrap();
     let healed = recovery::current_epoch() != epoch_before;
 
+    // list_sessions runs only inside reindex_all, so a non-zero total is the launch-must-rebuild contract
+    assert!(
+        progress.total.load(Ordering::Relaxed) > 0,
+        "a launch claimant must reindex even when a completed marker already exists"
+    );
     assert!(
         healed || read_marker(&db_path).as_deref() != Some("123"),
         "the reindex must rewrite the marker it found (a sibling cache heal withholds it)"
