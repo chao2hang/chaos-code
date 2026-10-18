@@ -1,26 +1,33 @@
+import type { SkillTelemetryMetadata } from "@zcode/contracts";
 import {
-  type AgentTelemetryErrorCategory,
   CoreErrorType,
   createChildTraceContext,
   createCoreError,
   createRootTraceContext,
   getCurrentTraceContext,
   traceContextToLogContext,
-  type ToolExecutionSpanWriter,
+  type AgentTelemetryErrorCategory,
   type SessionEvent,
+  type ToolExecutionSpanWriter,
 } from "@zcode/contracts";
 import {
   OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION,
   attestOfficialCuaFrameContent,
 } from "@zcode/zcode-cua/frame-contract";
+import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/capability.js";
+import { hasOfficialCuaFrameAuthority } from "../../mcp/image-normalization.js";
+import { mergeToolExecutionTelemetry, readToolExecutionTelemetry } from "../handlers/tool-perf.js";
 import {
   normalizeToolExecutionInput,
   prepareInitialToolExecutionInput,
 } from "../input-normalization.js";
-import { hasOfficialCuaFrameAuthority } from "../../mcp/image-normalization.js";
-import type { SkillTelemetryMetadata } from "@zcode/contracts";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types.js";
-import type { ToolEntry } from "../types.js";
+import { resolveToolEntryModelContract } from "../model-contract.js";
+import type {
+  ExecutableToolCall,
+  ToolEntry,
+  ToolExecutionContext,
+  ToolExecutionResult,
+} from "../types.js";
 import type { BackgroundTaskTracker } from "./background-tasks.js";
 import {
   createErrorResult,
@@ -36,12 +43,14 @@ import {
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "./hook-flow.js";
+import { createToolModelStatusSink, withDefaultToolModelStatusSink } from "./model-status-sink.js";
 import { resolveToolCallCapabilityFlags } from "./permission-capability.js";
 import { resolveToolPermission } from "./permission-flow.js";
 import { snapshotPermissionInput } from "./permission-input.js";
 import { buildToolInputResolutionContext } from "./permission-input-adjustments.js";
 import { createMcpToolDisplay, createToolResultDisplay } from "./result-display.js";
 import { appendHookAdditionalContexts, serializeOutput } from "./result-serialization.js";
+import { runToolCallWithTelemetry } from "./telemetry.js";
 import {
   ToolDeadline,
   executeWithTimeout,
@@ -49,20 +58,14 @@ import {
   observeToolAdmissionClock,
   resolveTimeoutMs,
 } from "./timeout.js";
-import { createToolModelStatusSink, withDefaultToolModelStatusSink } from "./model-status-sink.js";
-import { runToolCallWithTelemetry } from "./telemetry.js";
 import {
   withAutomationCreateLimitTurnStop,
   withPlanExitDeniedTurnStop,
   withTerminalToolTurnStop,
   withWorkflowRefineDeniedFollowUp,
 } from "./turn-control.js";
-import { mergeToolExecutionTelemetry, readToolExecutionTelemetry } from "../handlers/tool-perf.js";
 import type { ToolExecuteOptions, ToolExecutorDeps } from "./types.js";
 import { validateInitialModelToolInput, validateInput, validateOutput } from "./validation.js";
-import type { ExecutableToolCall } from "../types.js";
-import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/capability.js";
-import { resolveToolEntryModelContract } from "../model-contract.js";
 
 export async function executeToolCall(
   deps: ToolExecutorDeps,

@@ -16,6 +16,7 @@ import type {
   UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversationTurnFlowItems.js";
+import type { PluginUiRowPinResolver } from "@/plugin-ui/index.js";
 import {
   isWorkflowLaunchUserInputRow,
   resolveWorkflowLaunchMeta,

@@ -5568,6 +5568,33 @@ export function SessionPane({
                   ? handleOpenWorkflowRunDirectoryFromPanel
                   : undefined
               }
+              onOpenPlanDetail={onOpenPlanDetail ? handleOpenPlanDetail : undefined}
+              onOpenBackgroundBash={
+                onOpenBackgroundBash && sessionId
+                  ? (work) =>
+                      onOpenBackgroundBash({
+                        workspacePath,
+                        workspaceIdentity: workspaceIdentity ?? undefined,
+                        remoteSessionId: remoteSessionId ?? undefined,
+                        rootSessionId: rootSessionId ?? sessionId,
+                        sessionId,
+                        workId: work.workId,
+                        title: work.title,
+                      })
+                  : undefined
+              }
+              onCancelBackgroundWork={readOnly ? undefined : handleCancelBackgroundWork}
+              onOpenSubagentSession={onOpenSubagentSession ? handleOpenSubagentSession : undefined}
+              onOpenSubagentDirectory={
+                onOpenSubagentDirectory ? handleOpenSubagentDirectory : undefined
+              }
+              onOpenWorkflowRun={
+                onOpenWorkflowRun && sessionId ? handleOpenWorkflowRunFromPanel : undefined
+              }
+              endedWorkflowRunCount={endedWorkflowRunCount}
+              onOpenWorkflowRunDirectory={
+                onOpenWorkflowRunDirectory ? handleOpenWorkflowRunDirectoryFromPanel : undefined
+              }
             />
           ) : null}
 
