@@ -181,6 +181,16 @@ class Mentions(unittest.TestCase):
 
 
 class RepositoryAnchoring(unittest.TestCase):
+    def test_nested_frontend_workspace_uses_its_own_doc_path_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = build(Path(tmp))
+            write(root, "frontend/zcode/docs/README.md", "see `docs/source-only.md`\n")
+            write(root, "docs/guide.md", "see `docs/root-missing.md`\n")
+            git(root, "add", "-A")
+            mentions, problems = guard.scan(guard.Repo(root))
+        self.assertEqual([path for path, _ in mentions], ["docs/root-missing.md"])
+        self.assertEqual(problems, [])
+
     def test_runtime_tree_is_not_a_claim_about_the_repo(self) -> None:
         # `.chaos` exists on disk in a developer checkout and owns no tracked file.
         with tempfile.TemporaryDirectory() as tmp:
@@ -213,6 +223,20 @@ class RepositoryAnchoring(unittest.TestCase):
             git(root, "add", "-A")
             mentions, _ = guard.scan(guard.Repo(root))
         self.assertEqual([t for t, _ in mentions], ["docs/ghost.md"])
+
+    def test_nested_frontend_docs_use_their_own_workspace_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = build(Path(tmp))
+            write(root, "frontend/zcode/docs/README.md", "see `docs/source-only.md`\n")
+            write(root, "docs/guide.md", "see `docs/root-missing.md`\n")
+            git(root, "add", "-A")
+            repo = guard.Repo(root)
+            mentions, problems = guard.scan(repo)
+        self.assertEqual(
+            [path for path, _ in mentions],
+            ["docs/root-missing.md"],
+        )
+        self.assertEqual(problems, [])
 
     def test_staged_but_uncommitted_file_is_a_valid_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

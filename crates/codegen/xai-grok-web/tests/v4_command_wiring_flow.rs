@@ -109,7 +109,17 @@ async fn listen(
 /// 读下一个会话主题帧（EventFire 上的 wire 载荷），跳过与本测试无关的应答。
 /// 静默 10s 视作帧流结束，返回 None——等某帧出现的用例要把「没来」写进自己的
 /// 失败信息，不能在这里 panic 掉账本。
+///
+/// 桥端按 V4 合同把超过 1MiB 物理上限的 logical frame 切成 `fragment`
+///（wire_fragmentation 模块）；官方客户端在装配器里按序重装后才看到 logical
+/// frame。这里与客户端同口径：fragment 按 (topic,subId,ordinal) 归组收片，
+/// 齐片重装并校验 crc32 后以 `frame` 位挂回 logical frame 返回。
 async fn try_next_conversation_frame(socket: &mut Socket) -> Option<Value> {
+    thread_local! {
+        static PENDING: std::cell::RefCell<
+            std::collections::HashMap<String, (u64, u64, String, std::collections::HashMap<u64, String>)>,
+        > = std::cell::RefCell::default();
+    }
     loop {
         let wire = match tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
             Ok(Some(Ok(Message::Binary(wire)))) => wire,
@@ -129,11 +139,73 @@ async fn try_next_conversation_frame(socket: &mut Socket) -> Option<Value> {
         let RpcValue::Json(value) = body else {
             continue;
         };
-        if value["frame"]["topic"]
+        if value["kind"].as_str() == Some("fragment") {
+            let is_conversation = value["topic"]
+                .as_str()
+                .is_some_and(|topic| topic.starts_with("conversation/"));
+            if !is_conversation {
+                continue;
+            }
+        } else if value["frame"]["topic"]
             .as_str()
             .is_some_and(|topic| topic.starts_with("conversation/"))
         {
             return Some(value);
+        } else {
+            continue;
+        }
+        let reassembled = PENDING.with_borrow_mut(|pending| {
+            let route = format!(
+                "{}\u{0}{}\u{0}{}",
+                value["topic"].as_str().unwrap_or("?"),
+                value["subscriptionId"].as_str().unwrap_or("?"),
+                value["logicalFrameOrdinal"],
+            );
+            let entry = pending.entry(route).or_insert_with(|| {
+                (
+                    value["fragmentCount"].as_u64().unwrap_or(0),
+                    value["logicalBytes"].as_u64().unwrap_or(0),
+                    value["checksum"]["value"].as_str().unwrap_or("").to_owned(),
+                    std::collections::HashMap::new(),
+                )
+            });
+            entry.3.insert(
+                value["fragmentIndex"].as_u64().unwrap_or(0),
+                value["dataBase64"].as_str().unwrap_or("").to_owned(),
+            );
+            if entry.3.len() as u64 != entry.0 {
+                return None;
+            }
+            let mut logical: Vec<u8> = Vec::new();
+            for index in 0..entry.0 {
+                let data = entry.3.get(&index).expect("collected fragment index");
+                use base64::Engine as _;
+                logical.extend(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(data)
+                        .expect("canonical base64"),
+                );
+            }
+            assert_eq!(logical.len() as u64, entry.1, "logicalBytes 必须与分片一致");
+            assert_eq!(
+                format!("{:08x}", crc32fast::hash(&logical)),
+                entry.2,
+                "重装后的 crc32 必须与分片头一致"
+            );
+            let logical_frame: Value = serde_json::from_slice(&logical).expect("utf8 json");
+            Some(serde_json::json!({
+                "wireVersion": value["wireVersion"],
+                "kind": "complete",
+                "deliveryKind": value["deliveryKind"],
+                "logicalFrameId": value["logicalFrameId"],
+                "logicalFrameOrdinal": value["logicalFrameOrdinal"],
+                "topic": value["topic"],
+                "subscriptionId": value["subscriptionId"],
+                "frame": logical_frame,
+            }))
+        });
+        if let Some(logical) = reassembled {
+            return Some(logical);
         }
     }
 }

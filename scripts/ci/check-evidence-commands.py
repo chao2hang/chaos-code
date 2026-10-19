@@ -42,8 +42,9 @@ The two rules:
 What counts as a command line: a line whose first non-space text is `$ `, in a tracked
 `*.md` or in `docs/verification/*.log`; plus, in either kind of file, every line of a
 fence labelled as a shell (`sh`, `bash`, `console`, `pwsh`, ...), because those are the
-blocks `CONTRIBUTING.md` asks a reader to paste. Both rules read both shapes. Reading only
-`$` lines was the first version and it is the weaker one: on the current tree it reports 4
+blocks `CONTRIBUTING.md` asks a reader to paste. Both rules read both shapes. The nested
+`frontend/zcode/` pnpm workspace owns its own command/document roots and is excluded from
+the Chaos-root transcript scan. Reading only `$` lines was the first version and it is the weaker one: on the current tree it reports 4
 absent paths where the shipped rule reports 5, and the fifth sits inside a fence. When the
 rule was written the fence tier surfaced four more, invented file names in three recipes of
 `.agents/skills/chaos-upstream-sync/references/port-playbook.md`, a document whose whole job
@@ -163,6 +164,9 @@ PATTERN_CHARS = ("...", "…", "<", ">", "$", "%", "[", "]", "*", "?", "~", "{",
 QUOTE_CHARS = "\"'`"
 
 
+SOURCE_WORKSPACE_PREFIXES = ("frontend/zcode/",)
+
+
 class Repo:
     """The repository's own view of what its content is."""
 
@@ -221,9 +225,11 @@ class Repo:
 
     def scanned(self) -> list[str]:
         """Transcripts plus every tracked document, sorted."""
-        return sorted(f for f in self.files
-                      if f.endswith(".md") or (f.startswith("docs/verification/")
-                                               and f.endswith(".log")))
+        return sorted(
+            f for f in self.files
+            if (f.endswith(".md") or (f.startswith("docs/verification/") and f.endswith(".log")))
+            and not f.startswith(SOURCE_WORKSPACE_PREFIXES)
+        )
 
 
 def command_lines(text: str) -> list[tuple[int, str]]:

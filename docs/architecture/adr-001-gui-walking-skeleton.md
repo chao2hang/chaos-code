@@ -24,8 +24,9 @@ behavioral source for the CLI adapter; it is not duplicated in the Web UI.
 ## Current Web client
 
 The current Web client is the official ZCode frontend, whose source is managed
-by this project in a frontend checkout separate from the `chaos-code` Rust
-workspace. It connects to the Chaos host through the binary ZCode RPC bridge at
+by this project in `frontend/zcode/`, a pnpm workspace separate from the
+`chaos-code` Cargo workspace. It connects to the Chaos host through the binary
+ZCode RPC bridge at
 `/ws/zcode`; the Rust host continues to own authentication, static asset serving,
 authorization, and Engine integration. See
 [`zcode-web-frontend.md`](zcode-web-frontend.md) for build, deploy and test

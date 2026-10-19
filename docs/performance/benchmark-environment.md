@@ -17,12 +17,12 @@ Status: reproducibility protocol for a local Linux/Chromium comparison only. Thi
 
 The browser and GUI-build rows above record the environment as observed on
 2026-10-01 for the retired self-built UI. They are historical only. The current
-ZCode client is project-managed in a frontend checkout separate from the Rust
-workspace and has its own dependency/toolchain baseline; these Node, Playwright,
-and UI build observations must not be used as a current ZCode performance
-baseline. The Rust host/Engine rows still apply, but a comparable UI
-benchmark requires recording the exact ZCode source revision, lockfile, Node,
-Playwright, and browser versions.
+ZCode client source is project-managed in `frontend/zcode/`, a pnpm workspace
+separate from the Rust Cargo workspace, and has its own dependency/toolchain
+baseline; these Node, Playwright, and UI build observations must not be used as a
+current ZCode performance baseline. The Rust host/Engine rows still apply, but a
+comparable UI benchmark requires recording the exact ZCode source revision,
+lockfile, Node, Playwright, and browser versions.
 
 This machine is a developer host; CPU frequency, background load, thermal state, kernel scheduling and browser cache are not controlled. Treat its numbers as exploratory and never use them as stable CI thresholds.
 

@@ -25,6 +25,13 @@ async fn next_conversation_frame(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
 ) -> Value {
+    // 真实会话的锚点常超过 1MiB 物理上限，桥按 V4 合同切成 fragment；
+    // 与客户端装配器同口径：按 (topic,subId,ordinal) 归组收片，齐片重装校验。
+    thread_local! {
+        static PENDING: std::cell::RefCell<
+            std::collections::HashMap<String, (u64, u64, String, std::collections::HashMap<u64, String>)>,
+        > = std::cell::RefCell::default();
+    }
     loop {
         let message = tokio::time::timeout(Duration::from_secs(15), socket.next())
             .await
@@ -47,6 +54,62 @@ async fn next_conversation_frame(
         let RpcValue::Json(value) = body else {
             continue;
         };
+        if value["kind"].as_str() == Some("fragment") {
+            let reassembled = PENDING.with_borrow_mut(|pending| {
+                let route = format!(
+                    "{}\u{0}{}\u{0}{}",
+                    value["topic"].as_str().unwrap_or("?"),
+                    value["subscriptionId"].as_str().unwrap_or("?"),
+                    value["logicalFrameOrdinal"],
+                );
+                let entry = pending.entry(route).or_insert_with(|| {
+                    (
+                        value["fragmentCount"].as_u64().unwrap_or(0),
+                        value["logicalBytes"].as_u64().unwrap_or(0),
+                        value["checksum"]["value"].as_str().unwrap_or("").to_owned(),
+                        std::collections::HashMap::new(),
+                    )
+                });
+                entry.3.insert(
+                    value["fragmentIndex"].as_u64().unwrap_or(0),
+                    value["dataBase64"].as_str().unwrap_or("").to_owned(),
+                );
+                if entry.3.len() as u64 != entry.0 {
+                    return None;
+                }
+                let mut logical: Vec<u8> = Vec::new();
+                for index in 0..entry.0 {
+                    let data = entry.3.get(&index).expect("collected fragment index");
+                    use base64::Engine as _;
+                    logical.extend(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(data)
+                            .expect("canonical base64"),
+                    );
+                }
+                assert_eq!(logical.len() as u64, entry.1, "logicalBytes 必须与分片一致");
+                assert_eq!(
+                    format!("{:08x}", crc32fast::hash(&logical)),
+                    entry.2,
+                    "重装后的 crc32 必须与分片头一致"
+                );
+                let logical_frame: Value = serde_json::from_slice(&logical).expect("utf8 json");
+                Some(serde_json::json!({
+                    "wireVersion": value["wireVersion"],
+                    "kind": "complete",
+                    "deliveryKind": value["deliveryKind"],
+                    "logicalFrameId": value["logicalFrameId"],
+                    "logicalFrameOrdinal": value["logicalFrameOrdinal"],
+                    "topic": value["topic"],
+                    "subscriptionId": value["subscriptionId"],
+                    "frame": logical_frame,
+                }))
+            });
+            if let Some(logical) = reassembled {
+                return logical;
+            }
+            continue;
+        }
         if value["frame"]["topic"]
             .as_str()
             .is_some_and(|topic| topic.starts_with("conversation/"))

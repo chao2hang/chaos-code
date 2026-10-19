@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#161616" />
+    <meta name="color-scheme" content="dark" />
+    <!-- Bugfix: Chrome dev 下可能不发 favicon 网络请求；内嵌小尺寸 App 图标，避免标签页回退到默认图标。 -->
+    <link
+      rel="icon"
+      type="image/png"
+      href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAHH0lEQVR4nM2Xa3BVVxXHf3uffU/uvcm9Nwkk4ZGYSIMtWl7hUaBg1ZZ3gQ4zDjUEKlMLlTpYZtBancH60bFOa51xCqYQkpChIIFWMOBIpy0K8iEUKIWCNaU2VUglNAm5j3PP2dsPuTnmWVq/4JrZc86Htfb67/9ae621BX3EGCMzv7GXGxvHJrtSUillXNcV/A/SaxuMZOlVK1d+BHQACCF0r07vxsIYYwGFc7/6tcoPPvhweTKZvBOM+nQXvebmFlCEGwwGL5WWlrz65zdfbwDahBAeYASAMcY6dvz4nWsr19bGE4lpAoEY5sxCCKSUCCEwxmCMQUrp/2uth7QzBgyGcCjUXNtQu/b+efMuCSE8kaG9aExJWVMykZwshEgDVp/jAWBZFgCJRJJkMoHruigVQEqB4zgopbBtm+zsbAA8zxuEAfCMMYFgKHj2nx9eWQxcUwD3zrtvTR/ngYEnFkLQ0dGB1pry8nJmzpzOl8rLKR9fTiwWo7n5NJcv/40LFy5y5tw5LCmJRqNorTHGD48ApBAinUwkJ9877741fzn+xrPCGJM79gvjmhLx+D2Z5LD6njqVSpFKpViwYD6VD69i6dLFRCKRIWlOpVL86dhrbNtezeHDTUSjEZRSA8PiGWNkKBw+9dE/WhZTX7934sjCMW35I0eZ/JGjdOZrCorGmlB2rikuGWd+t7/R9BXXdU0q5ZhUKtWzHMe4rttP58VtvzVFo0tMTjTfFBSNNb379voYWTimrb5+70TVc8WM1ReilJJkMsmooiIa97/MlCmT8TzPp9OyLD8n/ptkBtd1EZns3bD+O8yYPo2lyx6iq6uLUCg0gAljua4rBl0zIQSu6xIOhzl65BDjx5eTTrsopQDjO2htbaWl5X0Axo37IsXFxSilMKZHx3EcKiqm8uYbx/j6NxbQ3d2NZVl9cwKAQQAsy+L69XZeqn4x4zyd2VgjpaS+voFddfVcunSZ9vZ2XM8jPy+PCXfdxbp1j1C1+ltorbFtm3Q6ze7de0g7aR/4IKmpaZg0snD09UxcdCgcM/c/sNCk02njuq7RWvvrm6sqDTLLgDJgmUBWtikoGmvyRhSZYDhqQJlvr3vUGGPMtbY2M3/BEgMBkzeiyIwoGD0gB0Zfr6lpmNSPASEEjuvy9NNPoZTCdV2/wGz5wVPs27efWCzKiuXLqKiYSmtrK9u2V6OUIhqNEolE2N2wh08+6eD9K1c4/84FCkcV+fsMJT4AKSXd3XGmTJrInNmzfAMpJY2NB3n+uecYNaaYeDxO8+m3+NkzWykrK+XLEyaw8Xub/PjGYjH+0HQE27bJz8vDdd2hqe/12xdAMplkzpzZ2LaN4zhorXFdl9q6erJCOXieh23bvPfe35k5ay7nzr3NunWP8Owvfs6/29qwLAutNbFYjGBW1lDVcHgAANp1ufvur2BZFllZWdi2TSKR4MTJU4TDPdeox0GUjo4O1m/YSHv7DZ7Y+Dibvr+Jtqv/QkqJ53noYSgfNgSe55ETjdB05CgtLS14nkYIQTwex3EcLEv6YXFdl9zcGGfOnmX5Qyupr6vhV8//knA4xAu//o0P9rOIvLXK0GKMwbazePfdy3zc9jEAEydOHDbZhhOfAcuyuNnZxeJFC1n/2KO+QldXF3v37cd1037bVcqiuztOLBbj9680UlExlZpddTy2/rtEIpHPBaIfA1Ipzp9/B8/zSKVSOI5DKBRizux7iMcTSCmRUtLR0Ul2djYHG/dRUTGVnTW1rN+wkWg0gpQCKXrW5wKgtSYYDHLixEkcx8G2baSUKKVYu6aKVOImlmXhOA7l5eWcOnmcGTOms2NnDRsef4JIJMcfVDo6O0mmUoP6xS0BZGeHOXPubU6c/KtfOrXWrFixjCc3b+bq1WsIIZhWMZVXXj3Elh/+iCc3byEnJxullD83LFm8iDvuGEf7jRuZHvIpcrtLcf86oDWRaIRjr71ObV09lmX5lcwYw949u6nbtYMHFsynpLQM27bp7OoiGAwyZ/Zs6upr2bmjGq01hQUFHD50kJ8+s5WACqC1HrIhDeLH8zxyc2P8+CdbmTd3br92bIyhqqqSqqrKIdtxL1AppZ9Hq1c/TPVLO3DSzpARGASg55op4vE4Cxc9OOxAUlxc7DvttfM8zz+lbducPv3WpwwkPSKVUgZEv6LdeyOuXrvGsuUr2d94AMuyUEr5M57jpHEcp2el02itUUr509K27dUseXAFN2/eJBwOD+FceEopc9uHUgV0lpWWHLh48dIsoB8Az/MIBALYts3Ro3+kqenIZx7LR4zI95vXANGAVVZacgDovO0PE5mhva2uoa4yFAo1a2MCxiAzAPzleZ7wPE9kZdkiLy9PFBYWiry8XBGNRjP/eSIcDvt6A+2NQWpjAqFQqLmuoa6Snveh/v94nPoc3Ybn+X8A7idH3xhxWTAAAAAASUVORK5CYII="
+      sizes="32x32"
+    />
+    <title>Chaos</title>
+    <script>
+      (() => {
+        // In insecure HTTP contexts, provide UUID and clipboard fallbacks before the app bundle loads.
+        if (typeof globalThis.crypto === "undefined") {
+          globalThis.crypto = {};
+        }
+        if (typeof globalThis.crypto.randomUUID !== "function") {
+          globalThis.crypto.randomUUID = function () {
+            if (typeof globalThis.crypto.getRandomValues === "function") {
+              const bytes = new Uint8Array(16);
+              globalThis.crypto.getRandomValues(bytes);
+              bytes[6] = (bytes[6] & 0x0f) | 0x40;
+              bytes[8] = (bytes[8] & 0x3f) | 0x80;
+              const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+              return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+            }
+            return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+              const r = (Math.random() * 16) | 0;
+              const v = c === "x" ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            });
+          };
+        }
+
+        if (typeof navigator !== "undefined") {
+          if (!navigator.clipboard) {
+            navigator.clipboard = {};
+          }
+          if (typeof navigator.clipboard.writeText !== "function") {
+            navigator.clipboard.writeText = function (text) {
+              return new Promise(function (resolve) {
+                try {
+                  const textarea = document.createElement("textarea");
+                  textarea.value = text;
+                  textarea.style.position = "fixed";
+                  textarea.style.left = "-9999px";
+                  textarea.style.top = "-9999px";
+                  textarea.style.opacity = "0";
+                  document.body.appendChild(textarea);
+                  textarea.focus();
+                  textarea.select();
+                  const ok = document.execCommand("copy");
+                  document.body.removeChild(textarea);
+                  if (ok) {
+                    resolve();
+                  } else {
+                    window.prompt("请按 Ctrl+C 复制：", text);
+                    resolve();
+                  }
+                } catch {
+                  window.prompt("请按 Ctrl+C 复制：", text);
+                  resolve();
+                }
+              });
+            };
+          }
+        }
+
+        // Also initialize the theme early for the cross-workspace Web Remote bootstrap shell.
+        const STORAGE_KEY = "zcode-theme";
+        const DEFAULT_THEME = "zai-dark";
+        const BROWSER_THEME_COLORS = {
+          dark: "#161616",
+          light: "#f8f8f8",
+        };
+        const BOOTSTRAP_SNAPSHOT_KEY = "zcode:web-remote-control:bootstrap-shell";
+
+        const normalizeResolvedTheme = (theme) => {
+          if (theme === "dark") return "dark";
+          if (theme === "light") return "light";
+          if (theme === "zai-dark") return "dark";
+          if (theme === "zai-light") return "light";
+          return theme;
+        };
+
+        const syncBrowserThemeSurface = (theme) => {
+          document.documentElement.setAttribute("data-zcode-browser-theme-surface", theme);
+          document.documentElement.style.colorScheme = theme;
+          document
+            .querySelector('meta[name="theme-color"]')
+            ?.setAttribute("content", BROWSER_THEME_COLORS[theme]);
+          document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", theme);
+        };
+
+        try {
+          let bootstrapTheme = null;
+          const bootstrapSnapshotRaw = window.sessionStorage.getItem(BOOTSTRAP_SNAPSHOT_KEY);
+          if (bootstrapSnapshotRaw) {
+            window.sessionStorage.removeItem(BOOTSTRAP_SNAPSHOT_KEY);
+            try {
+              const snapshot = JSON.parse(bootstrapSnapshotRaw);
+              if (snapshot && typeof snapshot === "object") {
+                const normalizedTheme = snapshot.theme === "dark" ? "dark" : "light";
+                bootstrapTheme = normalizedTheme;
+                document.documentElement.style.setProperty(
+                  "--zcode-bootstrap-bg",
+                  typeof snapshot.background === "string"
+                    ? snapshot.background
+                    : normalizedTheme === "dark"
+                      ? "#0f172a"
+                      : "#f8fafc",
+                );
+                document.documentElement.style.setProperty(
+                  "--zcode-bootstrap-fg",
+                  typeof snapshot.foreground === "string"
+                    ? snapshot.foreground
+                    : normalizedTheme === "dark"
+                      ? "#e2e8f0"
+                      : "#334155",
+                );
+                if (typeof snapshot.border === "string") {
+                  document.documentElement.style.setProperty(
+                    "--zcode-bootstrap-border",
+                    snapshot.border,
+                  );
+                }
+                if (typeof snapshot.card === "string") {
+                  document.documentElement.style.setProperty(
+                    "--zcode-bootstrap-card",
+                    snapshot.card,
+                  );
+                }
+              }
+            } catch {
+              // ignore invalid snapshot
+            }
+          }
+
+          const saved = localStorage.getItem(STORAGE_KEY) || DEFAULT_THEME;
+          const resolved =
+            saved === "system"
+              ? window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : normalizeResolvedTheme(saved);
+          const fallbackTheme = resolved === "dark" ? "dark" : "light";
+          const finalTheme = bootstrapTheme ?? fallbackTheme;
+          document.documentElement.setAttribute("data-zcode-bootstrap-theme", finalTheme);
+          syncBrowserThemeSurface(finalTheme);
+          if (finalTheme === "dark") {
+            document.documentElement.classList.add("dark");
+          }
+        } catch {
+          document.documentElement.setAttribute("data-zcode-bootstrap-theme", "dark");
+          syncBrowserThemeSurface("dark");
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: var(--zcode-bootstrap-bg, var(--color-background, #0f172a));
+        color: var(--zcode-bootstrap-fg, var(--color-foreground, #e2e8f0));
+        font-family:
+          Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      html[data-zcode-bootstrap-theme="light"] body {
+        background: var(--zcode-bootstrap-bg, var(--color-background, #f8fafc));
+        color: var(--zcode-bootstrap-fg, var(--color-foreground, #334155));
+      }
+
+      html[data-zcode-browser-theme-surface],
+      html[data-zcode-browser-theme-surface] body,
+      html[data-zcode-browser-theme-surface] #root {
+        /* 修复原因：共享 UI 样式为 Electron vibrancy 强制透明根背景；浏览器入口必须用语义背景
+           覆盖该桌面专属行为，否则浏览器工具栏、overscroll 和页面画布会回退为系统白色。 */
+        background: var(--color-background, var(--zcode-bootstrap-bg, #161616)) !important;
+      }
+
+      html[data-zcode-browser-theme-surface="light"],
+      html[data-zcode-browser-theme-surface="light"] body,
+      html[data-zcode-browser-theme-surface="light"] #root {
+        background: var(--color-background, var(--zcode-bootstrap-bg, #f8f8f8)) !important;
+      }
+
+      .zcode-boot-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        /* Bugfix: UI 全局样式会把 body/#root 置为透明，预渲染壳必须自己承接主题背景，否则深色主题会露出浏览器白底。 */
+        background: var(--zcode-bootstrap-bg, var(--color-background, #0f172a));
+        color: var(--zcode-bootstrap-fg, var(--color-foreground, #e2e8f0));
+      }
+
+      html[data-zcode-bootstrap-theme="light"] .zcode-boot-loading {
+        background: var(--zcode-bootstrap-bg, var(--color-background, #f8fafc));
+        color: var(--zcode-bootstrap-fg, var(--color-foreground, #334155));
+      }
+
+      .zcode-boot-loading__logo-shell {
+        position: relative;
+        display: flex;
+        width: 96px;
+        height: 96px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 24px;
+        background: linear-gradient(180deg, #000000 0%, #151718 100%);
+        box-shadow:
+          0 20px 25px -5px rgb(0 0 0 / 0.2),
+          0 8px 10px -6px rgb(0 0 0 / 0.2);
+      }
+
+      .zcode-boot-loading__logo-shell::before {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        content: "";
+        /* 修复原因：启动 logo 壳是固定深色底，边框不能跟随浅色主题 token，否则首屏边框过重。 */
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: inherit;
+      }
+
+      .zcode-boot-loading__logo {
+        width: 56px;
+        height: auto;
+        color: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <!-- Bugfix: 远程控制跨 workspace 时会整页跳转；在 JS 入口执行前先给出 loading 壳，避免出现白屏空档。 -->
+      <div
+        class="zcode-boot-loading"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        aria-label="Loading..."
+      >
+        <div class="zcode-boot-loading__logo-shell">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="100px"
+            height="100px"
+            fill="none"
+            viewBox="0 0 256 256"
+            class="zcode-boot-loading__logo"
+            aria-hidden="true"
+          >
+            <path
+              fill="currentColor"
+              d="M 202.86 69.51 A 95 95 0 0 0 33.13 123.03 L 65.09 124.70 A 63 63 0 0 1 177.64 89.21 Z"
+            >
+              <animate
+                attributeName="opacity"
+                dur="1.5s"
+                repeatCount="indefinite"
+                values="1;0.3;1"
+              />
+            </path>
+            <path
+              fill="currentColor"
+              d="M 202.86 186.49 A 95 95 0 0 1 33.13 132.97 L 65.09 131.30 A 63 63 0 0 0 177.64 166.79 Z"
+            >
+              <animate
+                attributeName="opacity"
+                dur="1.5s"
+                repeatCount="indefinite"
+                values="1;0.3;1"
+              />
+            </path>
+            <path
+              fill="currentColor"
+              d="M 105 92.5 L 140 128 L 105 163.5 L 122.5 163.5 L 157.5 128 L 122.5 92.5 Z"
+            >
+              <animate
+                attributeName="opacity"
+                begin="0.75s"
+                dur="1.5s"
+                repeatCount="indefinite"
+                values="1;0.3;1"
+              />
+            </path>
+          </svg>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

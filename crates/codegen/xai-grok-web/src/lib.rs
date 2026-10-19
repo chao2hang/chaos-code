@@ -23,6 +23,7 @@ pub mod chaos_bridge;
 pub mod preview;
 pub mod remote_relay;
 pub mod web_auth;
+pub mod wire_fragmentation;
 
 use preview::PreviewConfig;
 

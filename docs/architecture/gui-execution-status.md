@@ -12,7 +12,7 @@ require platform runners, external services, or a later milestone.
 > `chaos_engine::client_message_samples()` and the `xai-grok-web` integration
 > tests walking every message over a real socket) and the Web/Desktop host crates.
 > The Web direction is now the ZCode frontend source managed by this project
-> in its frontend checkout plus the Rust RPC bridge
+> in `frontend/zcode/` plus the Rust RPC bridge
 > (`crates/codegen/xai-grok-web/src/chaos_bridge.rs`). Source/build instructions
 > are in [`zcode-web-frontend.md`](zcode-web-frontend.md). Desktop remains a
 > separate Rust host boundary; no shipped Tauri/WebView UI is implied.
@@ -20,13 +20,14 @@ require platform runners, external services, or a later milestone.
 ## Current Web architecture
 
 - The shipped Web UI is the official ZCode frontend; its source is managed by
-  this project in a frontend checkout separate from the Rust host workspace.
-  Chaos serves its built static bundle from `CHAOS_WEB_ASSETS_DIR` and bridges
-  ZCode's binary `/ws/zcode` RPC into `chaos-engine` via
+  this project in `frontend/zcode/`, a pnpm workspace separate from the root
+  Cargo workspace. Chaos serves its built static bundle from
+  `CHAOS_WEB_ASSETS_DIR` and bridges ZCode's binary `/ws/zcode` RPC into
+  `chaos-engine` via
   `crates/codegen/xai-grok-web/src/chaos_bridge.rs`.
-- The ZCode source checkout is managed by this project but is not a Cargo
-  member and is not currently fetched/built by Chaos CI. Its Node 24+/pnpm
-  lint/typecheck/tests/build must be run in that checkout. Deployment and
+- The ZCode source at `frontend/zcode/` is managed by this project but is not a
+  Cargo member and is not currently built by Chaos CI. Its Node 24+/pnpm
+  lint/typecheck/tests/build run from that directory. Deployment and
   verification steps are maintained in
   [`zcode-web-frontend.md`](zcode-web-frontend.md).
 - `chaos-web` is the required Rust host, not the retired old frontend. Removing
@@ -145,7 +146,7 @@ frontend source, implementation status, or browser-test coverage.
 | Area | State | Evidence required |
 |---|---|---|
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
-| ZCode Browser E2E | Project-managed frontend checkout gate | Chaos has real `/ws/zcode` and bridge integration tests. Run ZCode UI tests/browser E2E in the project-managed frontend checkout and record its source revision; they are not part of the current Cargo CI job |
+| ZCode Browser E2E | Project-managed `frontend/zcode/` gate | Chaos has real `/ws/zcode` and bridge integration tests. Run ZCode UI tests/browser E2E from `frontend/zcode/` and record its source revision; they are not part of the current Cargo CI job |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
 | M2 persistence/workspace | Partial | SQLite/JSON boundaries, single-root workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-root mapping, PTY, NFS/multiprocess, remote Git auth and full migration remain open |

@@ -19,6 +19,8 @@ use std::{
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+
+use crate::wire_fragmentation::encode_topic_wire_frames;
 use zcode_rpc_protocol::framing::ChunkStream;
 use zcode_rpc_protocol::{
     ChannelServer, DEFAULT_TIMEOUT, Incoming, Outbound, ProtocolError, RpcValue, write_frame,
@@ -4325,9 +4327,11 @@ pub(crate) async fn run_chaos_session<S>(
     // would keep only the last topic's anchor — the other panes would never
     // assemble and fault with fault.subscription.recoveryFrameTimedOut.
     // 额外记录 deliveryKind 与预分配的 logicalFrameOrdinal（初次订阅 initial，重同步 recovery）。
+    // 缓冲的是「逻辑 topic frame + 预分配 ordinal」，排水时统一过物理分片编码器
+    // （encode_topic_wire_frames）再上线，锚点与 delta 的超限帧都走 fragment。
     let mut pending_anchors: std::collections::HashMap<
         String,
-        (String, Value, Vec<Value>, &'static str, u64),
+        (String, Value, Vec<(u64, Value)>, &'static str, u64),
     > = std::collections::HashMap::new();
     // toolCall 行的装配表：toolCallId → 行。进度与结果必须落回同一行的
     // inputText/output 上，没有这张表就只剩一次性事件，前端画不出工具卡。
@@ -6262,8 +6266,7 @@ pub(crate) async fn run_chaos_session<S>(
                     // sequence gap and only a fresh subscription repairs the view.
                     let anchor_seq = buffered
                         .first()
-                        .and_then(|wire| wire.get("frame"))
-                        .and_then(|frame| frame.get("fromSeq"))
+                        .and_then(|(_, delta_frame)| delta_frame.get("fromSeq"))
                         .and_then(Value::as_u64)
                         .unwrap_or_else(|| {
                             conversation_seq
@@ -6280,18 +6283,42 @@ pub(crate) async fn run_chaos_session<S>(
                         "sentAt": now_ms,
                         "payload": { "kind": "snapshot", "snapshot": chaos_snapshot },
                     });
-                    let wire = json!({
-                        "wireVersion": 3,
-                        "kind": "complete",
-                        "logicalFrameId": format!("chaos-{}", uuid::Uuid::new_v4()),
-                        "logicalFrameOrdinal": ordinal,
-                        // deliveryKind is REQUIRED on every wire frame.
-                        "deliveryKind": delivery_kind,
-                        "topic": snapshot["topic"],
-                        "subscriptionId": snapshot["subscriptionId"],
-                        "frame": snapshot,
-                    });
-                    for wire_out in std::iter::once(wire).chain(buffered.into_iter()) {
+                    // 锚点与缓冲 delta 都必须过物理分片编码器：快照行是全量转录，
+                    // 越过 1MiB 单片 complete 会被客户端装配器整帧拒收
+                    //（proto.frameEnvelopeTooLarge → recovery 梯子 fail-closed，
+                    // 会话面板永远打不开，真实案例见 wire_fragmentation 模块注释）。
+                    let mut wires = match encode_topic_wire_frames(
+                        &snapshot,
+                        delivery_kind,
+                        &topic,
+                        &sub_id,
+                        ordinal,
+                    ) {
+                        Ok(wires) => wires,
+                        Err(error) => {
+                            eprintln!(
+                                "chaos_bridge: conversation anchor 编码失败（{} topic={topic} sub={sub_id}），丢弃锚点",
+                                error.0
+                            );
+                            Vec::new()
+                        }
+                    };
+                    for (delta_ordinal, delta_frame) in buffered {
+                        match encode_topic_wire_frames(
+                            &delta_frame,
+                            "online",
+                            &topic,
+                            &sub_id,
+                            delta_ordinal,
+                        ) {
+                            Ok(delta_wires) => wires.extend(delta_wires),
+                            Err(error) => eprintln!(
+                                "chaos_bridge: conversation delta 编码失败（{} topic={topic} sub={sub_id}），丢弃该帧",
+                                error.0
+                            ),
+                        }
+                    }
+                    for wire_out in wires {
                         for rpc_id in &conversation_listens {
                             let f = ChannelServer::event_fire_frame(
                                 *rpc_id,
@@ -6328,7 +6355,7 @@ async fn deliver_conversation_deltas<S: Unpin>(
     subscription_ordinals: &mut std::collections::HashMap<String, u64>,
     pending_anchors: &mut std::collections::HashMap<
         String,
-        (String, Value, Vec<Value>, &'static str, u64),
+        (String, Value, Vec<(u64, Value)>, &'static str, u64),
     >,
     conversation_listens: &[u32],
     socket: &mut S,
@@ -6346,7 +6373,9 @@ async fn deliver_conversation_deltas<S: Unpin>(
         }
     }
     let session_seq = {
-        let e = conversation_seq.entry(bare_session_id.to_owned()).or_insert(0);
+        let e = conversation_seq
+            .entry(bare_session_id.to_owned())
+            .or_insert(0);
         let seq = *e;
         *e += 1;
         seq
@@ -6377,28 +6406,37 @@ async fn deliver_conversation_deltas<S: Unpin>(
             *e += 1;
             *e
         };
-        let wire = json!({
-            "wireVersion": 3,
-            "kind": "complete",
-            "logicalFrameId": format!("chaos-{}", uuid::Uuid::new_v4()),
-            "logicalFrameOrdinal": ordinal,
-            // deliveryKind is REQUIRED on every wire frame.
-            "deliveryKind": "online",
-            "topic": frame["topic"],
-            "subscriptionId": frame["subscriptionId"],
-            "frame": frame,
-        });
         // Deltas must never precede the topic's anchor snapshot: with no
         // applied snapshot the assembler sees a gap and starts an endless
         // resync loop.
         if let Some((_, _, buffered, _, _)) = pending_anchors.get_mut(&topic) {
-            buffered.push(wire);
+            // 锚点排水前只缓冲 logical frame（连同 ordinal），排水时再统一分片编码，
+            // 保证锚点 wire 仍紧邻首个 delta wire。
+            buffered.push((ordinal, frame));
             continue;
         }
-        for rpc_id in conversation_listens {
-            let f = ChannelServer::event_fire_frame(*rpc_id, &RpcValue::Json(wire.clone()));
-            if socket.send(Message::Binary(write_frame(&f).into())).await.is_err() {
-                return;
+        // 超过 1MiB 物理上限的 logical frame 必须分片（wire-codec.ts 的生产者合同）：
+        // 单片 complete 会被客户端装配器按 proto.frameEnvelopeTooLarge 整帧拒收。
+        let wires = match encode_topic_wire_frames(&frame, "online", &topic, &sub_id, ordinal) {
+            Ok(wires) => wires,
+            Err(error) => {
+                eprintln!(
+                    "chaos_bridge: conversation delta 编码失败（{} topic={topic} sub={sub_id}），丢弃该帧",
+                    error.0
+                );
+                continue;
+            }
+        };
+        for wire in wires {
+            for rpc_id in conversation_listens {
+                let f = ChannelServer::event_fire_frame(*rpc_id, &RpcValue::Json(wire.clone()));
+                if socket
+                    .send(Message::Binary(write_frame(&f).into()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
             }
         }
     }
