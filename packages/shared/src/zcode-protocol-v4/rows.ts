@@ -173,6 +173,20 @@ export const assistantTextRowSchema = z.object({
   text: z.string(),
   state: z.enum(["streaming", "complete", "interrupted", "failed"]),
   model: z.string().optional(),
+  // Provider usage breakdown is attached to the assistant tail row after the final
+  // stream event; older snapshots omit it. Live estimates stay renderer-local.
+  usage: z
+    .object({
+      inputTokens: z.number().nonnegative(),
+      outputTokens: z.number().nonnegative(),
+      cachedTokens: z.number().nonnegative(),
+      cacheTotalTokens: z.number().nonnegative(),
+      cacheCreationTokens: z.number().nonnegative(),
+      durationMs: z.number().nonnegative().nullable(),
+      ttftMs: z.number().nonnegative().nullable(),
+      outputTokensPerSecond: z.number().nonnegative().nullable(),
+    })
+    .optional(),
   feedback: z.enum(["like", "dislike"]).optional(),
 });
 export type AssistantTextRow = z.infer<typeof assistantTextRowSchema>;

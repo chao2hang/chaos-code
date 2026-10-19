@@ -70,7 +70,7 @@ function getSidebarProfileName(user?: UserInfo | null): string {
     return username;
   }
 
-  return "ZCode";
+  return "Chaos";
 }
 
 function getSidebarProfileBadge(
@@ -85,8 +85,8 @@ function getSidebarProfileBadge(
 }
 
 function getAvatarFallbackText(user: UserInfo | null | undefined): string {
-  const source = user?.displayName?.trim() || user?.username?.trim() || "Z";
-  return source[0]?.toUpperCase() ?? "Z";
+  const source = user?.displayName?.trim() || user?.username?.trim() || "C";
+  return source[0]?.toUpperCase() ?? "C";
 }
 
 export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterComponent({

@@ -2387,7 +2387,13 @@ describe("ConversationTurnGroup assistant history status", () => {
     ]);
 
     expect(units[0]?.workStatus).toBeDefined();
-    const collapsedHtml = renderUnit(units[0]!);
+    const collapsedHtml = renderUnit({
+      ...units[0]!,
+      workSegments: units[0]!.workSegments!.map((segment) => ({
+        ...segment,
+        assistantHistoryDefaultOpen: false,
+      })),
+    });
     const collapsedIndexes = [
       collapsedHtml.indexOf('data-row-id="2"'),
       collapsedHtml.indexOf("chat-assistant-history-trigger"),

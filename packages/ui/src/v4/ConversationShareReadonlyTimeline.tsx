@@ -808,12 +808,10 @@ function ReadonlyHistoryStatus({
           className="group/history-message inline-flex max-w-full items-center gap-2 text-left text-ui-base text-foreground-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
         >
           <span className="truncate">{label}</span>
-          {!segment.assistantHistoryDefaultOpen ? (
-            <ChevronRightIcon
-              aria-hidden="true"
-              className={`size-4 shrink-0 text-foreground-subtlest opacity-70 transition-transform ${open ? "rotate-90" : "rotate-0"}`}
-            />
-          ) : null}
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={`size-4 shrink-0 text-foreground-subtlest opacity-70 transition-transform ${open ? "rotate-90" : "rotate-0"}`}
+          />
         </button>
       </CollapsibleTrigger>
     </div>
@@ -878,14 +876,14 @@ function ReadonlySegment({
       item.kind === "assistantHistory" ||
       (item.kind === "cuaGroup" && item.flowKind === "assistantHistory"),
   );
-  const open = segment.assistantHistoryDefaultOpen || historyOpen;
+  const open = historyOpen;
   const firstAssistantFlowItemIndex = segment.flowItems.findIndex(
     (flowItem) => flowItem.kind !== "userInput",
   );
   return (
     <Collapsible
       open={open}
-      onOpenChange={segment.assistantHistoryDefaultOpen ? undefined : setHistoryOpen}
+      onOpenChange={setHistoryOpen}
       className="history-message flex flex-col [&>*+*:not([data-slot='collapsible-content'])]:mt-5"
     >
       {segment.flowItems.map((item: ConversationTurnFlowItem, index) => {

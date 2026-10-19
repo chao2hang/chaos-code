@@ -119,3 +119,8 @@ export const usePaneLayoutStore = create<PaneLayoutStore>()((set) => ({
 usePaneLayoutStore.subscribe((state) => {
   persistPaneLayout(state);
 });
+
+import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
+if (shouldExposeE2EStoreBridge()) {
+  (globalThis as Record<string, unknown>).__zcodePaneLayoutStoreE2E = usePaneLayoutStore;
+}

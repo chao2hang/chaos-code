@@ -597,7 +597,7 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).toContain('data-blocking-request-id="ask-1"');
   });
 
-  it("offsets the conversation column and composer when the status panel can sit inline", () => {
+  it("keeps the conversation column centered when the status panel floats inline", () => {
     vi.stubGlobal("window", {
       innerWidth: 1280,
       addEventListener: vi.fn(),
@@ -620,7 +620,7 @@ describe("SessionPane v4 chat layout parity", () => {
         }),
       });
 
-      expect(html).toContain("@min-[1280px]/conversation:-translate-x-42");
+      expect(html).not.toContain("@min-[1280px]/conversation:-translate-x-42");
       expect(html).toContain(CONVERSATION_CONTENT_WITH_STATUS_PANEL_WIDTH_CLASS_NAME);
       expect(html).toContain('data-v4-timeline-content-column="true"');
       expect(html).toContain('data-v4-composer-dock="true"');

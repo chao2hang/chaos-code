@@ -39,7 +39,12 @@ import type {
   SessionPhase,
   SessionUsageState,
 } from "@zcode/shared/zcode-protocol-v4";
-import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
+import {
+  ModelConfigSelect,
+  type ModelSelectGroup,
+  type ModelSelectGroupItem,
+} from "@/ModelConfigSelect.js";
+import { ConversationModelDetailsDialog } from "@/v4/composer/ConversationModelDetailsDialog.js";
 import { Button } from "@/components/ui/button.js";
 import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
 import { formatHighspeedRemainingTime } from "@/highspeed/highspeedTime.js";
@@ -496,6 +501,11 @@ function V4ComposerModelControlsImpl({
     [onConfigPickerOpenChange],
   );
 
+  const [configuringModel, setConfiguringModel] = useState<{
+    providerId: string;
+    modelId: string;
+  } | null>(null);
+
   const modelOption = modelSelectionView?.providers.some((provider) => provider.models.length > 0)
     ? ({
         id: "model",
@@ -825,6 +835,21 @@ function V4ComposerModelControlsImpl({
     });
   }, [displayProvider, intl, modelSelectionView]);
 
+  const handleConfigureModel = useCallback(
+    (item: ModelSelectGroupItem) => {
+      const decoded = decodeCustomModelValue(item.value);
+      if (decoded && decoded.modelName) {
+        setConfiguringModel({ providerId: decoded.providerId, modelId: decoded.modelName });
+      } else {
+        const group = modelSelectGroups.find((g) => g.items.some((i) => i.value === item.value));
+        const providerId = group?.key.replace(/^registry-provider:/, "") ?? "";
+        setConfiguringModel({ providerId, modelId: item.name || item.value });
+      }
+      handleModelPickerOpenChange(false);
+    },
+    [handleModelPickerOpenChange, modelSelectGroups],
+  );
+
   // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
   const handleOpenModelProviderSettings = useCallback(() => {
     setPendingSettingsSectionIntent("modelProvider");
@@ -1136,6 +1161,7 @@ function V4ComposerModelControlsImpl({
           showManageModelsAction={showManageModelsAction}
           manageModelsLabel={manageModelsLabel}
           onManageModels={handleOpenModelProviderSettings}
+          onConfigureModel={handleConfigureModel}
           lockReasonMessage={intl.formatMessage({
             id: modelLocked
               ? "chat.highspeed.modelLocked"
@@ -1180,6 +1206,17 @@ function V4ComposerModelControlsImpl({
           open={activeConfigPicker === "thought"}
           onOpenChange={handleThoughtPickerOpenChange}
           restoreFocusSelector={V4_COMPOSER_INPUT_SELECTOR}
+        />
+      ) : null}
+      {configuringModel ? (
+        <ConversationModelDetailsDialog
+          open={Boolean(configuringModel)}
+          onOpenChange={(open) => {
+            if (!open) setConfiguringModel(null);
+          }}
+          providerId={configuringModel.providerId}
+          modelId={configuringModel.modelId}
+          modelGroups={modelSelectGroups}
         />
       ) : null}
     </>

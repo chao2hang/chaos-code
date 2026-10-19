@@ -33,7 +33,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip.js";
-import { AlertCircle, CheckIcon, ChevronDownIcon, LoaderIcon, PackageIcon } from "lucide-react";
+import { AlertCircle, CheckIcon, ChevronDownIcon, LoaderIcon, PackageIcon, Settings } from "lucide-react";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   TID_CHAT_MODEL_SELECT_GROUP,
   TID_CHAT_MODEL_SELECT_ITEM,
@@ -182,6 +183,8 @@ interface ModelConfigSelectProps {
   leadingItems?: readonly ModelSelectGroupItem[];
   /** 触发器里标签之后的小徽标（如「会话模型」「不可用」）；缺省即无。 */
   triggerBadge?: ReactNode;
+  /** 点击模型项的详情设置按钮时触发。 */
+  onConfigureModel?: (item: ModelSelectGroupItem) => void;
 }
 
 export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
@@ -226,7 +229,9 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   contentAlign = "start",
   leadingItems,
   triggerBadge,
+  onConfigureModel,
 }: ModelConfigSelectProps) {
+  const { intl } = useZCodeIntl();
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
   const lastOpenRequestKeyRef = useRef(openRequestKey);
@@ -308,6 +313,33 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
             ) : null}
             {item.supportsVisionInput ? <ModelInputCapabilityBadge /> : null}
           </span>
+          {onConfigureModel ? (
+            <span
+              role="button"
+              tabIndex={0}
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded text-foreground-subtle hover:bg-menu-hover hover:text-foreground cursor-pointer z-10 transition-colors"
+              title={intl.formatMessage({ id: "settings.modelProvider.editModel" })}
+              aria-label={`${intl.formatMessage({ id: "settings.modelProvider.editModel" })} - ${item.name}`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onConfigureModel(item);
+              }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onConfigureModel(item);
+                }
+              }}
+            >
+              <Settings className="size-3.5" />
+            </span>
+          ) : null}
           {itemLocked ? (
             <TooltipProvider>
               <Tooltip>
@@ -369,9 +401,11 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
     [
       handleModelValueChange,
       handlePopoverOpenChange,
+      intl,
       isItemLocked,
       lockReasonMessage,
       normalizedValue,
+      onConfigureModel,
     ],
   );
 

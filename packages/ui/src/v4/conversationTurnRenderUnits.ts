@@ -354,33 +354,11 @@ function normalizeRenderUnitPosition(
   options: BuildConversationTurnRenderUnitsOptions,
 ): ConversationTurnRenderUnit {
   const isLastTurn = index === total - 1;
-  const forceOpenHistory = shouldForceOpenAbnormalHistory(unit.header, options.sessionPhase);
-  const assistantHistoryDefaultOpen =
-    unit.workSegments && unit.workSegments.length > 0
-      ? !unit.timelineOnly &&
-        (forceOpenHistory ||
-          (isLastTurn && unit.workSegments.at(-1)?.workStatus?.state === "running") ||
-          (unit.workSegments.length === 1 &&
-            unit.latestAssistantTextRow === undefined &&
-            unit.assistantWorkRows.length > 0))
-      : !unit.timelineOnly &&
-        (forceOpenHistory ||
-          (isLastTurn && unit.workStatus?.state === "running") ||
-          (unit.latestAssistantTextRow === undefined && unit.assistantWorkRows.length > 0));
-  const workSegments = unit.workSegments?.map((segment, segmentIndex, segments) =>
-    segmentIndex === segments.length - 1
-      ? {
-          ...segment,
-          assistantHistoryDefaultOpen:
-            !unit.timelineOnly &&
-            (forceOpenHistory ||
-              (isLastTurn && segment.workStatus?.state === "running") ||
-              (segments.length === 1 &&
-                unit.latestAssistantTextRow === undefined &&
-                segment.assistantWorkRows.length > 0)),
-        }
-      : segment,
-  );
+  const assistantHistoryDefaultOpen = !unit.timelineOnly;
+  const workSegments = unit.workSegments?.map((segment) => ({
+    ...segment,
+    assistantHistoryDefaultOpen: !unit.timelineOnly,
+  }));
   if (
     unit.isLastTurn === isLastTurn &&
     unit.assistantHistoryDefaultOpen === assistantHistoryDefaultOpen &&

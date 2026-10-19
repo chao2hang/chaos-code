@@ -219,13 +219,7 @@ export function buildConversationTurnWorkSegments(options: {
       assistantWorkRows: segmentAssistantRows,
       assistantHistoryRows: segmentHistoryRows,
       assistantFollowingRows: segmentFollowingRows,
-      assistantHistoryDefaultOpen:
-        !options.timelineOnly &&
-        (options.forceOpenHistory ||
-          (options.isLastTurn && segmentWorkStatus?.state === "running") ||
-          (visualDrafts.length === 1 &&
-            visibleAssistantTextRow === undefined &&
-            segmentFlowRows.length > 0)),
+      assistantHistoryDefaultOpen: !options.timelineOnly,
       ...(segmentWorkStatus ? { workStatus: segmentWorkStatus } : {}),
     };
   });

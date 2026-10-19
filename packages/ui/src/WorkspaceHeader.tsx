@@ -8,7 +8,10 @@ import type {
   UserInfo,
 } from "@zcode/shared";
 import { useState } from "react";
+import { PanelLeftClose, PanelLeftOpen, MessageCirclePlus } from "lucide-react";
 import { TID_WORKSPACE_HEADER } from "@zcode/shared";
+import { Button } from "@/components/ui/button.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { cn } from "@/components/lib/utils.js";
 import {
@@ -60,12 +63,14 @@ export function WorkspaceHeader({
   isTerminalOpen,
   isSidePaneOpen,
   onRefreshGit,
+  onToggleSidebar,
   onToggleTerminal,
   onToggleSidePane,
   toggleSidePaneShortcutLabel,
   onReloadSession,
   reloadSessionDisabled,
   reloadSessionPending,
+  onCreateTask,
 }: {
   variant?: WorkspaceHeaderVariant;
   draftDropTargetController?: ConversationDropTargetController | null;
@@ -108,6 +113,7 @@ export function WorkspaceHeader({
   isTerminalOpen: boolean;
   isSidePaneOpen: boolean;
   onRefreshGit: () => void;
+  onToggleSidebar?: () => void;
   onToggleTerminal: () => void;
   onToggleBrowser: () => void;
   onToggleSidePane: () => void;
@@ -122,10 +128,13 @@ export function WorkspaceHeader({
   onOpenWorkspace: () => void;
   allowOpenWorkspace?: boolean;
 }) {
+  const { intl } = useZCodeIntl();
   const [selectedEditor, setSelectedEditor] = useState<EditorInfo | null>(null);
-  const shouldOffsetHeaderForWindowControls = !isSidebarVisible;
-  // Linux 与 Windows 共用内联窗控，不再预留旧悬浮窗控的标题栏区域。
+  const shouldOffsetHeaderForWindowControls = Boolean(isDesktop) && !isSidebarVisible && !simplifyForNarrowRemote;
   const usesInlineWindowControls = Boolean(isWindowsDesktop || (isDesktop && !isMacDesktop));
+  const SidebarToggleIcon = isSidebarVisible ? PanelLeftClose : PanelLeftOpen;
+  const toggleSidebarTitle = intl.formatMessage({ id: "workspaceSidebar.toggleSidebar" });
+  const newTaskTitle = intl.formatMessage({ id: "sidebar.newTask" });
 
   let headerWindowControlsPaddingClass: string | false = false;
   if (shouldOffsetHeaderForWindowControls) {
@@ -145,7 +154,10 @@ export function WorkspaceHeader({
       data-testid={TID_WORKSPACE_HEADER}
       data-workspace-header-variant={variant}
       className={cn(
-        "@container/workspace-header relative flex w-full shrink-0 h-12 border-b",
+        "@container/workspace-header relative flex w-full shrink-0 border-b",
+        simplifyForNarrowRemote
+          ? "h-auto min-h-12 pt-[env(safe-area-inset-top,0px)] bg-header"
+          : "h-12",
         variant === "draft" ? "border-transparent" : "border-border/50",
       )}
     >
@@ -160,13 +172,39 @@ export function WorkspaceHeader({
       ) : null}
       <div
         className={cn(
-          // 大会话 resize trace 显示 titlebar padding 动画层会触发 scrollbar-color 非合成动画；
-          // 明确限定 transition-property 为 padding，避免 duration-300 退回默认 all。
-          "flex h-12 flex-1 min-w-0 items-center justify-between gap-2 overflow-hidden p-2 [app-region:drag] transition-[padding] duration-300",
-          // 旧 caption 菜单移除后不能继续清零右边距，否则终端按钮会贴住面板边框。
+          "flex flex-1 min-w-0 items-center justify-between gap-1 overflow-hidden p-2 [app-region:drag] transition-[padding] duration-300",
+          simplifyForNarrowRemote ? "h-12" : "h-12",
           headerWindowControlsPaddingClass,
         )}
       >
+        {simplifyForNarrowRemote && onToggleSidebar ? (
+          <div className="flex shrink-0 items-center gap-0.5 [app-region:no-drag]">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-md"
+              className="size-9 rounded-lg text-foreground-subtle hover:text-foreground"
+              title={toggleSidebarTitle}
+              aria-label={toggleSidebarTitle}
+              onClick={onToggleSidebar}
+            >
+              <SidebarToggleIcon className="size-5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-md"
+              className="size-9 rounded-lg text-foreground-subtle hover:text-foreground"
+              title={newTaskTitle}
+              aria-label={newTaskTitle}
+              onClick={onCreateTask}
+              disabled={Boolean(readOnlyReason)}
+            >
+              <MessageCirclePlus className="size-5" />
+            </Button>
+          </div>
+        ) : null}
+
         {variant === "task" ? (
           <WorkspaceHeaderTitleSection
             variant={variant}
@@ -207,7 +245,11 @@ export function WorkspaceHeader({
             onRefreshGit={onRefreshGit}
           />
         ) : (
-          <div className="min-w-0 flex-1" aria-hidden="true" />
+          <div className="flex min-w-0 flex-1 items-center px-1">
+            <span className="truncate text-ui-base font-semibold text-foreground">
+              {projectName || "Chaos"}
+            </span>
+          </div>
         )}
         <WorkspaceHeaderActionSection
           variant={variant}
@@ -228,7 +270,6 @@ export function WorkspaceHeader({
           simplifyForNarrowRemote={simplifyForNarrowRemote}
           hideHelpMenu={false}
           showWindowControls={usesInlineWindowControls}
-          // 面板操作按钮沿用 macOS 紧凑样式，Windows/Linux 窗控跟随最右侧 Header。
           onSelectedEditorChange={setSelectedEditor}
         />
       </div>

@@ -552,6 +552,14 @@ export const WorkspaceShellLayout = memo(
     const workspaceSidebarPanelWidthPxRef = useRef(
       workspaceSidebarPanelWidthPx,
     );
+    const [isMobile, setIsMobile] = useState(() => {
+      return typeof window !== "undefined" ? window.innerWidth < 768 : false;
+    });
+    useEffect(() => {
+      const handleWindowResize = () => setIsMobile(window.innerWidth < 768);
+      window.addEventListener("resize", handleWindowResize);
+      return () => window.removeEventListener("resize", handleWindowResize);
+    }, []);
     const openWorkspaceKeys = useMemo(
       () =>
         workspaceTabs.map(
@@ -1441,6 +1449,15 @@ export const WorkspaceShellLayout = memo(
       },
       [handleSelectTaskInChat],
     );
+    const handleSelectTaskInChatResponsive = useCallback(
+      (...args: Parameters<typeof handleSelectTaskInChat>) => {
+        handleSelectTaskInChat(...args);
+        if (typeof window !== "undefined" && window.innerWidth < 768 && isSidebarVisible) {
+          handleToggleSidebar();
+        }
+      },
+      [handleSelectTaskInChat, isSidebarVisible, handleToggleSidebar],
+    );
     // 工作流运行历史「查看实例」：先回到发起它的会话（侧栏页只在 chat 视图里可见），再开实例详情页。
     const handleOpenSavedWorkflowRun = useCallback(
       (params: SavedWorkflowsOpenRunParams) => {
@@ -2040,8 +2057,7 @@ export const WorkspaceShellLayout = memo(
     const shouldRenderMainViewHeader =
       workspaceMainView !== "automations" &&
       workspaceMainView !== "plugin-store";
-    const shouldRenderWorkspaceHeader =
-      shouldRenderMainViewHeader && (activeTaskId !== null || isDesktop);
+    const shouldRenderWorkspaceHeader = shouldRenderMainViewHeader;
     // 修复原因：ErrorBoundary resetKeys 的数组如果每次 render 都重新创建，
     // 即使 workspace/task 没变化也会在 React DevTools Components 轨道里持续表现为子树 props 变化。
     const workspaceOnlyResetKeys = useMemo(
@@ -2064,7 +2080,7 @@ export const WorkspaceShellLayout = memo(
     ) {
       return (
         <DesktopWindowFrame
-          title={`ZCode / ${getPathLeaf(workspaceAbsPath)}`}
+          title={`Chaos / ${getPathLeaf(workspaceAbsPath)}`}
           showHeader
           isDesktop={isDesktop}
           isMacDesktop={isMacDesktop}
@@ -2329,7 +2345,7 @@ export const WorkspaceShellLayout = memo(
         navigateToRun={handleNavigateToLaunchedRun}
       >
       <DesktopWindowFrame
-        title={`ZCode / ${getPathLeaf(workspaceAbsPath)}`}
+        title={`Chaos / ${getPathLeaf(workspaceAbsPath)}`}
         showHeader
         isDesktop={isDesktop}
         isMacDesktop={isMacDesktop}
@@ -2348,15 +2364,31 @@ export const WorkspaceShellLayout = memo(
             isWebRemoteControlShell && "max-md:flex-col",
           )}
         >
+          {isMobile && isSidebarVisible && !isWebRemoteControlShell ? (
+            <button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity"
+              onClick={handleToggleSidebar}
+              aria-label={intl.formatMessage({ id: "workspaceSidebar.hideSidebar" })}
+            />
+          ) : null}
           <div
             ref={workspaceSidebarPanelElementRef}
             data-panel=""
             data-workspace-sidebar-panel="true"
             id="sidebar"
             className={cn(
-              "w-[var(--workspace-sidebar-panel-width)] max-w-[50%] flex-none overflow-hidden duration-200 ease-out transition-[width,opacity] data-[workspace-sidebar-resizing=true]:transition-opacity",
-              // 修复原因：拖动侧栏宽度时如果继续过渡 width，会让指针移动和实际宽度之间产生滞后。
-              // 拖拽 active 通过 DOM 标记切 transition，避免 pointerdown/up 为了切 class 重渲染整棵 workspace。
+              isMobile && !isWebRemoteControlShell
+                ? cn(
+                    "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-card border-r border-border shadow-2xl duration-200 ease-out transition-transform select-none",
+                    isSidebarVisible ? "translate-x-0" : "-translate-x-full pointer-events-none",
+                  )
+                : cn(
+                    "w-[var(--workspace-sidebar-panel-width)] max-w-[50%] flex-none overflow-hidden duration-200 ease-out transition-[width,opacity] data-[workspace-sidebar-resizing=true]:transition-opacity",
+                    // 修复原因：拖动侧栏宽度时如果继续过渡 width，会让指针移动和实际宽度之间产生滞后。
+                    // 拖拽 active 通过 DOM 标记切 transition，避免 pointerdown/up 为了切 class 重渲染整棵 workspace。
+                    isSidebarPanelVisible ? "opacity-100" : "pointer-events-none opacity-0",
+                  ),
               isWebRemoteControlShell &&
                 cn(
                   // Bugfix: Web 远程控制在手机浏览器里仍复用桌面横向 shell，
@@ -2410,7 +2442,7 @@ export const WorkspaceShellLayout = memo(
                     workspacePath={workspaceAbsPath}
                     workspaceRemoteSessionId={workspaceRemoteSessionId}
                     activePreviewPath={activePreviewPath}
-                    onSelectTask={handleSelectTaskInChat}
+                    onSelectTask={handleSelectTaskInChatResponsive}
                     onStartDraftInWorkspace={handleCreateProjectDraft}
                     onOpenCodeViewer={handleOpenCodeViewer}
                     onOpenBrowserUrl={handleOpenBrowserUrl}
@@ -2473,7 +2505,7 @@ export const WorkspaceShellLayout = memo(
             </aside>
           </div>
 
-          {isSidebarVisible && renderWebRemoteNavigationPanel ? (
+          {isSidebarVisible && renderWebRemoteNavigationPanel && !isMobile ? (
             <div
               role="separator"
               tabIndex={0}
@@ -2504,7 +2536,7 @@ export const WorkspaceShellLayout = memo(
             data-panel=""
             id="content"
             className={cn(
-              "flex min-w-[320px] flex-1 flex-col",
+              "flex min-w-0 max-w-full flex-1 flex-col overflow-hidden",
               hasDesktopPanelInset ? "p-1 pl-0 pt-0" : "p-0",
               isWebRemoteControlShell &&
                 "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0",
@@ -2525,12 +2557,14 @@ export const WorkspaceShellLayout = memo(
               >
                 <ResizablePanel
                   id="conversation-column"
-                  minSize={isWebRemoteControlShell ? "0px" : "35%"}
-                  defaultSize={isSidePaneVisible ? "52%" : undefined}
+                  minSize={isMobile ? (isSidePaneVisible ? "0%" : "100%") : isWebRemoteControlShell ? "0px" : "35%"}
+                  defaultSize={isMobile ? (isSidePaneVisible ? "0%" : "100%") : isSidePaneVisible ? "52%" : undefined}
                   className={
-                    isWebRemoteControlShell
-                      ? "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0"
-                      : undefined
+                    isMobile && isSidePaneVisible
+                      ? "hidden"
+                      : isWebRemoteControlShell
+                        ? "max-md:!w-full max-md:!min-w-0 max-md:!flex-1 max-md:!basis-0"
+                        : undefined
                   }
                 >
                   <ResizablePanelGroup
@@ -2572,7 +2606,8 @@ export const WorkspaceShellLayout = memo(
                         className="border-b"
                       >
                         <WorkspaceHeader
-                          reserveWindowControls={!isSidePaneVisible}
+                          simplifyForNarrowRemote={isMobile}
+                          reserveWindowControls={!isSidePaneVisible && !isMobile}
                           variant={activeTaskId === null ? "draft" : "task"}
                           draftDropTargetController={
                             activeTaskId === null
@@ -2614,11 +2649,12 @@ export const WorkspaceShellLayout = memo(
                             windowsWindowControlsRightPaddingPx
                           }
                           isDesktop={isDesktop}
-                          simplifyForNarrowRemote={simplifyHeaderForNarrowRemote}
+                          simplifyForNarrowRemote={simplifyHeaderForNarrowRemote || isMobile}
                           isSidebarVisible={isSidebarVisible}
                           isTerminalOpen={isTerminalOpen}
                           isSidePaneOpen={isSidePaneOpen}
                           onRefreshGit={handleRefreshGit}
+                          onToggleSidebar={handleToggleSidebar}
                           onToggleTerminal={handleToggleTerminal}
                           onToggleBrowser={handleToggleBrowser}
                           onToggleSidePane={handleToggleSidePane}
@@ -2888,6 +2924,7 @@ export const WorkspaceShellLayout = memo(
                 {sidePanePanel}
               </ResizablePanelGroup>
           </div>
+          {!isMobile ? (
           <ScopedErrorBoundary
             scope="desktop-top-overlay"
             resetKeys={workspaceSidebarVisibilityResetKeys}
@@ -2925,6 +2962,7 @@ export const WorkspaceShellLayout = memo(
               hideTaskNavigationButtons={simplifyHeaderForNarrowRemote}
             />
           </ScopedErrorBoundary>
+          ) : null}
 
           {isWebRemoteControlShell && isWebRemoteControlTaskSwitching ? (
             <div

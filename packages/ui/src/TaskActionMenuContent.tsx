@@ -188,10 +188,15 @@ export function TaskActionMenuContent({
       {onCopySessionId ? (
         <Item
           disabled={taskTargetActionsDisabled || !activeSessionId}
-          title={taskTargetActionsDisabled ? disabledReason : undefined}
+          title={taskTargetActionsDisabled ? disabledReason : activeSessionId ? `ID: ${activeSessionId}` : undefined}
           onSelect={onCopySessionId}
         >
-          {intl.formatMessage({ id: "appHeader.copySessionId" })}
+          <span className="flex items-center justify-between w-full gap-2">
+            <span>{intl.formatMessage({ id: "appHeader.copySessionId" })}</span>
+            {activeSessionId ? (
+              <span className="text-[11px] opacity-50 font-mono">{activeSessionId.slice(0, 8)}...</span>
+            ) : null}
+          </span>
         </Item>
       ) : null}
       {!hideMobileUnsupportedActions ? (

@@ -595,18 +595,15 @@ describe("buildConversationStatusPanelModel", () => {
 });
 
 describe("conversation status panel layout", () => {
-  it("uses the z-code-2 inline offset for the conversation column", () => {
+  it("keeps the status panel floating without shifting the conversation column", () => {
+    // Legacy offset constants remain exported for compatibility, but the panel no longer reserves space.
     expect(CONVERSATION_STATUS_PANEL_INLINE_OFFSET_PX).toBe(168);
     expect(CONVERSATION_STATUS_PANEL_INLINE_OFFSET_CLASS_NAME).toBe("-translate-x-42");
     expect(CONVERSATION_STATUS_PANEL_WIDE_OFFSET_CLASS_NAME).toBe(
       "@min-[1280px]/conversation:-translate-x-42",
     );
-    expect(getConversationStatusPanelOffsetClassName("auto")).toBe(
-      CONVERSATION_STATUS_PANEL_WIDE_OFFSET_CLASS_NAME,
-    );
-    expect(getConversationStatusPanelOffsetClassName("inline")).toBe(
-      CONVERSATION_STATUS_PANEL_WIDE_OFFSET_CLASS_NAME,
-    );
+    expect(getConversationStatusPanelOffsetClassName("auto")).toBeUndefined();
+    expect(getConversationStatusPanelOffsetClassName("inline")).toBeUndefined();
     expect(getConversationStatusPanelOffsetClassName("none")).toBeUndefined();
   });
 

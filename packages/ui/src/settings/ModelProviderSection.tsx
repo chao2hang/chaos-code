@@ -175,7 +175,7 @@ function shouldShowPresetProviderForActiveOAuth(
 ): boolean {
   const presetOAuthProvider = resolveBuiltinPresetOAuthProvider(presetId);
   if (!providerFamilyDomain || !presetOAuthProvider) {
-    return true;
+    return false;
   }
   return resolveModelProviderFamilyIdByProviderId(presetId) === providerFamilyDomain;
 }

@@ -305,7 +305,7 @@ function resolveWebRemoteAppReturnTo(params: URLSearchParams): string {
 }
 
 function renderWebAuthCallbackPage(): void {
-  document.title = "ZCode - Web Remote Control Sign In";
+  document.title = "Chaos - Sign In";
   const callbackState = parseOAuthState(
     new URLSearchParams(window.location.search).get("state") ?? "",
   );
@@ -330,7 +330,7 @@ async function renderConversationSharePage(): Promise<void> {
   document.documentElement.lang = routeLocale;
   // 分享页必须设置 title：否则浏览器标签只显示 index.html 的通用标题。
   // 会话标题要等 preview 加载完，先给一个语言正确的兜底。
-  document.title = routeLocale === "zh-CN" ? "ZCode 会话分享" : "ZCode Conversation Share";
+  document.title = routeLocale === "zh-CN" ? "Chaos 会话分享" : "Chaos Conversation Share";
   const shareCode = resolveConversationShareCodeFromPath(window.location.pathname);
   if (!shareCode) {
     root.render(
@@ -397,7 +397,7 @@ async function renderConversationSharePage(): Promise<void> {
 }
 
 function renderWebLoginPage(): void {
-  document.title = "ZCode - Web Remote Control Sign In";
+  document.title = "Chaos - Sign In";
   root.render(
     <WebLoginPage
       onLogin={() => {
@@ -874,7 +874,7 @@ async function resolveWebBootstrap(): Promise<WebBootstrapResult> {
   const remoteId = params.get("remote");
   const wsUrl = remoteId
     ? `${resolveDefaultWsOrigin()}/ws/remote/${remoteId}`
-    : `${resolveDefaultWsOrigin()}/ws`;
+    : `${resolveDefaultWsOrigin()}/ws/zcode`;
 
   if (remoteId) {
     return { wsUrl };
@@ -2481,7 +2481,7 @@ async function bootstrapWebApp() {
       onClose: () => {},
     });
     const platform = createWebPlatform();
-    document.title = "ZCode - Web + Server";
+    document.title = "Chaos";
 
     root.render(
       <AppErrorBoundary>

@@ -178,50 +178,54 @@ export function useModelProviderNavigation({
   );
 
   const navigationGroups = useMemo<ModelProviderNavGroup[]>(() => {
-    const groups: ModelProviderNavGroup[] = [
-      {
+    const groups: ModelProviderNavGroup[] = [];
+    const presetItems = [
+      ...presetProviders.map(({ id, displayName, provider }) => {
+        const statusProvider = resolvePresetFamilyStatusProvider({
+          presetId: id,
+          provider,
+          connectionModeItems: connectionModeCodingPlanItems,
+          connectionSelections,
+          modelProviders,
+        });
+        return {
+          key: createPresetProviderNodeKey(id),
+          type: "preset" as const,
+          presetId: id,
+          label: displayName,
+          logo: modelProviders.find(
+            (candidate) =>
+              candidate.providerId ===
+              resolveModelProviderFamilySpecByProviderId(id)?.individualCodingPlanProviderId,
+          )?.config.logo,
+          provider,
+          displayName,
+          statusProvider,
+          statusActive: statusProvider?.executable === true,
+        };
+      }),
+      ...codingPlanItems.filter((item) => isStartPlanModelProviderId(item.presetId)),
+    ];
+
+    if (presetItems.length > 0) {
+      groups.push({
         id: "preset",
         title: intl.formatMessage({ id: "settings.modelProvider.presetTitle" }),
-        items: [
-          ...presetProviders.map(({ id, displayName, provider }) => {
-            const statusProvider = resolvePresetFamilyStatusProvider({
-              presetId: id,
-              provider,
-              connectionModeItems: connectionModeCodingPlanItems,
-              connectionSelections,
-              modelProviders,
-            });
-            return {
-              key: createPresetProviderNodeKey(id),
-              type: "preset" as const,
-              presetId: id,
-              label: displayName,
-              logo: modelProviders.find(
-                (candidate) =>
-                  candidate.providerId ===
-                  resolveModelProviderFamilySpecByProviderId(id)?.individualCodingPlanProviderId,
-              )?.config.logo,
-              provider,
-              displayName,
-              statusProvider,
-              statusActive: statusProvider?.executable === true,
-            };
-          }),
-          ...codingPlanItems.filter((item) => isStartPlanModelProviderId(item.presetId)),
-        ],
-      },
-      {
-        id: "custom",
-        title: intl.formatMessage({ id: "settings.modelProvider.customTitle" }),
-        items: customProviders.map((provider) => ({
-          key: createCustomProviderNodeKey(provider.providerId),
-          type: "custom" as const,
-          label: getProviderFormLabel(provider),
-          provider,
-          statusActive: provider.executable === true,
-        })),
-      },
-    ];
+        items: presetItems,
+      });
+    }
+
+    groups.push({
+      id: "custom",
+      title: intl.formatMessage({ id: "settings.modelProvider.customTitle" }),
+      items: customProviders.map((provider) => ({
+        key: createCustomProviderNodeKey(provider.providerId),
+        type: "custom" as const,
+        label: getProviderFormLabel(provider),
+        provider,
+        statusActive: provider.executable === true,
+      })),
+    });
 
     return groups;
   }, [
@@ -333,7 +337,7 @@ function shouldShowCodingPlanForProviderFamilyDomain(
   providerFamilyDomain: ProviderFamilyDomain | null,
 ): boolean {
   if (!providerFamilyDomain) {
-    return true;
+    return false;
   }
   return resolveProviderFamilyDomainFromOAuthProvider(oauthProviderId) === providerFamilyDomain;
 }

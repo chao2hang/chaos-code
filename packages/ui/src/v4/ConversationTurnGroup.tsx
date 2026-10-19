@@ -90,8 +90,11 @@ import { ConversationWorkflowDigests } from "@/v4/ConversationWorkflowDigests.js
 import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowCompletion.js";
 import { resolveWorkflowTurnDigests } from "@/v4/workflowTurnDigests.js";
 import { resolveWorkflowTurnCompletion } from "@/v4/workflowTurnCompletion.js";
-import { ConversationAssistantTextActions } from "@/v4/ConversationRowView.js";
-import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
+import { AssistantUsageMetrics } from "@/v4/ConversationRowView.js";
+import {
+  ConversationAssistantTextActions,
+  readAssistantFeedback,
+} from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
@@ -776,12 +779,12 @@ function ConversationWorkSegmentFlow({
     (item) => item.kind !== "userInput",
   );
   let historyChunkIndex = 0;
-  const open = segment.assistantHistoryDefaultOpen ? true : historyOpen;
+  const open = historyOpen;
 
   return (
     <Collapsible
       open={open}
-      onOpenChange={segment.assistantHistoryDefaultOpen ? undefined : setHistoryOpen}
+      onOpenChange={setHistoryOpen}
       // 外层 flex gap 不属于 Radix 测量的 content 高度，收起到 0 后会在
       // display:none 的最后一帧再少 20px。普通兄弟用外边距保持原盒模型，history
       // 的间距则放进动画层。
@@ -1347,6 +1350,11 @@ function ConversationTurnGroupImpl({
     [context, firstReasoningRowId],
   );
   const latestAssistantTextRow = unit.latestAssistantTextRow;
+  // Keep usage at the visible turn tail even when the final assistant row has
+  // been classified into collapsible work history (e.g. a response with reasoning).
+  const assistantUsageRow = [...unit.assistantTextRows]
+    .reverse()
+    .find((row) => row.state === "streaming" || row.text.length > 0 || row.usage !== undefined);
   const assistantPreviewPptxAutoOpenTarget = context.assistantPreviewPptxAutoOpenTarget;
   const codeCommentCardsEnabled = useAssistantCodeCommentFeatureEnabled();
   const assistantCodeCommentProjectionEnabled =
@@ -1758,6 +1766,14 @@ function ConversationTurnGroupImpl({
       )}
       {unit.topicPreparations?.length ? (
         <BotTopicPreparation items={unit.topicPreparations} />
+      ) : null}
+      {assistantUsageRow ? (
+        <div
+          data-assistant-usage-tail="true"
+          className="mx-auto w-full max-w-4xl px-4 @md/conversation:px-6"
+        >
+          <AssistantUsageMetrics row={assistantUsageRow} />
+        </div>
       ) : null}
     </section>
   );

@@ -186,7 +186,10 @@ export function GroupedTaskContextMenuContent({
           )
         }
       >
-        {intl.formatMessage({ id: "appHeader.copySessionId" })}
+        <span className="flex items-center justify-between w-full gap-2">
+          <span>{intl.formatMessage({ id: "appHeader.copySessionId" })}</span>
+          <span className="text-[11px] opacity-50 font-mono">{task.taskId.slice(0, 8)}...</span>
+        </span>
       </ContextMenuItem>
       <ContextMenuItem
         disabled={providerConfigFile.loading || !providerConfigFile.path}

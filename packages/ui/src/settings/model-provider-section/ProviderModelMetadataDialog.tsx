@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Loader2Icon, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -61,6 +61,8 @@ export function ProviderModelMetadataDialog({
   saving = false,
   modelDefaultsLoaded = false,
   onModelIdBlur,
+  modelSwitcher,
+  hideTrigger = false,
 }: {
   mode?: "add" | "edit";
   open: boolean;
@@ -79,6 +81,8 @@ export function ProviderModelMetadataDialog({
   saving?: boolean;
   modelDefaultsLoaded?: boolean;
   onModelIdBlur?: () => void;
+  modelSwitcher?: ReactNode;
+  hideTrigger?: boolean;
 }) {
   const { intl } = useZCodeIntl();
   const [validationAttempt, setValidationAttempt] = useState(0);
@@ -127,7 +131,7 @@ export function ProviderModelMetadataDialog({
   const maxOutputTokensInputDisabled = mode === "add" && !draft.idValue.trim();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {mode === "edit" ? (
+      {mode === "edit" && !hideTrigger ? (
         <DialogTrigger asChild>
           <Button
             type="button"
@@ -172,6 +176,7 @@ export function ProviderModelMetadataDialog({
           className="min-h-0 min-w-0 -mr-3 space-y-4 overflow-y-auto pr-4"
           data-model-settings-scroll="true"
         >
+          {modelSwitcher}
           <ModelSettingsGroup group="basic">
             <div data-model-identity-row="true" className="flex flex-col gap-4">
               <div className="min-w-0 flex-1">

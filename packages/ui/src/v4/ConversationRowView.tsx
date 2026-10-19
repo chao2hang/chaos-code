@@ -1791,6 +1791,63 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   );
 });
 
+/** Token/throughput summary rendered at the turn tail, outside collapsible assistant history. */
+export function AssistantUsageMetrics({ row }: { row: AssistantTextRow }) {
+  const streaming = row.state === "streaming";
+  const streamStartedAt = useRef<number | null>(null);
+  if (row.text.length > 0 && streamStartedAt.current === null) {
+    streamStartedAt.current = Date.now();
+  }
+  const [, refreshStreamMetrics] = useState(0);
+  useEffect(() => {
+    if (!streaming || row.text.length === 0) return;
+    const timer = window.setInterval(() => refreshStreamMetrics((value) => value + 1), 500);
+    return () => window.clearInterval(timer);
+  }, [streaming, row.text.length > 0]);
+
+  const estimatedOutputTokens = Math.floor(new TextEncoder().encode(row.text).length / 4);
+  const streamElapsedSeconds = Math.max(
+    0.5,
+    (Date.now() - (streamStartedAt.current ?? Date.now())) / 1000,
+  );
+  const estimatedTokensPerSecond = Math.round(estimatedOutputTokens / streamElapsedSeconds);
+  if (!row.usage && (!streaming || row.text.length === 0)) return null;
+
+  return (
+    <div
+      data-testid={`assistant-usage-${row.rowId}`}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border/60 bg-surface px-2.5 py-1.5 text-ui-xs text-foreground-subtle"
+      aria-label="回复用量统计"
+    >
+      {row.usage ? (
+        <>
+          <span>输入 {row.usage.inputTokens.toLocaleString()} tokens</span>
+          <span>输出 {row.usage.outputTokens.toLocaleString()} tokens</span>
+          {row.usage.outputTokensPerSecond !== null ? (
+            <span>生成速率 {row.usage.outputTokensPerSecond.toFixed(1)} tokens/s</span>
+          ) : null}
+          {row.usage.cacheTotalTokens > 0 ? (
+            <span>
+              缓存命中 {Math.min(100, (row.usage.cachedTokens / row.usage.cacheTotalTokens) * 100).toFixed(1)}%
+              <span className="ml-1 opacity-70">
+                ({row.usage.cachedTokens.toLocaleString()}/{row.usage.cacheTotalTokens.toLocaleString()})
+              </span>
+            </span>
+          ) : null}
+          {row.usage.cacheCreationTokens > 0 ? (
+            <span>缓存写入 {row.usage.cacheCreationTokens.toLocaleString()} tokens</span>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <span>输出约 {estimatedOutputTokens.toLocaleString()} tokens</span>
+          <span>实时速率约 {estimatedTokensPerSecond.toLocaleString()} tokens/s</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 const ReasoningRowView = memo(function ReasoningRowView({
   row,
   contentVariant,

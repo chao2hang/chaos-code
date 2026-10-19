@@ -131,7 +131,7 @@ export function DesktopTopOverlay({
             "pointer-events-auto flex items-center gap-1 shrink-0 [app-region:no-drag]",
           )}
         >
-          {usesCustomCaptionArea && (
+          {(!isDesktop || usesCustomCaptionArea) && (
             <DesktopTopOverlayActionButton
               title={toggleSidebarTitle}
               shortcut={toggleSidebarShortcutLabel}
@@ -139,13 +139,19 @@ export function DesktopTopOverlay({
               buttonClassName="group relative overflow-hidden rounded-lg"
               onClick={onToggleSidebar}
             >
-              <img
-                src={appLogoUrl}
-                alt="ZCode"
-                className="size-5 transition-opacity duration-150 group-hover:opacity-0"
-                draggable={false}
-              />
-              <SidebarToggleIcon className="absolute inset-0 m-auto size-4 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+              {appLogoUrl ? (
+                <>
+                  <img
+                    src={appLogoUrl}
+                    alt="Chaos"
+                    className="size-5 transition-opacity duration-150 group-hover:opacity-0"
+                    draggable={false}
+                  />
+                  <SidebarToggleIcon className="absolute inset-0 m-auto size-4 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                </>
+              ) : (
+                <SidebarToggleIcon className="size-4" />
+              )}
             </DesktopTopOverlayActionButton>
           )}
 

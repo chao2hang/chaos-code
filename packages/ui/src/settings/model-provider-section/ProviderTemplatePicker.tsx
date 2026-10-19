@@ -87,7 +87,7 @@ export function ProviderTemplatePicker({
       </div>
 
       <div className="space-y-6">
-        {groups.map((group) => (
+        {groups.filter((group) => group.templates.length > 0 || group.id === "other").map((group) => (
           <section key={group.id} data-provider-template-group={group.id} className="space-y-3">
             <h3 className="text-ui-base font-medium text-foreground-subtle">
               {intl.formatMessage({ id: `settings.modelProvider.templateGroup.${group.id}` })}

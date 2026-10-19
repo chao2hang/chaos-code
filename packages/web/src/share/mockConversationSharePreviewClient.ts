@@ -30,7 +30,7 @@ function previewFor(accessMode: ConversationShareAccessMode): ConversationShareP
         createdAt: createdAt + 1_000,
         createdAtSeq: 2,
         kind: "assistantText",
-        text: "这是一个公开的 ZCode 会话分享。",
+        text: "这是一个公开的 Chaos 会话分享。",
         state: "complete",
       },
       // 让 dev mock 覆盖 artifact 卡片：它的视觉要与正文的 AssistantPreviewCards 对齐，
