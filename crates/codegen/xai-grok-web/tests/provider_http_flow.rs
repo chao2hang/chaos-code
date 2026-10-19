@@ -555,3 +555,166 @@ async fn an_empty_model_catalog_is_reported_as_such() {
         "a catalog with no entries cannot contain the configured model"
     );
 }
+
+/// One request on a fresh connection, answered by the first non-acknowledgement
+/// message: how a settings-panel round trip looks from a browser.
+async fn ask(address: SocketAddr, message: ClientMessage) -> ServerMessage {
+    let (mut socket, _) = connect_async(format!("ws://{address}/ws"))
+        .await
+        .expect("websocket connect");
+    let _: ServerMessage = receive(&mut socket).await;
+    socket.send(frame(&message)).await.unwrap();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(20), receive(&mut socket))
+            .await
+            .expect("the host never answered the request");
+        if matches!(event, ServerMessage::Ack { .. }) {
+            continue;
+        }
+        return event;
+    }
+}
+
+fn last_chat_body(provider: &MockInferenceServer) -> serde_json::Value {
+    provider
+        .requests()
+        .into_iter()
+        .rfind(|entry| entry.path.ends_with("/chat/completions"))
+        .and_then(|entry| entry.body)
+        .expect("a chat completion request body")
+}
+
+/// The whole point of a model picker: what the user chose is what the endpoint is
+/// asked for. Every part of this looked right in the UI while the request body
+/// kept carrying the slug the host process had been started with.
+#[tokio::test]
+async fn a_model_picked_in_the_settings_panel_is_the_model_on_the_wire() {
+    const CHOSEN: &str = "second-model";
+    let provider = MockInferenceServer::start_with_models(vec![
+        MockModelEntry::new(MODEL),
+        MockModelEntry::new(CHOSEN),
+    ])
+    .await
+    .unwrap();
+    provider.set_response("answered by the second model");
+    let host = start_host(Engine::with_adapter_arc(adapter(&provider.url(), None))).await;
+
+    let catalog = ask(
+        host.address,
+        ClientMessage::ListProviderModels {
+            client_msg_id: "models-1".into(),
+        },
+    )
+    .await;
+    let ServerMessage::ProviderModels {
+        models,
+        configured_model,
+        reachable,
+        detail,
+    } = catalog
+    else {
+        panic!("expected ProviderModels, got {catalog:?}");
+    };
+    assert!(reachable, "the catalog was unreadable: {detail:?}");
+    assert_eq!(models, vec![MODEL.to_string(), CHOSEN.to_string()]);
+    assert_eq!(
+        configured_model.as_deref(),
+        Some(MODEL),
+        "the picker was not told which entry is current"
+    );
+
+    let updated = ask(
+        host.address,
+        ClientMessage::UpdateSettings {
+            client_msg_id: "pick-model".into(),
+            base_url: None,
+            model: Some(CHOSEN.into()),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&updated, ServerMessage::SettingsUpdated { model: Some(model), .. } if model == CHOSEN),
+        "{updated:?}"
+    );
+
+    let (events, _) = submit(host.address, "hello").await;
+    assert_eq!(streamed_text(&events), "answered by the second model");
+    assert_eq!(
+        last_chat_body(&provider)["model"],
+        serde_json::json!(CHOSEN),
+        "the run still asked the endpoint for the startup model"
+    );
+}
+
+/// A validation request names a base URL, and a base URL arrives from a browser.
+/// Probing whatever a page asks for would hand the host's credential to any
+/// endpoint on the internet, so the answer about a foreign endpoint has to be
+/// "not mine" and the endpoint has to see no request at all.
+#[tokio::test]
+async fn a_validation_request_never_contacts_a_url_the_host_did_not_configure() {
+    let decoy = MockInferenceServer::start_with_models(vec![MockModelEntry::new("decoy-model")])
+        .await
+        .unwrap();
+    let provider = MockInferenceServer::start_with_models(vec![MockModelEntry::new(MODEL)])
+        .await
+        .unwrap();
+    let host = start_host(Engine::with_adapter_arc(adapter(
+        &provider.url(),
+        Some(TOKEN),
+    )))
+    .await;
+
+    let foreign = ask(
+        host.address,
+        ClientMessage::ValidateProvider {
+            client_msg_id: "validate-decoy".into(),
+            base_url: decoy.url(),
+            model: "decoy-model".into(),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&foreign, ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "endpoint_not_host_configured"),
+        "{foreign:?}"
+    );
+    assert!(
+        decoy.requests().is_empty(),
+        "the host contacted an endpoint it was never configured to use: {:?}",
+        decoy.requests()
+    );
+
+    // Its own endpoint gets a real answer rather than a stock refusal.
+    let known = ask(
+        host.address,
+        ClientMessage::ValidateProvider {
+            client_msg_id: "validate-known".into(),
+            base_url: provider.url(),
+            model: MODEL.into(),
+        },
+    )
+    .await;
+    assert!(
+        matches!(
+            &known,
+            ServerMessage::ProviderValidation {
+                reachable: true,
+                error_code: None,
+                ..
+            }
+        ),
+        "{known:?}"
+    );
+    let unknown_model = ask(
+        host.address,
+        ClientMessage::ValidateProvider {
+            client_msg_id: "validate-unknown".into(),
+            base_url: provider.url(),
+            model: "not-listed-model".into(),
+        },
+    )
+    .await;
+    assert!(
+        matches!(&unknown_model, ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "model_not_listed"),
+        "{unknown_model:?}"
+    );
+}

@@ -824,3 +824,34 @@ fn handler_answers_ext_method_instead_of_dropping() {
         serde_json::from_str(resp.0.get()).expect("typed wire reply");
     assert!(matches!(parsed, AskUserQuestionExtResponse::Cancelled));
 }
+
+/// json 模式的重试行：RetryState 原样内嵌，外层带 api_retry 识别前缀——
+/// chaos-engine 的流式适配器靠这个前缀把重试行从诊断行里分出来。
+#[test]
+fn retry_stderr_line_embeds_the_shell_retry_state_under_api_retry() {
+    use xai_grok_shell::extensions::notification::RetryState;
+    let line = super::retry_stderr_line(&RetryState::Retrying {
+        attempt: 2,
+        max_retries: 8,
+        reason: "API error (status 503): no channel".into(),
+        error_type: Some("api".into()),
+    });
+    let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(value["type"], "api_retry");
+    assert_eq!(value["state"]["type"], "retrying");
+    assert_eq!(value["state"]["attempt"], 2);
+    assert_eq!(value["state"]["max_retries"], 8);
+    assert!(line.starts_with(r#"{"type":"api_retry""#));
+}
+
+#[test]
+fn retry_plain_line_reads_like_the_tui_banner() {
+    use xai_grok_shell::extensions::notification::RetryState;
+    let line = super::retry_plain_line(&RetryState::Retrying {
+        attempt: 3,
+        max_retries: 8,
+        reason: "server error".into(),
+        error_type: None,
+    });
+    assert_eq!(line, "Retrying (attempt 3/8): server error");
+}

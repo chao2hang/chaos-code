@@ -615,6 +615,8 @@ mod address_tests {
             description: "d".into(),
             effective_context_source: None,
             context_normalized: false,
+            is_background: true,
+            parent_tool_call_id: Some("tool-parent".into()),
             capability_mode: None,
             persona: None,
             role: None,

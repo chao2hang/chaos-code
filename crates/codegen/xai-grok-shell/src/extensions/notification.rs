@@ -786,6 +786,14 @@ pub enum SessionUpdate {
         /// Capability mode applied to this subagent (e.g. "read-only").
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capability_mode: Option<String>,
+        /// Whether this child was requested as background work by the `task` tool.
+        /// Missing on older persisted events means false; this additive field lets hosts
+        /// show only explicitly backgrounded children while keeping foreground waits inline.
+        #[serde(default)]
+        is_background: bool,
+        /// Tool call that launched this child, when launched by the model-facing task tool.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_call_id: Option<String>,
         /// Named persona applied to this subagent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         persona: Option<String>,
@@ -1776,6 +1784,8 @@ mod tests {
             description: "d".into(),
             effective_context_source: None,
             context_normalized: false,
+            is_background: true,
+            parent_tool_call_id: Some("tool-1".into()),
             capability_mode: None,
             persona: None,
             role: None,
@@ -1841,6 +1851,8 @@ mod tests {
             description: "d".into(),
             effective_context_source: None,
             context_normalized: false,
+            is_background: true,
+            parent_tool_call_id: Some("tool-1".into()),
             capability_mode: None,
             persona: None,
             role: None,
@@ -1853,6 +1865,11 @@ mod tests {
         assert_eq!(
             json.get("agentAddress"),
             Some(&serde_json::json!("opaque-address"))
+        );
+        assert_eq!(json.get("is_background"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            json.get("parent_tool_call_id"),
+            Some(&serde_json::json!("tool-1"))
         );
         assert!(json.get("agent_address").is_none());
 

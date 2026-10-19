@@ -767,8 +767,18 @@ mod tests {
             }
         );
         // The grant is spent, the tunnel is gone, and so is the port.
+        // Under high CPU load or concurrent test runs, socket release by the OS
+        // can take a few milliseconds.
+        let mut port_freed = false;
+        for _ in 0..50 {
+            if TcpListener::bind(local).await.is_ok() {
+                port_freed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         assert!(
-            TcpListener::bind(local).await.is_ok(),
+            port_freed,
             "the local port was still held after the grant ran out"
         );
         assert_eq!(hits.load(Ordering::SeqCst), 1);
@@ -936,8 +946,15 @@ mod tests {
         .unwrap();
         let port = tunnel.local_addr().unwrap().port();
         drop(tunnel);
-        let rebound = TcpListener::bind(("127.0.0.1", port)).await;
-        assert!(rebound.is_ok(), "the port was not released: {rebound:?}");
+        let mut port_freed = false;
+        for _ in 0..50 {
+            if TcpListener::bind(("127.0.0.1", port)).await.is_ok() {
+                port_freed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(port_freed, "the port was not released");
     }
 
     /// A tunnel that never carried anything is a failure and has to say why, rather

@@ -354,6 +354,12 @@ chaos wrap kubectl exec -it my-pod -- bash
 
 ---
 
+## Web 前端（ZCode）
+
+Chaos Web 使用本项目管理的 ZCode Web 前端源码；前端源码放在单独的 checkout 中，与 `chaos-code` Cargo workspace 分开。旧 `apps/chaos-ui` 已退役并删除。当前运行时由 Rust `chaos-web` 宿主提供登录、静态资源托管、`/ws/zcode` RPC 桥和 Chaos Engine 接入。**不要删除 `xai-grok-web` 或 `chaos-web`：它们是 ZCode 运行所需的后端宿主，不是旧前端。**
+
+前端源码、Node/pnpm 构建、部署与验证说明见[ZCode Web 前端架构](docs/architecture/zcode-web-frontend.md)。Chaos Rust 宿主的构建和测试在 `chaos-code` workspace 运行；ZCode 的 lint/typecheck/test/build 在同一项目管理的独立前端 checkout 中运行，当前 Cargo CI 尚未自动构建该源码树。
+
 ## 文档
 
 - 产品与 BYOK 配置：[CHAOS.md](CHAOS.md)

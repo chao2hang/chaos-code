@@ -679,7 +679,7 @@ impl Reducer for MessagesReducer {
             }
             // Whole-turn totals are not one model call. Stamping them here would inflate the last assistant message.
             StreamEvent::TurnUsage { .. } => {}
-            StreamEvent::Lifecycle(_) | StreamEvent::Plan(_) => {}
+            StreamEvent::Lifecycle(_) | StreamEvent::Plan(_) | StreamEvent::Subagent(_) => {}
         }
         out
     }

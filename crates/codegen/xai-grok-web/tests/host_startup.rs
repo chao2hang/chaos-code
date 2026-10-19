@@ -79,10 +79,14 @@ fn start_host(env: &[(&str, &str)]) -> Host {
         .env_remove("CHAOS_PROVIDER_API_KEY")
         .env_remove("CHAOS_SAFE_WEB_MODE")
         .env_remove("CHAOS_WEB_TOKEN")
+        .env_remove("CHAOS_WEB_AUTH_FILE")
+        .env("CHAOS_WEB_AUTH", "0")
+        .env_remove("CHAOS_WEB_BIND")
         .env_remove("CHAOS_WEB_PUBLIC_ORIGIN")
         .env_remove("CHAOS_WEB_ASSETS_DIR")
         .env_remove("CHAOS_WEB_DEV_ORIGIN")
         .env_remove("CHAOS_WEB_ALLOW_DYNAMIC_DEV_ORIGIN")
+        .env("CHAOS_DISABLE_CONFIG_FALLBACK", "1")
         .envs(env.iter().copied())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -238,6 +242,8 @@ fn an_invalid_provider_configuration_stops_the_host() {
     let port = free_port();
     let output = Command::new(env!("CARGO_BIN_EXE_chaos-web"))
         .env("CHAOS_WEB_PORT", port.to_string())
+        .env("CHAOS_WEB_AUTH", "0")
+        .env_remove("CHAOS_WEB_AUTH_FILE")
         .env_remove("CHAOS_AGENT_BINARY")
         .env_remove("CHAOS_PROVIDER_API_KEY")
         .env("CHAOS_PROVIDER_BASE_URL", "http://provider.example.com/v1")
@@ -415,6 +421,8 @@ fn expect_startup_refusal(public_origin: &str, token: Option<&str>, needle: &str
     let mut command = Command::new(env!("CARGO_BIN_EXE_chaos-web"));
     command
         .env("CHAOS_WEB_PORT", port.to_string())
+        .env("CHAOS_WEB_AUTH", "0")
+        .env_remove("CHAOS_WEB_AUTH_FILE")
         .env("CHAOS_WEB_PUBLIC_ORIGIN", public_origin)
         .env_remove("CHAOS_WEB_TOKEN")
         .env_remove("CHAOS_AGENT_BINARY")
@@ -464,7 +472,7 @@ fn a_public_origin_without_a_credential_stops_the_host() {
     expect_startup_refusal(
         "https://chaos.example.test:8443",
         None,
-        "必须同时设置 CHAOS_WEB_TOKEN",
+        "requires browser password auth or CHAOS_WEB_TOKEN",
     );
 }
 

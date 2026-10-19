@@ -9,4 +9,12 @@ docs/release-process.md	recorded-absent	the transcript prints ls refusing this e
 third_party/nfsserve	recorded-absent	the transcript prints git log returning 0 commits, which is the evidence that this vendored dependency was never actually vendored
 sync/recon/2026-10-03-2bdd1d6a6-2.md	recorded-absent	recon record an accidental live run of scripts/upstream-recon.sh wrote, never committed, deleted after the mode was measured; the citing ls line quotes that measurement
 bin/verify.sh	other-root	the fenced hook script is a sample the reader saves into their own settings, and bin/verify.sh is the reader's own project script the hook calls, not a path this repository ships
+scripts/ci/check-gui-protocol.sh	historical	the TypeScript protocol-mirror gate retired with apps/chaos-ui on 2026-10-09; transcripts quoting it describe that guard, correct about then and stale as an instruction now
 python3 scripts/ci/check-gui-protocol.sh	quoted-command	the log quoting it is about this exact typo: the document prints the wrong line as the finding and the fixed line beside it, so the wrong command has to stay verbatim
+scripts/ci/check-brand-protocol.py	historical	the brand guard retired with apps/chaos-ui on 2026-10-09; the ci-guard-wiring transcript quoting it describes that guard, correct about then and stale as an instruction now
+scripts/ci/test-brand-protocol.py	historical	fixture suite of the retired brand guard, quoted by the same ci-guard-wiring transcript as the gate that existed then
+scripts/ci/check-e2e-registration.py	historical	the Playwright-spec registration gate retired with apps/chaos-ui on 2026-10-09; the e2e-registration transcript quoting it describes that guard, correct about then and stale now
+scripts/ci/test-check-e2e-registration.py	historical	fixture suite of the retired e2e-registration gate, quoted by that transcript as the gate that checked spec lists then
+scripts/ci/check-protocol-mirror.py	historical	the mirror-coverage gate retired with apps/chaos-ui on 2026-10-09; three transcripts quoting it describe that guard, correct about then and stale as an instruction now
+scripts/ci/test-check-protocol-mirror.py	historical	fixture suite of the retired mirror-coverage gate, quoted by the protocol-mirror transcript as the gate that checked mirrors then
+crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs	historical	upstream grok-build prefetch file the lock-poison-prefetch transcript drove; this fork never grew that tree, so the line reproduces a measurement, not a path here

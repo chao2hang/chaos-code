@@ -1,19 +1,35 @@
 # ADR-001: GUI walking skeleton boundaries
 
-- Status: accepted for M-1/M0 implementation
+- Status: superseded on 2026-10-09 for the frontend boundary (decision ①)
 - Date: 2026-09-24
 
-## Decision
+> **2026-10-09 amendment:** `apps/chaos-ui` and the self-built React client were
+> retired in full. The engine protocol and the Rust host boundaries in this
+> ADR remain as decided; the frontend boundary is now the ZCode official
+> frontend over the Rust RPC bridge (`crates/codegen/xai-grok-web/src/chaos_bridge.rs`),
+> with `xai-grok-desktop` still the desktop host boundary.
 
-Chaos Web and Desktop share a small Rust engine protocol. `chaos-engine` owns
-versioned client/server envelopes and an engine handle. `xai-grok-web` owns the
-loopback Axum transport. `xai-grok-desktop` owns the desktop host boundary and
-will add Tauri commands without putting Tauri dependencies into the default TUI
-binary. `apps/chaos-ui` is a React/TypeScript client.
+## Historical decision
 
-The first engine responder is a deterministic mock so the UI and transport can
-be tested without provider credentials. The existing headless agent remains the
-behavioral source for the eventual adapter; it is not duplicated in the UI.
+Chaos Web and Desktop share a Rust engine protocol. `chaos-engine` owns the
+engine handle; `xai-grok-web` owns the Axum transport and WebSocket host;
+`xai-grok-desktop` is the separate desktop host boundary. The original decision
+paired these crates with a React/TypeScript client in `apps/chaos-ui`, which has
+since been retired and deleted.
+
+The first engine responder was a deterministic mock so the transport could be
+tested without provider credentials. The existing headless agent remains the
+behavioral source for the CLI adapter; it is not duplicated in the Web UI.
+
+## Current Web client
+
+The current Web client is the official ZCode frontend, whose source is managed
+by this project in a frontend checkout separate from the `chaos-code` Rust
+workspace. It connects to the Chaos host through the binary ZCode RPC bridge at
+`/ws/zcode`; the Rust host continues to own authentication, static asset serving,
+authorization, and Engine integration. See
+[`zcode-web-frontend.md`](zcode-web-frontend.md) for build, deploy and test
+boundaries.
 
 ## Alternatives
 

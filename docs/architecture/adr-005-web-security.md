@@ -17,13 +17,15 @@ protection remain release gates. `CHAOS_SAFE_WEB_MODE` is now enforced in the
 WebSocket backend: mutation messages, including persistent settings updates, are
 rejected before engine dispatch, so it is not a UI-only feature flag. A real
 WebSocket regression verifies the settings remain unchanged in Safe Web Mode.
-The WebSocket uses the same authorization and Origin checks as HTTP routes. The
-React client derives `ws:`/`wss:` from the page scheme and preserves an explicit
-port and base path; this URL selection does not configure TLS termination or a
-reverse proxy. The Vite development server proxies the same `/health`, `/api`, and
-`/ws` routes to the loopback Web host; these routes remain subject to its ordinary
-Host, Origin, token, and Safe Web Mode checks. Public HTTPS deployments still need
-separately reviewed host and proxy configuration.
+The current production frontend is the project-managed ZCode Web client;
+it uses the binary RPC endpoint `/ws/zcode`, which is protected by the same Host,
+Origin, and password-session authentication boundary as the other protected
+routes. The legacy JSON `/ws` and `/api` routes remain compatibility/server
+interfaces, not the current frontend protocol. Local development/proxy setup
+must be documented with the chosen ZCode checkout; do not treat old
+`apps/chaos-ui` Vite proxy settings as current instructions. TLS termination and
+public proxy configuration remain separate deployment concerns and must match
+the declared public origin and forwarded-proto policy above.
 
 ## Proxy-fronted TLS (2026-10-02)
 

@@ -201,6 +201,28 @@ impl HeadlessEmitter {
             }
         }
     }
+    /// Surface a sampler/API retry state for the active format.
+    ///
+    /// A turn that quietly retries a 503 is indistinguishable from a hung one
+    /// from the outside, so headless hosts get the state the TUI renders for
+    /// itself: `json` keeps its stdout contract (exactly one result object at
+    /// the end) and reports on stderr as one NDJSON line per state change —
+    /// `{"type":"api_retry","state":{…the shell's own RetryState…}}` — while
+    /// `plain` gets the same fact in human form. The streaming formats carry
+    /// every update on stdout and have no retry line yet; adding one means a
+    /// reducer entry, so they stay silent rather than change their contract.
+    fn on_retry(&mut self, state: xai_grok_shell::extensions::notification::RetryState) {
+        match self.format {
+            OutputFormat::Plain => eprint_line(&retry_plain_line(&state)),
+            OutputFormat::Json => eprint_line(&retry_stderr_line(&state)),
+            OutputFormat::StreamingJson | OutputFormat::StreamingMessagesJson => {}
+        }
+    }
+    fn on_subagent_event(&mut self, event: crate::headless::ext_protocol::SubagentStreamEvent) {
+        if self.format == OutputFormat::StreamingJson {
+            self.reduce_and_emit(StreamEvent::Subagent(event));
+        }
+    }
     /// Fold one event through the reducer and emit its lines; a no-op for `plain`/`json`.
     fn reduce_and_emit(&mut self, event: StreamEvent) {
         let Some(reducer) = self.reducer.as_mut() else {
@@ -1603,83 +1625,51 @@ fn track_background_lifecycle(
     event: ExtEvent,
     pending_bg: &mut HashSet<BackgroundWork>,
     state: &mut BackgroundLifecycleState,
-) {
+) -> Option<crate::headless::ext_protocol::SubagentStreamEvent> {
     match event {
-        ExtEvent::TaskBackgrounded {
-            task_id,
-            is_monitor,
-        } => {
+        ExtEvent::TaskBackgrounded { task_id, is_monitor } => {
             if state.completed_tasks.contains(&task_id) {
-                tracing::debug!(
-                    is_monitor,
-                    "headless: ignoring task_backgrounded for already-completed task"
-                );
+                tracing::debug!(is_monitor, "headless: ignoring task_backgrounded for already-completed task");
             } else {
                 pending_bg.insert(BackgroundWork::Task(task_id));
             }
+            None
         }
         ExtEvent::TaskCompleted { task_id } => {
             pending_bg.remove(&BackgroundWork::Task(task_id.clone()));
             state.completed_tasks.insert(task_id);
+            None
         }
-        ExtEvent::SubagentSpawned {
-            subagent_id,
-            attempt_id,
-            event_seq,
-        } => {
-            let lifecycle = state.subagents.entry(subagent_id.clone()).or_default();
-            if let SubagentLifecycleReduction::Accepted(accepted) = lifecycle.reduce(
-                SubagentLifecycleTransition::Spawned,
-                attempt_id.as_deref(),
-                event_seq,
-            ) {
-                let effect = accepted.effect();
-                accepted.commit(lifecycle);
-                match effect {
-                    SubagentLifecycleEffect::Apply | SubagentLifecycleEffect::ApplyNewAttempt => {
-                        pending_bg.insert(BackgroundWork::Subagent(subagent_id));
+        ExtEvent::SubagentLifecycle(update) => {
+            let key = if update.child_session_id.is_empty() { update.subagent_id.clone() } else { update.child_session_id.clone() };
+            let transition = match update.event.as_str() {
+                "spawned" => SubagentLifecycleTransition::Spawned,
+                "progress" => SubagentLifecycleTransition::Progress,
+                "finished" => SubagentLifecycleTransition::Finished,
+                _ => return None,
+            };
+            let lifecycle = state.subagents.entry(key.clone()).or_default();
+            let SubagentLifecycleReduction::Accepted(accepted) = lifecycle.reduce(
+                transition, update.attempt_id.as_deref(), update.event_seq,
+            ) else { return None };
+            let effect = accepted.effect();
+            accepted.commit(lifecycle);
+            match (transition, effect) {
+                (SubagentLifecycleTransition::Spawned, SubagentLifecycleEffect::Apply | SubagentLifecycleEffect::ApplyNewAttempt)
+                    if update.run_in_background == Some(true) && update.workflow_run_id.is_none() => {
+                        pending_bg.insert(BackgroundWork::Subagent(key));
+                        Some(update)
                     }
-                    SubagentLifecycleEffect::ApplyWithPendingFinish => {
-                        pending_bg.remove(&BackgroundWork::Subagent(subagent_id));
-                    }
-                    SubagentLifecycleEffect::AwaitSpawn | SubagentLifecycleEffect::RecordOnly => {}
-                }
+                (SubagentLifecycleTransition::Finished, SubagentLifecycleEffect::Apply)
+                    if pending_bg.remove(&BackgroundWork::Subagent(key.clone())) => Some(update),
+                (SubagentLifecycleTransition::Progress, SubagentLifecycleEffect::Apply)
+                    if pending_bg.contains(&BackgroundWork::Subagent(key)) => Some(update),
+                _ => None,
             }
         }
-        ExtEvent::SubagentProgress {
-            subagent_id,
-            attempt_id,
-            event_seq,
-        } => {
-            if let Some(lifecycle) = state.subagents.get_mut(&subagent_id)
-                && let SubagentLifecycleReduction::Accepted(accepted) = lifecycle.reduce(
-                    SubagentLifecycleTransition::Progress,
-                    attempt_id.as_deref(),
-                    event_seq,
-                )
-            {
-                accepted.commit(lifecycle);
-            }
-        }
-        ExtEvent::SubagentFinished {
-            subagent_id,
-            attempt_id,
-            event_seq,
-        } => {
-            let lifecycle = state.subagents.entry(subagent_id.clone()).or_default();
-            if let SubagentLifecycleReduction::Accepted(accepted) = lifecycle.reduce(
-                SubagentLifecycleTransition::Finished,
-                attempt_id.as_deref(),
-                event_seq,
-            ) {
-                let effect = accepted.effect();
-                accepted.commit(lifecycle);
-                if effect == SubagentLifecycleEffect::Apply {
-                    pending_bg.remove(&BackgroundWork::Subagent(subagent_id));
-                }
-            }
-        }
-        ExtEvent::MonitorEvent | ExtEvent::None | ExtEvent::Lifecycle(_) | ExtEvent::Stream(_) => {}
+        #[cfg(test)]
+        ExtEvent::SubagentSpawned { .. } | ExtEvent::SubagentProgress { .. } | ExtEvent::SubagentFinished { .. } => None,
+        ExtEvent::MonitorEvent | ExtEvent::None | ExtEvent::Lifecycle(_) | ExtEvent::Stream(_) | ExtEvent::Retry(_) => None,
     }
 }
 /// Non-blocking drain-to-empty of `acp_rx`.
@@ -1835,7 +1825,12 @@ fn handle_headless_acp_message(
             match event {
                 ExtEvent::Lifecycle(l) => emitter.on_lifecycle(l),
                 ExtEvent::Stream(event) => emitter.reduce_and_emit(*event),
-                other => track_background_lifecycle(other, pending_bg, background_lifecycle),
+                ExtEvent::Retry(state) => emitter.on_retry(state),
+                other => {
+                    if let Some(update) = track_background_lifecycle(other, pending_bg, background_lifecycle) {
+                        emitter.on_subagent_event(update);
+                    }
+                }
             }
         }
         AcpClientMessageBox::WaitForTerminalExit(args) => {
@@ -1849,6 +1844,35 @@ fn handle_headless_acp_message(
         _ => {}
     }
 }
+
+/// json 模式 stderr 上的一行：整个 RetryState 原样嵌在 `state` 里，外层
+/// `type: api_retry` 是宿主的识别前缀——引擎端据此把它从普通诊断行里分出来。
+fn retry_stderr_line(state: &xai_grok_shell::extensions::notification::RetryState) -> String {
+    serde_json::json!({ "type": "api_retry", "state": state }).to_string()
+}
+
+/// plain 模式 stderr 上的一行：与 TUI 同样的事实，只是人读的形状。
+fn retry_plain_line(state: &xai_grok_shell::extensions::notification::RetryState) -> String {
+    use xai_grok_shell::extensions::notification::RetryState as Rs;
+    match state {
+        Rs::Retrying {
+            attempt,
+            max_retries,
+            reason,
+            ..
+        } => format!("Retrying (attempt {attempt}/{max_retries}): {reason}"),
+        Rs::Exhausted {
+            attempts, reason, ..
+        } => format!("Retries exhausted after {attempts} attempts: {reason}"),
+        Rs::Failed {
+            error_type,
+            message,
+        } => {
+            format!("Request failed ({error_type}): {message}")
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "headless/background_lifecycle_tests.rs"]
 mod background_lifecycle_tests;

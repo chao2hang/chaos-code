@@ -5,7 +5,7 @@ use axum::{
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use chaos_engine::{ClientMessage, Engine, PROTOCOL_VERSION, ServerMessage};
@@ -16,10 +16,13 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer};
 
+pub mod chaos_bridge;
 pub mod preview;
+pub mod remote_relay;
+pub mod web_auth;
 
 use preview::PreviewConfig;
 
@@ -36,7 +39,10 @@ const REQUEST_ID: &str = "client_msg_id";
 pub struct WebState {
     pub engine: Engine,
     pub token: Arc<String>,
+    pub auth: web_auth::WebAuth,
     pub safe_web_mode: bool,
+    pub file_root: std::path::PathBuf,
+    pub assets_dir: Option<std::path::PathBuf>,
     /// Dev-server ports an operator named at startup. Empty means `/preview`
     /// answers with a reason code and dials nothing.
     pub previews: PreviewConfig,
@@ -77,17 +83,71 @@ pub fn router_with_previews(
     assets_dir: Option<std::path::PathBuf>,
     previews: PreviewConfig,
 ) -> Router {
+    router_with_auth_and_previews(
+        engine,
+        token,
+        safe_web_mode,
+        assets_dir,
+        previews,
+        web_auth::WebAuth::disabled(),
+    )
+}
+
+/// Production router with browser password authentication. The ordinary router
+/// constructors stay unauthenticated for in-process protocol tests; the shipped
+/// binary always calls this constructor with persistent auth enabled.
+pub fn router_with_auth_and_previews(
+    engine: Engine,
+    token: impl Into<String>,
+    safe_web_mode: bool,
+    assets_dir: Option<std::path::PathBuf>,
+    previews: PreviewConfig,
+    auth: web_auth::WebAuth,
+) -> Router {
+    router_with_auth_and_previews_and_file_root(
+        engine,
+        token,
+        safe_web_mode,
+        assets_dir,
+        previews,
+        auth,
+        None,
+    )
+}
+
+pub fn router_with_auth_and_previews_and_file_root(
+    engine: Engine,
+    token: impl Into<String>,
+    safe_web_mode: bool,
+    assets_dir: Option<std::path::PathBuf>,
+    previews: PreviewConfig,
+    auth: web_auth::WebAuth,
+    file_root: Option<PathBuf>,
+) -> Router {
     let state = Arc::new(WebState {
         engine,
         token: Arc::new(token.into()),
+        auth: auth.with_file_root(file_root.clone()),
         safe_web_mode,
+        file_root: file_root.unwrap_or_else(chaos_bridge::file_root),
+        assets_dir: assets_dir.clone(),
         previews,
     });
     let router = Router::new()
         .route("/health", get(health))
+        .route("/api/auth/status", get(web_auth::status))
+        .route("/api/auth/setup", post(web_auth::setup))
+        .route("/api/auth/login", post(web_auth::login))
+        .route("/api/auth/logout", post(web_auth::logout))
         .route("/api/handshake", get(handshake))
+        .route("/api/server-info", get(server_info))
         .route("/api/sessions", post(create_session))
+        .route("/", get(index_page))
+        .route("/remote", get(remote_page))
+        .route("/remote/v4", get(remote_spa_page))
+        .route("/remote/v4/", get(remote_spa_page))
         .route("/ws", get(websocket))
+        .route("/ws/zcode", get(zcode_websocket))
         .layer(
             CorsLayer::new().allow_origin(
                 dev_origins()
@@ -102,8 +162,9 @@ pub fn router_with_previews(
         // form or uploading a file is not that API, and the preview module sets
         // its own documented bound.
         .merge(preview::routes())
-        .with_state(state);
-    if let Some(assets_dir) = assets_dir {
+        .fallback(spa_fallback)
+        .with_state(state.clone());
+    let router = if let Some(assets_dir) = assets_dir {
         router
             .nest_service(
                 "/api",
@@ -130,29 +191,344 @@ pub fn router_with_previews(
                             .precompressed_br(),
                     ),
             )
-            .fallback_service(
+            // The official mobile SPA mirror: `<assets_dir>/remote-spa/latest/`
+            // holds the captured `/remote/v4` client (page shell + assets), and
+            // `remote-spa/latest/assets/index.js` is the one-line-patched copy
+            // whose relay endpoint points at this same origin instead of the
+            // cloud relay. Served at the exact paths the client's own router
+            // matches (`/remote/v4`, `/remote/v4/latest/`, `…/assets/*`).
+            .nest_service(
+                "/remote/v4/latest/assets",
                 tower::ServiceBuilder::new()
                     .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
                         header::CACHE_CONTROL,
-                        HeaderValue::from_static("no-cache"),
-                    ))
-                    .layer(tower_http::set_header::SetResponseHeaderLayer::appending(
-                        header::VARY,
-                        HeaderValue::from_static("Accept-Encoding"),
+                        HeaderValue::from_static("public, max-age=300"),
                     ))
                     .service(
-                        ServeFile::new(assets_dir.join("index.html"))
+                        ServeDir::new(assets_dir.join("remote-spa/latest/assets"))
                             .precompressed_gzip()
                             .precompressed_br(),
                     ),
             )
     } else {
         router
-    }
+    };
+    router.layer(axum::middleware::from_fn_with_state(state, web_auth::gate))
 }
 
 async fn health() -> Response {
     secure_json(serde_json::json!({ "status": "ok" }))
+}
+
+/// The official mobile SPA's page shell, served from the mirror directory.
+///
+/// The shell is the official one (theme pre-paint bootstrap + one module
+/// script). When the mirror is absent the route degrades to the bundled mobile
+/// page instead of failing.
+async fn remote_spa_page(State(state): State<Arc<WebState>>) -> Response {
+    let path = state
+        .assets_dir
+        .as_ref()
+        .map(|dir| dir.join("remote-spa/latest/index.html"))
+        .or_else(|| assets_root().map(|dir| dir.join("remote-spa/latest/index.html")));
+    let html = match path.as_deref().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(html) => (html, "no-cache"),
+        None => (
+            include_str!("remote.html").to_string(),
+            "no-store",
+        ),
+    };
+    let (body, cache) = html;
+    let mut response = Html(body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    response
+}
+
+fn assets_root() -> Option<std::path::PathBuf> {
+    std::env::var("CHAOS_WEB_ASSETS_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+}
+
+pub fn has_official_mobile_client(assets_dir: &Option<std::path::PathBuf>) -> bool {
+    let in_assets = assets_dir
+        .as_ref()
+        .map(|dir| dir.join("remote-spa/latest/index.html").is_file())
+        .unwrap_or(false);
+    let in_env = assets_root()
+        .map(|dir| dir.join("remote-spa/latest/index.html").is_file())
+        .unwrap_or(false);
+    in_assets || in_env
+}
+
+pub fn mint_mobile_pairing_url() -> String {
+    use base64::Engine;
+    use ring::rand::SecureRandom;
+
+    let uuid = uuid::Uuid::new_v4().simple().to_string();
+    let sid = format!("d_{}", &uuid[..22]);
+    let mut rng_bytes = [0u8; 32];
+    let rng = ring::rand::SystemRandom::new();
+    let _ = rng.fill(&mut rng_bytes);
+    let hash = base64::engine::general_purpose::STANDARD.encode(rng_bytes);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mid = uuid::Uuid::new_v4().to_string();
+    format!("/remote/v4?sid={sid}&hash={hash}&t={t}&mid={mid}&name=phone&app_version=3.15.3")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiMode {
+    Mobile,
+    Desktop,
+}
+
+pub fn detect_ui_mode(
+    uri: &axum::http::Uri,
+    headers: &HeaderMap,
+) -> (UiMode, Option<&'static str>) {
+    // 1. Explicit query parameter ?ui=... or ?mode=...
+    if let Some(query) = uri.query() {
+        for param in query.split('&') {
+            if let Some((k, v)) = param.split_once('=') {
+                if k == "ui" || k == "mode" || k == "view" {
+                    if v.eq_ignore_ascii_case("mobile") || v.eq_ignore_ascii_case("phone") {
+                        return (
+                            UiMode::Mobile,
+                            Some("chaos_ui=mobile; Path=/; Max-Age=31536000; SameSite=Lax"),
+                        );
+                    }
+                    if v.eq_ignore_ascii_case("desktop") || v.eq_ignore_ascii_case("pc") {
+                        return (
+                            UiMode::Desktop,
+                            Some("chaos_ui=desktop; Path=/; Max-Age=31536000; SameSite=Lax"),
+                        );
+                    }
+                    if v.eq_ignore_ascii_case("auto") {
+                        return (
+                            detect_ui_mode_from_device(headers),
+                            Some("chaos_ui=; Path=/; Max-Age=0; SameSite=Lax"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Cookie preference: chaos_ui=mobile | desktop
+    if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
+        for cookie in cookie_header.split(';') {
+            let cookie = cookie.trim();
+            if let Some((k, v)) = cookie.split_once('=') {
+                if k.trim() == "chaos_ui" {
+                    let v = v.trim();
+                    if v.eq_ignore_ascii_case("mobile") || v.eq_ignore_ascii_case("phone") {
+                        return (UiMode::Mobile, None);
+                    }
+                    if v.eq_ignore_ascii_case("desktop") || v.eq_ignore_ascii_case("pc") {
+                        return (UiMode::Desktop, None);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Automatic device detection
+    (detect_ui_mode_from_device(headers), None)
+}
+
+fn detect_ui_mode_from_device(headers: &HeaderMap) -> UiMode {
+    if let Some(ch_mobile) = headers.get("sec-ch-ua-mobile").and_then(|v| v.to_str().ok()) {
+        if ch_mobile.contains("?1") {
+            return UiMode::Mobile;
+        } else if ch_mobile.contains("?0") {
+            return UiMode::Desktop;
+        }
+    }
+
+    if let Some(ua) = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()) {
+        let ua_lower = ua.to_ascii_lowercase();
+        if ua_lower.contains("mobile")
+            || ua_lower.contains("android")
+            || ua_lower.contains("iphone")
+            || ua_lower.contains("ipad")
+            || ua_lower.contains("ipod")
+            || ua_lower.contains("windows phone")
+            || ua_lower.contains("iemobile")
+            || ua_lower.contains("blackberry")
+            || ua_lower.contains("opera mini")
+            || ua_lower.contains("opera mobi")
+            || ua_lower.contains("harmonyos")
+        {
+            return UiMode::Mobile;
+        }
+    }
+
+    UiMode::Desktop
+}
+
+pub fn remote_page_response() -> Response {
+    let mut response = Html(include_str!("remote.html")).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"));
+    response
+        .headers_mut()
+        .insert(header::VARY, HeaderValue::from_static("User-Agent, Sec-CH-UA-Mobile, Cookie, Accept-Encoding"));
+    response
+}
+
+pub fn desktop_page_response(assets_dir: &Option<std::path::PathBuf>) -> Response {
+    let path = assets_dir.as_ref().map(|dir| dir.join("index.html"));
+    if let Some(content) = path.and_then(|p| std::fs::read_to_string(p).ok()) {
+        let mut response = Html(content).into_response();
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        response
+    } else {
+        remote_page_response()
+    }
+}
+
+/// Dynamic index page handler: serves the mobile UI or desktop UI based on
+/// detected device type, cookie preference, or ?ui= query parameter override.
+/// Dynamic index page handler: serves the unified responsive workspace.
+/// Mobile and desktop browsers both stay on `/` with no URL redirection.
+/// The layout automatically adapts responsively via CSS and viewport breakpoints.
+async fn index_page(
+    State(state): State<Arc<WebState>>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+) -> Response {
+    let (_mode, cookie_update) = detect_ui_mode(&uri, &headers);
+    let mut resp = if uri.query().is_some_and(|q| q.contains("ui=legacy-remote")) {
+        remote_page_response()
+    } else {
+        desktop_page_response(&state.assets_dir)
+    };
+    if let Some(cookie) = cookie_update {
+        if let Ok(val) = HeaderValue::from_str(cookie) {
+            resp.headers_mut().insert(header::SET_COOKIE, val);
+        }
+    }
+    resp
+}
+
+/// The `/remote` route: preserved for backward compatibility and bookmarks.
+async fn remote_page(
+    State(_state): State<Arc<WebState>>,
+    uri: axum::http::Uri,
+    _headers: HeaderMap,
+) -> Response {
+    if let Some(query) = uri.query() {
+        if query.contains("ui=desktop") || query.contains("ui=pc") {
+            let mut resp = axum::response::Redirect::to("/?ui=desktop").into_response();
+            let _ = HeaderValue::from_str("chaos_ui=desktop; Path=/; Max-Age=31536000; SameSite=Lax")
+                .map(|val| resp.headers_mut().insert(header::SET_COOKIE, val));
+            return resp;
+        }
+    }
+    let mut resp = remote_page_response();
+    if let Some(query) = uri.query() {
+        if query.contains("ui=mobile") {
+            let _ = HeaderValue::from_str("chaos_ui=mobile; Path=/; Max-Age=31536000; SameSite=Lax")
+                .map(|val| resp.headers_mut().insert(header::SET_COOKIE, val));
+        }
+    }
+    resp
+}
+
+/// Fallback for SPA routing: HTML navigations without static asset extensions
+/// render through index_page, while missing static files 404.
+async fn spa_fallback(
+    State(state): State<Arc<WebState>>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+) -> Response {
+    let path = uri.path();
+    if let Some(last_seg) = path.split('/').last() {
+        if let Some((_, ext)) = last_seg.split_once('.') {
+            let ext_lower = ext.to_ascii_lowercase();
+            if !matches!(ext_lower.as_str(), "html" | "htm") {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+        }
+    }
+    index_page(State(state), uri, headers).await
+}
+
+async fn server_info(State(state): State<Arc<WebState>>) -> Response {
+    // No `workspaceIdentity` here: the official frontend treats ANY workspace
+    // entry carrying an identity as a REMOTE target (useWorkspaceServices.tsx
+    // resolveWorkspaceServiceIsRemoteTarget), which leaves the local shell in
+    // "remote-waiting" (rpcReady=false) and the conversation pane renders null.
+    let mut paths = Vec::new();
+    if let Ok(path) = std::env::current_dir() {
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    let file_root_str = state.file_root.to_string_lossy().into_owned();
+    if !paths.contains(&file_root_str) {
+        paths.push(file_root_str);
+    }
+    // Also include any user-persisted workspace paths from settings
+    if let Some(home) = std::env::var_os("HOME") {
+        let settings_path = std::path::PathBuf::from(home).join(".chaos/web/zcode_settings.json");
+        if let Ok(content) = std::fs::read_to_string(&settings_path)
+            && let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+        {
+            if let Some(sessions) = val
+                .get("lastWorkspaceSession")
+                .and_then(serde_json::Value::as_array)
+            {
+                for s in sessions {
+                    if let Some(p) = s.get("workspacePath").and_then(serde_json::Value::as_str)
+                        && !paths.contains(&p.to_string())
+                        && std::path::Path::new(p).exists()
+                    {
+                        paths.push(p.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let workspaces: Vec<serde_json::Value> = paths
+        .into_iter()
+        .map(|p| {
+            let label = std::path::Path::new(&p)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Chaos".to_string());
+            serde_json::json!({
+                "path": p,
+                "label": label,
+            })
+        })
+        .collect();
+    secure_json(serde_json::json!({
+        "serverId": "chaos-web",
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocolVersion": 1,
+        // 不是写死的 false。绑到 0.0.0.0 之后，客户端得先知道这里到底要不要凭据，
+        // 才能把「没带 token」和「服务坏了」区分开——之前它恒说 false，而 /ws 其实在
+        // 拿 CHAOS_WEB_TOKEN 挡人。
+        "authRequired": !state.token.is_empty() || state.auth.enabled(),
+        "workspaces": workspaces,
+        "capabilities": { "websocketRpc": true }
+    }))
 }
 
 fn constant_time_equal(left: &str, right: &str) -> bool {
@@ -164,6 +540,9 @@ fn constant_time_equal(left: &str, right: &str) -> bool {
 }
 
 fn authorized(state: &WebState, headers: &HeaderMap) -> bool {
+    if state.auth.enabled() {
+        return state.auth.authenticated(headers);
+    }
     if state.token.is_empty() {
         return true;
     }
@@ -327,7 +706,8 @@ fn origin_allowed_against(headers: &HeaderMap, public_authority: Option<&str>) -
         return seen.is_some_and(|seen| {
             !seen.as_str().contains('@')
                 && !invalid_port(seen.as_str())
-                && configured_public_authority_matches(public_authority, seen)
+                && (configured_public_authority_matches(public_authority, seen)
+                    || loopback_authority(seen))
                 && forwarded_proto_https(headers)
         });
     }
@@ -564,9 +944,35 @@ fn host_allowed_against(headers: &HeaderMap, public_authority: Option<&str>) -> 
     }
     // Loopback stays valid — the proxy dials it and may or may not rewrite Host,
     // and health checks still arrive that way. The public name is additionally
-    // valid only because the operator typed it.
+    // valid only because the operator typed it. An explicit CHAOS_WEB_BIND IP is
+    // the same kind of operator-declared name: binding 0.0.0.0 already signals
+    // the intent to serve that address directly.
     loopback_authority(&authority)
         || configured_public_authority_matches(public_authority, &authority)
+        || configured_bind_ip_matches(&authority)
+}
+
+/// The IP the operator explicitly bound via CHAOS_WEB_BIND, if any.
+fn configured_bind_ip() -> Option<std::net::IpAddr> {
+    let declared = std::env::var("CHAOS_WEB_BIND").ok()?;
+    declared
+        .trim()
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .filter(|ip| !ip.is_loopback())
+}
+
+fn configured_bind_ip_matches(authority: &axum::http::uri::Authority) -> bool {
+    let Some(bind_ip) = configured_bind_ip() else {
+        return false;
+    };
+    let seen = match authority.host().parse::<std::net::IpAddr>() {
+        Ok(seen) => seen,
+        Err(_) => return false,
+    };
+    // A wildcard bind (0.0.0.0 / ::) serves every local address, so any
+    // numeric Host is the operator's own declaration.
+    bind_ip.is_unspecified() || seen == bind_ip
 }
 
 /// The addresses this server considers "the machine itself", as opposed to a name
@@ -676,6 +1082,19 @@ async fn create_session(State(state): State<Arc<WebState>>, headers: HeaderMap) 
     secure_json(event)
 }
 
+async fn zcode_websocket(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if let Some(rejection) = reject(&state, &headers) {
+        return rejection;
+    }
+    let engine = state.engine.clone();
+    let file_root = state.file_root.clone();
+    upgrade.on_upgrade(move |socket| chaos_bridge::chaos_direct_session(socket, engine, file_root))
+}
+
 async fn websocket(
     State(state): State<Arc<WebState>>,
     headers: HeaderMap,
@@ -686,7 +1105,71 @@ async fn websocket(
     }
     let engine = state.engine.clone();
     let safe_web_mode = state.safe_web_mode;
-    upgrade.on_upgrade(move |socket| websocket_session(socket, engine, safe_web_mode))
+    let file_root = state.file_root.clone();
+
+    // If the request Referer is from the mobile remote client (/remote/v4),
+    // directly upgrade to the relay session without waiting or sniffing.
+    let is_remote_client = headers
+        .get(header::REFERER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|r| r.contains("/remote/v4"));
+    if is_remote_client {
+        return upgrade.on_upgrade(move |socket| {
+            remote_relay::relay_session(socket, None, engine, file_root)
+        });
+    }
+
+    upgrade.on_upgrade(move |socket| sniffer_session(socket, engine, safe_web_mode, file_root))
+}
+
+/// One upgraded socket, three protocols.
+///
+/// The official ZCode frontend speaks its binary `@zcode/rpc` on this same
+/// `/ws` path; the Chaos JSON protocol opens with a server-sent text
+/// `Handshake` — and a JSON client waits for that greeting before sending,
+/// so the protocol cannot be picked by waiting for the client's first frame
+/// alone. Both sides therefore race: the client's first frame is awaited for a
+/// short grace window. A ZCode client (and a JSON client that sends first)
+/// answer within it; a JSON client that waits gets its `Handshake` when the
+/// window closes. Either way the JSON session sends the `Handshake` before any
+/// frame it processes, so clients see the greeting they always did.
+///
+/// The third protocol is the mobile remote-control relay: the official phone
+/// SPA (served at `/remote/v4`) dials the same `/ws` and opens with a JSON
+/// text frame `{"type":"auth_init",…}` (captured wire shape), which neither
+/// binary RPC nor a waiting JSON client ever produces.
+const PROTOCOL_SNIFF_GRACE: Duration = Duration::from_millis(2000);
+
+async fn sniffer_session(
+    socket: WebSocket,
+    engine: Engine,
+    safe_web_mode: bool,
+    file_root: PathBuf,
+) {
+    let mut socket = socket;
+    let first = match tokio::time::timeout(PROTOCOL_SNIFF_GRACE, socket.recv()).await {
+        Ok(Some(Ok(first))) => Some(first),
+        Ok(Some(Err(_))) | Ok(None) => return,
+        Err(_grace_elapsed) => None,
+    };
+    if let Some(Message::Text(text)) = &first {
+        if serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .filter(|v| v.get("type").and_then(serde_json::Value::as_str) == Some("auth_init"))
+            .is_some()
+        {
+            remote_relay::relay_session(socket, first, engine, file_root).await;
+            return;
+        }
+    }
+    match first {
+        Some(first) if chaos_bridge::sniffs_as_chaos_rpc(&first) => {
+            chaos_bridge::chaos_session(socket, first, file_root).await;
+        }
+        first => {
+            json_protocol_session(socket, engine, safe_web_mode, first, file_root).await;
+        }
+    }
 }
 
 /// Whether a Safe Web Mode client may send this message.
@@ -747,7 +1230,69 @@ pub const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;
 /// What a connection is told when the thread handling its frames died.
 const CONNECTION_LOST: &str = "Agent 处理线程已终止";
 
-async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode: bool) {
+/// Run one Chaos-protocol frame through the normal request path: size limit,
+/// JSON parse, Safe Web Mode policy, in-flight bound, worker handoff.
+///
+/// Returns `false` when the session must end (the worker died under this
+/// frame). Shared by the select loop and the protocol sniffer, which consumed
+/// the session's first frame to pick a protocol and must not lose it.
+async fn process_json_frame(
+    socket: &mut WebSocket,
+    _engine: &Engine,
+    safe_web_mode: bool,
+    permits: &Arc<tokio::sync::Semaphore>,
+    frames_tx: &std::sync::mpsc::Sender<(ClientMessage, tokio::sync::OwnedSemaphorePermit)>,
+    frame: Message,
+) -> bool {
+    match frame {
+        Message::Text(text) => {
+            if text.len() > MAX_REQUEST_BYTES {
+                return refuse(socket, "message_too_large", "消息超过 64 KiB 限制")
+                    .await
+                    .is_ok();
+            }
+            let client = match serde_json::from_str::<ClientMessage>(&text) {
+                Ok(client) => client,
+                Err(error) => {
+                    return refuse(socket, "invalid_message", &error.to_string())
+                        .await
+                        .is_ok();
+                }
+            };
+            if safe_web_mode && !safe_mode_allows(&client) {
+                return refuse(socket, "safe_web_mode_blocked", SAFE_MODE_REFUSAL)
+                    .await
+                    .is_ok();
+            }
+            let Ok(permit) = permits.clone().try_acquire_owned() else {
+                return refuse(
+                    socket,
+                    "too_many_in_flight",
+                    "此连接待处理请求已达上限，请等待已有请求结束",
+                )
+                .await
+                .is_ok();
+            };
+            if let Err(std::sync::mpsc::SendError((_, permit))) = frames_tx.send((client, permit)) {
+                // The worker is gone, so this frame has nobody left to run it.
+                drop(permit);
+                return refuse(socket, "agent_failed", CONNECTION_LOST)
+                    .await
+                    .is_ok();
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
+async fn json_protocol_session(
+    mut socket: WebSocket,
+    engine: Engine,
+    safe_web_mode: bool,
+    first_client_frame: Option<Message>,
+    file_root: PathBuf,
+) {
     let _ = socket
         .send(Message::Text(
             serde_json::to_string(&ServerMessage::Handshake {
@@ -774,6 +1319,31 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode:
     // events of the request before it.
     let (frames_tx, frames_rx) =
         std::sync::mpsc::channel::<(ClientMessage, tokio::sync::OwnedSemaphorePermit)>();
+    // The sniffer already read the first client frame to pick a protocol; feed
+    // it through the normal path now that the request plumbing exists, so no
+    // byte is dropped. `None` never happens on the sniffer's JSON path.
+    if let Some(first) = first_client_frame {
+        if let Message::Text(ref text) = first {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
+                if v.get("type").and_then(serde_json::Value::as_str) == Some("auth_init") {
+                    remote_relay::relay_session(socket, Some(first), engine, file_root).await;
+                    return;
+                }
+            }
+        }
+        if !process_json_frame(
+            &mut socket,
+            &engine,
+            safe_web_mode,
+            &permits,
+            &frames_tx,
+            first,
+        )
+        .await
+        {
+            return;
+        }
+    }
     // Only the async side can write to the socket, so a frame whose handler died
     // comes back here to be reported rather than left unacknowledged.
     let (notices_tx, mut notices) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
@@ -843,61 +1413,26 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode:
                     break;
                 }
             }
-            Input::Frame(Message::Text(text)) => {
-                if text.len() > MAX_REQUEST_BYTES {
-                    if refuse(&mut socket, "message_too_large", "消息超过 64 KiB 限制")
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    continue;
-                }
-                let client = match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(client) => client,
-                    Err(error) => {
-                        if refuse(&mut socket, "invalid_message", &error.to_string())
-                            .await
-                            .is_err()
-                        {
+            Input::Frame(frame @ Message::Text(_)) => {
+                if let Message::Text(ref text) = frame {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
+                        if v.get("type").and_then(serde_json::Value::as_str) == Some("auth_init") {
+                            remote_relay::relay_session(socket, Some(frame), engine, file_root).await;
                             break;
                         }
-                        continue;
                     }
-                };
-                if safe_web_mode && !safe_mode_allows(&client) {
-                    if refuse(&mut socket, "safe_web_mode_blocked", SAFE_MODE_REFUSAL)
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    continue;
                 }
-                let Ok(permit) = permits.clone().try_acquire_owned() else {
-                    if refuse(
-                        &mut socket,
-                        "too_many_in_flight",
-                        "此连接待处理请求已达上限，请等待已有请求结束",
-                    )
-                    .await
-                    .is_err()
-                    {
-                        break;
-                    }
-                    continue;
-                };
-                if let Err(std::sync::mpsc::SendError((_, permit))) =
-                    frames_tx.send((client, permit))
+                if !process_json_frame(
+                    &mut socket,
+                    &engine,
+                    safe_web_mode,
+                    &permits,
+                    &frames_tx,
+                    frame,
+                )
+                .await
                 {
-                    // The worker is gone, so this frame has nobody left to run it.
-                    drop(permit);
-                    if refuse(&mut socket, "agent_failed", CONNECTION_LOST)
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
+                    break;
                 }
             }
             Input::Frame(_) => {}
@@ -943,6 +1478,23 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
     safe_web_mode: bool,
     assets_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<std::net::SocketAddr> {
+    serve_loopback_with_assets_and_safe_mode_and_auth(
+        engine,
+        port,
+        safe_web_mode,
+        assets_dir,
+        web_auth::WebAuth::disabled(),
+    )
+    .await
+}
+
+pub async fn serve_loopback_with_assets_and_safe_mode_and_auth(
+    engine: Engine,
+    port: u16,
+    safe_web_mode: bool,
+    assets_dir: Option<std::path::PathBuf>,
+    auth: web_auth::WebAuth,
+) -> anyhow::Result<std::net::SocketAddr> {
     let token = std::env::var("CHAOS_WEB_TOKEN").unwrap_or_default();
     // Naming a public origin means the server is expected to answer requests
     // addressed to that name through a proxy, so it must not be anonymous and
@@ -953,21 +1505,39 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
     {
         let authority = public_origin_authority(&declared)
             .map_err(|reason| anyhow::anyhow!("CHAOS_WEB_PUBLIC_ORIGIN 无效：{reason}"))?;
-        if token.is_empty() {
-            anyhow::bail!(
-                "CHAOS_WEB_PUBLIC_ORIGIN={authority} 让服务对 loopback 之外的地址生效，必须同时设置 CHAOS_WEB_TOKEN"
-            );
-        }
+        anyhow::ensure!(
+            auth.enabled() || !token.is_empty(),
+            "CHAOS_WEB_PUBLIC_ORIGIN requires browser password auth or CHAOS_WEB_TOKEN"
+        );
         eprintln!(
             "accepting Host and Origin for {authority}; the proxy in front of this server must set X-Forwarded-Proto: https"
         );
     }
-    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
+    // Default loopback; operators expose the LAN via CHAOS_WEB_BIND (e.g. 0.0.0.0).
+    // A non-loopback bind without CHAOS_WEB_PUBLIC_ORIGIN still works for direct
+    // IP access, but pairing it with a token is strongly recommended.
+    let bind_host = std::env::var("CHAOS_WEB_BIND").unwrap_or_else(|_| "127.0.0.1".to_owned());
+    let bind_addr: SocketAddr = if let Ok(ip) = bind_host.parse() {
+        SocketAddr::new(ip, port)
+    } else {
+        anyhow::bail!("CHAOS_WEB_BIND 无效：{bind_host}（需要 IP 地址，例如 0.0.0.0）");
+    };
+    if !bind_addr.ip().is_loopback() && !auth.enabled() && token.is_empty() {
+        anyhow::bail!("非 loopback 监听必须启用浏览器登录或设置 CHAOS_WEB_TOKEN");
+    }
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     let bound = listener.local_addr()?;
     // Reported here rather than by the caller, because only this function knows
     // what the socket actually took: `port` 0 means "any", and an operator
     // told `http://127.0.0.1:0` cannot open it.
     eprintln!("Chaos Web listening on http://{bound}");
+    // 浏览器能借 `file.*` 读到哪儿，得在启动这一行就说清：绑到 0.0.0.0 之后它决定的
+    // 是局域网能读到什么，等操作者在报错里看到就太晚了。
+    let file_root = chaos_bridge::file_root();
+    eprintln!(
+        "file.* is confined to {}; widen with CHAOS_WEB_FILE_ROOT",
+        file_root.display()
+    );
     // A preview allowlist that does not parse must stop startup. Half a list
     // would mean the app a user expected to reach through this host is not
     // reachable, and the symptom is a preview that never loads.
@@ -996,7 +1566,7 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
     // are collected here rather than re-read from the environment later: a panel
     // that re-read `std::env::var` could disagree with the middleware that was
     // built from the value captured at startup.
-    let token_required = !token.is_empty();
+    let token_required = !token.is_empty() || auth.enabled();
     let declared_origin = std::env::var("CHAOS_WEB_PUBLIC_ORIGIN")
         .ok()
         .map(|value| value.trim().to_string())
@@ -1020,7 +1590,16 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
     });
     axum::serve(
         listener,
-        router_with_previews(engine, token, safe_web_mode, assets_dir, previews),
+        router_with_auth_and_previews_and_file_root(
+            engine,
+            token,
+            safe_web_mode,
+            assets_dir,
+            previews,
+            auth,
+            Some(file_root),
+        )
+        .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await?;
     Ok(bound)
@@ -1079,6 +1658,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// 绑到 loopback 之外时，客户端就靠这个字段判断「401 是我没带凭据」还是
+    /// 「服务坏了」。它以前恒是 false，而 `CHAOS_WEB_TOKEN` 正在挡着 `/ws`。
+    #[tokio::test]
+    async fn server_info_reports_whether_a_credential_is_required() {
+        async fn auth_required(token: &str) -> serde_json::Value {
+            let response = router(Engine::new(), token)
+                .oneshot(
+                    Request::get("/api/server-info")
+                        .header(header::HOST, "127.0.0.1")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("server-info 应当有身体");
+            serde_json::from_slice(&bytes).expect("server-info 应当是 JSON")
+        }
+
+        assert_eq!(auth_required("secret").await["authRequired"], true);
+        assert_eq!(auth_required("").await["authRequired"], false);
     }
     #[tokio::test]
     async fn protected_handshake_accepts_bearer_and_secure_headers() {

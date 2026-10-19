@@ -66,6 +66,33 @@ fn session_update_tag(params: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct SubagentStreamEvent {
+    pub(crate) event: String,
+    pub(crate) subagent_id: String,
+    pub(crate) attempt_id: Option<String>,
+    pub(crate) event_seq: Option<u64>,
+    pub(crate) parent_session_id: String,
+    pub(crate) child_session_id: String,
+    pub(crate) subagent_type: String,
+    pub(crate) description: String,
+    pub(crate) parent_tool_call_id: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) workflow_run_id: Option<String>,
+    pub(crate) agent_address: Option<String>,
+    pub(crate) run_in_background: Option<bool>,
+    pub(crate) started_at_ms: Option<u64>,
+    pub(crate) duration_ms: Option<u64>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub(crate) enum ExtEvent {
     None,
     TaskBackgrounded {
@@ -75,24 +102,20 @@ pub(crate) enum ExtEvent {
     TaskCompleted {
         task_id: String,
     },
-    SubagentSpawned {
-        subagent_id: String,
-        attempt_id: Option<String>,
-        event_seq: Option<u64>,
-    },
-    SubagentProgress {
-        subagent_id: String,
-        attempt_id: Option<String>,
-        event_seq: Option<u64>,
-    },
-    SubagentFinished {
-        subagent_id: String,
-        attempt_id: Option<String>,
-        event_seq: Option<u64>,
-    },
+    SubagentLifecycle(SubagentStreamEvent),
+    #[cfg(test)]
+    SubagentSpawned { subagent_id: String, attempt_id: Option<String>, event_seq: Option<u64> },
+    #[cfg(test)]
+    SubagentProgress { subagent_id: String, attempt_id: Option<String>, event_seq: Option<u64> },
+    #[cfg(test)]
+    SubagentFinished { subagent_id: String, attempt_id: Option<String>, event_seq: Option<u64> },
     MonitorEvent,
     Lifecycle(Lifecycle),
     Stream(Box<StreamEvent>),
+    /// A sampler/API retry or terminal retry failure. The TUI renders the same
+    /// payload through its own ACP handler; headless hosts need it because a
+    /// turn that quietly retries a 503 looks identical to a hung one.
+    Retry(xai_grok_shell::extensions::notification::RetryState),
 }
 
 pub(crate) fn handle_ext_notification(
@@ -257,16 +280,46 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
             subagent_id: String,
             #[serde(default)]
             attempt_id: Option<String>,
+            #[serde(default)]
+            parent_session_id: Option<String>,
+            #[serde(default)]
+            child_session_id: Option<String>,
+            #[serde(default)]
+            subagent_type: Option<String>,
+            #[serde(default)]
+            description: Option<String>,
+            #[serde(default)]
+            model: Option<String>,
+            #[serde(default)]
+            workflow_run_id: Option<String>,
+            #[serde(default, rename = "agentAddress", alias = "agent_address")]
+            agent_address: Option<String>,
+            #[serde(default)]
+            is_background: bool,
+            #[serde(default)]
+            parent_tool_call_id: Option<String>,
         },
         SubagentProgress {
             subagent_id: String,
             #[serde(default)]
             attempt_id: Option<String>,
+            #[serde(default)]
+            parent_session_id: Option<String>,
+            #[serde(default)]
+            child_session_id: Option<String>,
+            #[serde(default)]
+            duration_ms: Option<u64>,
         },
         SubagentFinished {
             subagent_id: String,
             #[serde(default)]
             attempt_id: Option<String>,
+            #[serde(default)]
+            child_session_id: Option<String>,
+            #[serde(default)]
+            status: Option<String>,
+            #[serde(default)]
+            duration_ms: Option<u64>,
         },
         ResponseStarted {
             #[serde(default)]
@@ -299,6 +352,11 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
         TurnUsage {
             usage: xai_grok_shell::extensions::notification::ResponseUsage,
         },
+        // The shell's `XaiSessionUpdate::RetryState(RetryState)`: an internally
+        // tagged newtype whose `RetryState` payload flattens in with its own
+        // `type` tag (`retrying` / `exhausted` / `failed`), which is exactly
+        // what the shell serializes here.
+        RetryState(xai_grok_shell::extensions::notification::RetryState),
         #[serde(other)]
         Other,
     }
@@ -367,27 +425,81 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
         XaiUpdate::SubagentSpawned {
             subagent_id,
             attempt_id,
-        } => ExtEvent::SubagentSpawned {
+            parent_session_id,
+            child_session_id,
+            subagent_type,
+            description,
+            model,
+            workflow_run_id,
+            agent_address,
+            is_background,
+            parent_tool_call_id,
+        } => ExtEvent::SubagentLifecycle(SubagentStreamEvent {
+            event: "spawned".into(),
             subagent_id,
             attempt_id,
             event_seq,
-        },
+            parent_session_id: parent_session_id.unwrap_or_default(),
+            child_session_id: child_session_id.unwrap_or_default(),
+            subagent_type: subagent_type.unwrap_or_else(|| "subagent".into()),
+            description: description.unwrap_or_default(),
+            parent_tool_call_id,
+            status: Some("running".into()),
+            model,
+            workflow_run_id,
+            agent_address,
+            run_in_background: Some(is_background),
+            started_at_ms: Some(now_ms()),
+            duration_ms: None,
+        }),
         XaiUpdate::SubagentProgress {
             subagent_id,
             attempt_id,
-        } => ExtEvent::SubagentProgress {
+            parent_session_id,
+            child_session_id,
+            duration_ms,
+        } => ExtEvent::SubagentLifecycle(SubagentStreamEvent {
+            event: "progress".into(),
             subagent_id,
             attempt_id,
             event_seq,
-        },
+            parent_session_id: parent_session_id.unwrap_or_default(),
+            child_session_id: child_session_id.unwrap_or_default(),
+            subagent_type: "subagent".into(),
+            description: String::new(),
+            parent_tool_call_id: None,
+            status: Some("running".into()),
+            model: None,
+            workflow_run_id: None,
+            agent_address: None,
+            run_in_background: None,
+            started_at_ms: None,
+            duration_ms,
+        }),
         XaiUpdate::SubagentFinished {
             subagent_id,
             attempt_id,
-        } => ExtEvent::SubagentFinished {
+            child_session_id,
+            status,
+            duration_ms,
+        } => ExtEvent::SubagentLifecycle(SubagentStreamEvent {
+            event: "finished".into(),
             subagent_id,
             attempt_id,
             event_seq,
-        },
+            parent_session_id: String::new(),
+            child_session_id: child_session_id.unwrap_or_default(),
+            subagent_type: "subagent".into(),
+            description: String::new(),
+            parent_tool_call_id: None,
+            status: Some(status.unwrap_or_else(|| "completed".into())),
+            model: None,
+            workflow_run_id: None,
+            agent_address: None,
+            run_in_background: None,
+            started_at_ms: None,
+            duration_ms,
+        }),
         XaiUpdate::ResponseStarted {
             message_id,
             model,
@@ -420,6 +532,7 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
         XaiUpdate::TurnUsage { usage } => {
             ExtEvent::Stream(Box::new(StreamEvent::TurnUsage { usage }))
         }
+        XaiUpdate::RetryState(state) => ExtEvent::Retry(state),
         // A task_backgrounded or task_completed tag arriving here belongs on its dedicated method; log loudly
         // Any other unknown tag stays a clean ignore
         XaiUpdate::Other => {

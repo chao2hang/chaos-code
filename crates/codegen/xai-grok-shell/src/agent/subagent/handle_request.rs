@@ -1053,6 +1053,8 @@ pub(crate) async fn run_shell_child(
         description: request.description.clone(),
         effective_context_source: Some(effective_source_str.to_string()),
         context_normalized: fork_context_normalized(&context_source, context_verbatim_fork),
+        is_background: request.run_in_background,
+        parent_tool_call_id: request.tool_call_id.clone(),
         capability_mode: effective_runtime
             .capability_mode
             .and_then(|m| serde_json::to_value(m).ok())

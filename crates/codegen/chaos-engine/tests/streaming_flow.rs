@@ -8,7 +8,7 @@
 //! that has not finished, and that a connection which stops reading is cut off
 //! rather than quietly truncated.
 
-use chaos_engine::{ClientMessage, Engine, EventStream, PromptAdapter, ServerMessage};
+use chaos_engine::{ClientMessage, Engine, EventStream, PromptAdapter, RunOptions, ServerMessage};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use std::{
@@ -25,10 +25,21 @@ use uuid::Uuid;
 const WAIT: Duration = Duration::from_secs(20);
 
 async fn next_event(stream: &mut EventStream, what: &str) -> ServerMessage {
-    match tokio::time::timeout(WAIT, stream.recv()).await {
-        Ok(Some(event)) => event,
-        Ok(None) => panic!("{what}: the engine stopped delivering events to this connection"),
-        Err(_) => panic!("{what}: no event within {WAIT:?}"),
+    loop {
+        match tokio::time::timeout(WAIT, stream.recv()).await {
+            Ok(Some(event)) => {
+                // 回合开场公告（TurnStarted，2026-10-12 的队列合同加的：运行中
+                // 入队再排水的回合，宿主只靠它画新用户行）对本文件的断言没有
+                // 意义——这里要么等 Ack，要么等分块/终态。在读取点统一跳过，
+                // 不让每个测试各写一条 continue。
+                if matches!(event, ServerMessage::TurnStarted { .. }) {
+                    continue;
+                }
+                return event;
+            }
+            Ok(None) => panic!("{what}: the engine stopped delivering events to this connection"),
+            Err(_) => panic!("{what}: no event within {WAIT:?}"),
+        }
     }
 }
 
@@ -129,13 +140,14 @@ struct WaitsForTheFirstChunk {
 }
 
 impl PromptAdapter for WaitsForTheFirstChunk {
-    fn run_prompt(&self, _prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, _prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Err("this adapter only has the streaming form".into())
     }
 
     fn run_prompt_stream(
         &self,
         _prompt: &str,
+        _options: &RunOptions,
         emit: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(), String> {
         self.produced.fetch_add(1, Ordering::SeqCst);
@@ -171,13 +183,14 @@ struct EndlessProducer {
 const SELF_LIMIT: usize = 4_000;
 
 impl PromptAdapter for EndlessProducer {
-    fn run_prompt(&self, _prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, _prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Err("this adapter only has the streaming form".into())
     }
 
     fn run_prompt_stream(
         &self,
         _prompt: &str,
+        _options: &RunOptions,
         emit: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(), String> {
         loop {
@@ -201,13 +214,14 @@ struct HoldsTheTurnOpen {
 }
 
 impl PromptAdapter for HoldsTheTurnOpen {
-    fn run_prompt(&self, _prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, _prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Err("this adapter only has the streaming form".into())
     }
 
     fn run_prompt_stream(
         &self,
         _prompt: &str,
+        _options: &RunOptions,
         emit: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(), String> {
         if !emit("还在写") {
@@ -234,13 +248,14 @@ struct PanicsOnTheFirstAnswer {
 }
 
 impl PromptAdapter for PanicsOnTheFirstAnswer {
-    fn run_prompt(&self, _prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, _prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Err("this adapter only has the streaming form".into())
     }
 
     fn run_prompt_stream(
         &self,
         _prompt: &str,
+        _options: &RunOptions,
         emit: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(), String> {
         emit("写了一半");
@@ -258,13 +273,14 @@ struct HoldsEveryTurnItIsGiven {
 }
 
 impl PromptAdapter for HoldsEveryTurnItIsGiven {
-    fn run_prompt(&self, _prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, _prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Err("this adapter only has the streaming form".into())
     }
 
     fn run_prompt_stream(
         &self,
         _prompt: &str,
+        _options: &RunOptions,
         emit: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(), String> {
         let started = Instant::now();

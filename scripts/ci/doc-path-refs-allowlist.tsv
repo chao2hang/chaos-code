@@ -72,3 +72,19 @@ crates/codegen/xai-grok-ralph/	planned	proposed leaf crate in the same DSH port 
 crates/codegen/xai-grok-preset-files/	planned	proposed preset-discovery crate in the same proposal; never created, the plan lists it as future work
 docs/plan/code-mode-plan.md	planned	plan document the proposal says will be opened after the user confirms that section; it has not been opened
 bin/verify.sh	other-root	CHANGELOG.md names the script a sample hook in crates/codegen/xai-grok-pager/docs/user-guide/10-hooks.md calls; it belongs to the project whose settings hold that hook, not to this repository
+# --- Retired with apps/chaos-ui on 2026-10-09 (decision 1 full retirement) --------
+scripts/ci/check-gui-protocol.sh	historical	the TypeScript protocol-drift gate retired with apps/chaos-ui on 2026-10-09; the CHANGELOG and dated TODO rows quote it as the guard that existed then, not a pointer now
+scripts/ci/check-protocol-mirror.py	historical	the mirror-coverage gate retired with apps/chaos-ui on 2026-10-09; the parity guarantee moved to chaos_engine::client_message_samples, and the rows citing it are records of the old guard
+scripts/ci/test-check-protocol-mirror.py	historical	fixture suite of the retired check-protocol-mirror.py gate, quoted by the same historical rows; both left the tree with apps/chaos-ui on 2026-10-09
+crates/codegen/chaos-engine/src/protocol_schema.rs	historical	the hand-written TYPESCRIPT mirror retired with apps/chaos-ui on 2026-10-09; the engine's protocol inventory is now the single protocol enumeration
+scripts/ci/check-e2e-registration.py	historical	the Playwright-spec registration gate retired with apps/chaos-ui on 2026-10-09; e2e-registration log and dated TODO/debt rows quote it as the guard that registered specs then
+scripts/ci/test-check-e2e-registration.py	historical	fixture suite of the retired check-e2e-registration.py gate, quoted by the dated TODO row that recorded its creation
+# --- Cited from the upstream grok-build tree the dated rows analyzed, never this fork --------
+crates/codegen/xai-fast-worktree/src/nfs/client.rs	historical	upstream grok-build layout the dated rows analyzed; this fork's nfs work sits under crates/codegen/xai-fast-worktree/src/worktree, so the citation is about then, not a pointer now
+crates/codegen/xai-fast-worktree/src/nfs/remove.rs	historical	upstream grok-build layout the dated rows analyzed; this fork's nfs work sits under crates/codegen/xai-fast-worktree/src/worktree, so the citation is about then, not a pointer now
+crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs	historical	upstream grok-build model-prefetch file the dated rows and debt doc analyzed; this fork's agent config lives elsewhere, so the citation is about then, not a pointer now
+crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch_tests.rs	historical	upstream grok-build prefetch test file the same dated row analyzed; this fork never grew an agent/models tree and the citation is a record, not a pointer
+crates/codegen/xai-grok-shell/src/agent/models/resolution.rs	historical	upstream grok-build model-resolution file the dated row analyzed; this fork's equivalent is agent/config.rs, so the citation is about then, not a pointer now
+crates/codegen/xai-grok-shell/src/agent/models/tests.rs	historical	upstream grok-build model-resolution test file the same dated row analyzed; this fork's equivalent is agent/config_tests.rs and the citation is a record
+crates/codegen/xai-grok-workspace/src/permission/managed_policy/mcp.rs	historical	upstream grok-build managed-policy file the dated row analyzed; this fork's admission gate sits in src/session/managed_mcp.rs and the citation is about then
+crates/codegen/xai-grok-shell/src/managed_config/supervisor.rs	historical	upstream grok-build manager file the 2026-10-05 CHANGELOG entry analyzed; this fork's supervisor work sits under src/session instead and the citation is a record, not a pointer

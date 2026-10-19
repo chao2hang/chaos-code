@@ -17,6 +17,11 @@ use std::{
 /// budget because a long generation legitimately takes minutes.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// A model catalogue is a readout, not a turn. The browser connection's frame
+/// worker waits for it, so an endpoint that accepts the connection and then goes
+/// quiet gets seconds rather than the five minutes a real generation may take.
+const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 /// Kept small because the body is echoed into a GUI error message.
 const MAX_ERROR_BODY_BYTES: usize = 512;
 /// A single turn larger than this is treated as a broken or hostile endpoint.
@@ -45,6 +50,7 @@ pub struct ProviderHealth {
 /// async tasks, so a long-lived client could end up dropped inside an async
 /// context, which tokio refuses with a panic.
 pub struct HttpPromptAdapter {
+    base_url: String,
     chat_endpoint: String,
     models_endpoint: String,
     model: String,
@@ -111,6 +117,92 @@ fn validated_endpoints(base_url: &str) -> Result<(String, String), String> {
     Ok((format!("{base}/chat/completions"), format!("{base}/models")))
 }
 
+/// Whether a base URL is shaped like an endpoint this host may talk to at all:
+/// `https://` anywhere, `http://` only on loopback, never with embedded
+/// credentials. The GUI's provider validation asks this instead of keeping its
+/// own stricter copy, which would reject a locally-run model server the operator
+/// configured and tell the user their own endpoint was invalid.
+#[must_use]
+pub fn endpoint_shape_allowed(base_url: &str) -> bool {
+    validated_endpoints(base_url).is_ok()
+}
+
+/// 从一帧 SSE 数据里读 Provider 回报的 token 用量。
+///
+/// 认得三种口径，字段缺了就是 0：
+/// - OpenAI Chat Completions：`usage.prompt_tokens` / `completion_tokens`，
+///   细节在 `prompt_tokens_details.cached_tokens` 与
+///   `completion_tokens_details.reasoning_tokens`；
+/// - Anthropic 兼容网关：`usage.input_tokens` / `output_tokens` /
+///   `cache_creation_input_tokens` / `cache_read_input_tokens`；
+/// - 只有 `total_tokens` 的极简网关：input/output 记 0，总量进 output，
+///   让"有账"至少可见。
+///
+/// 整帧没有 `usage`（或 `usage` 为 null）时返回 `None`——不估算。
+fn usage_of(payload: &serde_json::Value) -> Option<crate::ProviderUsage> {
+    let usage = payload.get("usage")?;
+    if !usage.is_object() {
+        return None;
+    }
+    let count = |key: &str| -> u64 {
+        usage
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let nested_count = |parent: &str, key: &str| -> u64 {
+        usage
+            .get(parent)
+            .and_then(|details| details.get(key))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let input = count("prompt_tokens").max(count("input_tokens"));
+    let output = count("completion_tokens").max(count("output_tokens"));
+    let cached = nested_count("prompt_tokens_details", "cached_tokens")
+        .max(count("cache_read_input_tokens"));
+    let cache_creation = count("cache_creation_input_tokens");
+    if input == 0 && output == 0 && cached == 0 && cache_creation == 0 {
+        // 没有可读的明细就不硬造账目；total_tokens 网关单独兜底。
+        let total = count("total_tokens");
+        if total == 0 {
+            return None;
+        }
+        return Some(crate::ProviderUsage {
+            output_tokens: total,
+            ..crate::ProviderUsage::default()
+        });
+    }
+    // Chat Completions and Responses APIs report input as the full prompt, with
+    // cached tokens as a subset. Anthropic-compatible APIs report uncached input
+    // separately from cache reads/creation, so add those components only there.
+    let anthropic_cache_fields = usage.get("cache_read_input_tokens").is_some()
+        || usage.get("cache_creation_input_tokens").is_some();
+    let cache_total = usage
+        .get("cache_total_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            usage
+                .get("cacheTotalTokens")
+                .and_then(serde_json::Value::as_u64)
+        })
+        .unwrap_or_else(|| {
+            if anthropic_cache_fields {
+                input.saturating_add(cached).saturating_add(cache_creation)
+            } else {
+                input
+            }
+        });
+    Some(crate::ProviderUsage {
+        input_tokens: input,
+        output_tokens: output,
+        reasoning_tokens: nested_count("completion_tokens_details", "reasoning_tokens"),
+        cached_tokens: cached,
+        cache_creation_tokens: cache_creation,
+        cache_total_tokens: cache_total,
+    })
+}
+
 impl HttpPromptAdapter {
     /// Builds an adapter from an explicit base URL, model slug and optional
     /// bearer token. `base_url` is validated by [`validated_endpoints`].
@@ -128,6 +220,7 @@ impl HttpPromptAdapter {
             .map(Into::into)
             .filter(|key: &String| !key.is_empty());
         Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
             chat_endpoint,
             models_endpoint,
             model,
@@ -136,13 +229,28 @@ impl HttpPromptAdapter {
     }
 
     fn client(&self) -> Result<reqwest::blocking::Client, String> {
+        self.client_with(CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+    }
+
+    /// The catalogue read gets a short budget: an endpoint that accepts the
+    /// connection and then stops answering must not hold the browser connection's
+    /// frame worker for the five minutes a real generation is allowed to take.
+    fn probe_client(&self) -> Result<reqwest::blocking::Client, String> {
+        self.client_with(PROBE_CONNECT_TIMEOUT, PROBE_TIMEOUT)
+    }
+
+    fn client_with(
+        &self,
+        connect: Duration,
+        total: Duration,
+    ) -> Result<reqwest::blocking::Client, String> {
         // The shared TLS policy loads the OS store, the Mozilla bundle and
         // `GROK_EXTRA_CA_BUNDLE`, so a self-hosted provider behind an
         // enterprise proxy or a private CA still verifies.
-        xai_grok_extra_ca::build_blocking_reqwest_client(|builder| {
+        xai_grok_extra_ca::build_blocking_reqwest_client(move |builder| {
             builder
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(REQUEST_TIMEOUT)
+                .connect_timeout(connect)
+                .timeout(total)
                 .redirect(reqwest::redirect::Policy::none())
         })
         .map_err(|error| format!("无法初始化 HTTP 客户端: {error}"))
@@ -151,11 +259,109 @@ impl HttpPromptAdapter {
     /// Builds an adapter from the process environment. Returns `Ok(None)` when
     /// no provider is configured, so a host can fall back to its default.
     pub fn from_env() -> Result<Option<Self>, String> {
-        Self::from_parts(
-            std::env::var(ENV_BASE_URL).ok().as_deref(),
-            &std::env::var(ENV_MODEL).unwrap_or_default(),
-            std::env::var(ENV_API_KEY).ok().as_deref(),
-        )
+        // If CHAOS_DISABLE_CONFIG_FALLBACK is set, skip reading ~/.chaos/config.toml (used by integration tests).
+        let disable_config = std::env::var("CHAOS_DISABLE_CONFIG_FALLBACK")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+
+        // Explicit process configuration is an operator override (and is useful
+        // to tests); otherwise use Chaos CLI's own config.toml.
+        let env_base = std::env::var(ENV_BASE_URL)
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        if let Some(base_url) = env_base {
+            return Self::from_parts(
+                Some(&base_url),
+                &std::env::var(ENV_MODEL).unwrap_or_default(),
+                std::env::var(ENV_API_KEY).ok().as_deref(),
+            );
+        }
+        if !disable_config && let Some((base_url, model, api_key)) = Self::from_chaos_config() {
+            return Self::from_parts(Some(&base_url), &model, Some(&api_key));
+        }
+        Ok(None)
+    }
+
+    /// Read `~/.chaos/config.toml`: the `[model_providers.*]` entry referenced
+    /// by the default model supplies base_url and api_key, and
+    /// `[models].default` picks the model. `None` when the file is missing or
+    /// does not describe a usable provider.
+    fn from_chaos_config() -> Option<(String, String, String)> {
+        let home = std::env::var("HOME").ok()?;
+        let text =
+            std::fs::read_to_string(std::path::Path::new(&home).join(".chaos/config.toml")).ok()?;
+        let unquote = |v: &str| -> String {
+            let t = v.trim();
+            t.strip_prefix('"')
+                .and_then(|r| r.strip_suffix('"'))
+                .unwrap_or(t)
+                .to_owned()
+        };
+        let mut default_model = None;
+        // provider id → (base_url, api_key)
+        let mut providers: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+        let mut current_provider: Option<String> = None;
+        // config key → (API model id, provider id)
+        let mut model_entries: Vec<(String, String, String)> = Vec::new();
+        let mut in_models = false;
+        let mut current_model: Option<(String, Option<String>, Option<String>)> = None;
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.starts_with('[') && line.ends_with(']') {
+                in_models = false;
+                if let Some((alias, Some(model_id), Some(provider_id))) = current_model.take() {
+                    model_entries.push((alias, model_id, provider_id));
+                } else {
+                    current_model = None;
+                }
+                current_provider = None;
+                let inner = &line[1..line.len() - 1];
+                if inner == "models" {
+                    in_models = true;
+                } else if let Some(rest) = inner.strip_prefix("model.") {
+                    current_model = Some((rest.trim().trim_matches('"').to_owned(), None, None));
+                } else if let Some(rest) = inner.strip_prefix("model_providers.") {
+                    current_provider = Some(rest.trim().to_owned());
+                    providers.push((rest.trim().to_owned(), None, None));
+                }
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            let value = unquote(value);
+            if in_models && key == "default" {
+                default_model = Some(value);
+            } else if let Some(id) = current_provider.as_ref() {
+                let entry = providers
+                    .iter_mut()
+                    .find(|(pid, _, _)| pid == id)
+                    .map(|(_, b, k)| (b, k))?;
+                if key == "base_url" {
+                    *entry.0 = Some(value);
+                } else if key == "api_key" {
+                    *entry.1 = Some(value);
+                }
+            } else if let Some((_, model_id, provider_id)) = current_model.as_mut() {
+                match key {
+                    "model" => *model_id = Some(value),
+                    "model_provider" => *provider_id = Some(value),
+                    _ => {}
+                }
+            }
+        }
+        if let Some((alias, Some(model_id), Some(provider_id))) = current_model.take() {
+            model_entries.push((alias, model_id, provider_id));
+        }
+        let default_model = default_model?;
+        let (_, model_id, provider_id) = model_entries
+            .into_iter()
+            .find(|(alias, _, _)| alias == &default_model)?;
+        let (_, base_url, api_key) = providers
+            .into_iter()
+            .find(|(pid, _, _)| pid == &provider_id)?;
+        Some((base_url?, model_id, api_key?))
     }
 
     /// [`Self::from_env`] without touching the process environment, so the
@@ -246,13 +452,60 @@ impl HttpPromptAdapter {
     /// Reads the SSE response and hands each delta to `emit` as its frame arrives,
     /// which is what makes the answer appear while the Provider is still writing
     /// it. `emit` returns `false` when the caller has stopped listening.
+    ///
+    /// Returns the token usage the Provider reported (usually on the last frame):
+    /// `None` means the endpoint never said, which the usage stats honestly
+    /// record as zero rather than estimate.
     fn send_and_stream(
         &self,
         body: serde_json::Value,
         emit: &mut dyn FnMut(&str) -> bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<crate::ProviderUsage>, String> {
+        match self.send_and_stream_once(&body, emit) {
+            Ok(usage) => Ok(usage),
+            Err(error) => {
+                // The engine's own sampler strips `reasoning_effort` and retries
+                // when a provider 400s on the parameter (xai-grok-sampler/retry.rs
+                // `is_reasoning_effort_error`); this minimal client mirrors that
+                // policy. Without it, one strict gateway would turn the picker
+                // into a turn-killer even though the provider answers fine
+                // without the parameter.
+                let rejects_effort = body.get("reasoning_effort").is_some()
+                    && Self::error_rejects_reasoning_effort(&error);
+                if !rejects_effort {
+                    return Err(error);
+                }
+                tracing::info!(
+                    "provider rejected reasoning_effort; stripped it before one retry: {error}"
+                );
+                let mut stripped = body.clone();
+                stripped
+                    .as_object_mut()
+                    .expect("request body is an object")
+                    .remove("reasoning_effort");
+                self.send_and_stream_once(&stripped, emit)
+            }
+        }
+    }
+
+    /// Whether an HTTP-level failure is the known "this provider does not take
+    /// reasoning_effort" shape (400 whose body names the parameter), same
+    /// wording family as `SamplingError::is_reasoning_effort_error`.
+    fn error_rejects_reasoning_effort(error: &str) -> bool {
+        error.contains("HTTP 400")
+            && (error.contains("reasoning_effort")
+                || error.contains("reasoning.effort")
+                || error.contains("unsupported parameter: reasoning")
+                || error.contains("unknown parameter: reasoning"))
+    }
+
+    fn send_and_stream_once(
+        &self,
+        body: &serde_json::Value,
+        emit: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<Option<crate::ProviderUsage>, String> {
         let client = self.client()?;
-        let request = self.authorize(client.post(&self.chat_endpoint).json(&body));
+        let request = self.authorize(client.post(&self.chat_endpoint).json(body));
         let response = request
             .send()
             .map_err(|error| format!("无法连接 Provider：{}", Self::transport_reason(&error)))?;
@@ -275,6 +528,7 @@ impl HttpPromptAdapter {
         let mut reader = BufReader::new(std::io::Read::take(response, MAX_STREAM_BYTES)).lines();
         let mut produced = false;
         let mut provider_error: Option<String> = None;
+        let mut usage: Option<crate::ProviderUsage> = None;
         while let Some(line) = reader
             .next()
             .transpose()
@@ -301,6 +555,10 @@ impl HttpPromptAdapter {
                 );
                 continue;
             }
+            // 用量通常在最后一个数据帧上；每帧都看，最后一帧说了算。
+            if let Some(reported) = usage_of(&value) {
+                usage = Some(reported);
+            }
             match Self::delta_of(&value) {
                 Some(text) if !text.is_empty() => {
                     produced = true;
@@ -308,7 +566,7 @@ impl HttpPromptAdapter {
                         // The run was stopped. Returning here drops the response, and
                         // with it the connection, rather than draining a reply that
                         // nobody is going to show.
-                        return Ok(());
+                        return Ok(usage);
                     }
                 }
                 _ => {}
@@ -320,7 +578,7 @@ impl HttpPromptAdapter {
         if !produced {
             return Err("Provider 未返回任何文本".to_string());
         }
-        Ok(())
+        Ok(usage)
     }
 
     /// Strips the URL from transport errors: a proxy could place credentials
@@ -341,8 +599,13 @@ impl HttpPromptAdapter {
 
     /// Asks the endpoint which models it serves. Never raises: the caller is a
     /// status readout, so a failure becomes structured detail instead.
-    pub fn probe(&self) -> ProviderHealth {
-        let request = match self.client() {
+    ///
+    /// `selected` is the model whose availability is being asked about -- the
+    /// GUI's current pick, not necessarily the slug this adapter was built with.
+    /// Reporting against the wrong one would tell a user who just chose a model
+    /// that their choice was unknown.
+    pub fn probe_with(&self, selected: Option<&str>) -> ProviderHealth {
+        let request = match self.probe_client() {
             Err(error) => {
                 return ProviderHealth {
                     reachable: false,
@@ -396,7 +659,8 @@ impl HttpPromptAdapter {
                             })
                             .unwrap_or_default();
                         model_ids.sort();
-                        let configured_model_known = model_ids.iter().any(|id| id == &self.model);
+                        let wanted = selected.unwrap_or(&self.model);
+                        let configured_model_known = model_ids.iter().any(|id| id == wanted);
                         ProviderHealth {
                             reachable: true,
                             model_ids,
@@ -408,12 +672,16 @@ impl HttpPromptAdapter {
             }
         }
     }
+    /// [`Self::probe_with`] for the model this adapter was built with.
+    pub fn probe(&self) -> ProviderHealth {
+        self.probe_with(None)
+    }
 }
 
 impl PromptAdapter for HttpPromptAdapter {
-    fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, prompt: &str, options: &crate::RunOptions) -> Result<Vec<String>, String> {
         let mut chunks = Vec::new();
-        self.run_prompt_stream(prompt, &mut |chunk| {
+        self.run_prompt_stream(prompt, options, &mut |chunk| {
             chunks.push(chunk.to_string());
             true
         })?;
@@ -423,14 +691,62 @@ impl PromptAdapter for HttpPromptAdapter {
     fn run_prompt_stream(
         &self,
         prompt: &str,
+        options: &crate::RunOptions,
         emit: &mut dyn FnMut(&str) -> bool,
     ) -> Result<(), String> {
-        let body = serde_json::json!({
-            "model": self.model,
-            "messages": [{ "role": "user", "content": prompt }],
+        self.run_prompt_turn(prompt, options, emit).map(|_| ())
+    }
+
+    fn run_prompt_turn(
+        &self,
+        prompt: &str,
+        options: &crate::RunOptions,
+        emit: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<crate::TurnReport, String> {
+        // A provider answers what it is sent. Sent one turn, it answers that turn
+        // as though nothing came before — which is how a conversation the user
+        // resumed ended up replying to its own middle. The conversation rides
+        // along when the engine has one to give; when the CLI itself is
+        // resuming the session it holds the context, and the engine sends
+        // nothing extra.
+        let mut messages: Vec<serde_json::Value> = options
+            .history
+            .iter()
+            .filter(|message| message.role == "user" || message.role == "assistant")
+            .map(|message| serde_json::json!({ "role": message.role, "content": message.text }))
+            .collect();
+        messages.push(serde_json::json!({ "role": "user", "content": prompt }));
+        let mut body = serde_json::json!({
+            "model": options.model_or(&self.model),
+            "messages": messages,
             "stream": true,
         });
+        // The thinking level the user picked reaches the wire here. `none` is a
+        // real wire value (same convention as the engine's own request builder),
+        // and a provider that rejects the parameter gets exactly one stripped
+        // retry instead of failing the whole turn — see `send_and_stream`.
+        if let Some(effort) = options
+            .thought_level
+            .as_deref()
+            .map(str::trim)
+            .filter(|level| !level.is_empty())
+        {
+            body["reasoning_effort"] = serde_json::Value::String(effort.to_string());
+        }
         self.send_and_stream(body, emit)
+            .map(|usage| crate::TurnReport { usage })
+    }
+
+    fn list_models(&self, selected: Option<&str>) -> crate::provider::ProviderHealth {
+        self.probe_with(selected)
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
+    fn base_url(&self) -> Option<&str> {
+        Some(&self.base_url)
     }
 }
 
@@ -440,6 +756,35 @@ mod tests {
 
     fn frame(delta: &str) -> serde_json::Value {
         serde_json::json!({ "choices": [{ "delta": { "content": delta } }] })
+    }
+
+    #[test]
+    fn cache_hit_denominator_respects_openai_and_anthropic_usage_shapes() {
+        let openai = usage_of(&serde_json::json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "prompt_tokens_details": { "cached_tokens": 40 }
+            }
+        }))
+        .unwrap();
+        assert_eq!(openai.input_tokens, 100);
+        assert_eq!(openai.cached_tokens, 40);
+        assert_eq!(openai.cache_total_tokens, 100);
+
+        let anthropic = usage_of(&serde_json::json!({
+            "usage": {
+                "input_tokens": 60,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 30,
+                "cache_creation_input_tokens": 10
+            }
+        }))
+        .unwrap();
+        assert_eq!(anthropic.input_tokens, 60);
+        assert_eq!(anthropic.cached_tokens, 30);
+        assert_eq!(anthropic.cache_creation_tokens, 10);
+        assert_eq!(anthropic.cache_total_tokens, 100);
     }
 
     #[test]
@@ -582,5 +927,287 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    /// 一次一连接的最小对话端点形状（各测试内联自己的 listener 以便逐请求断言）。
+    fn sse_ok(delta: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {}\n\ndata: [DONE]\n\n",
+            serde_json::json!({ "choices": [{ "delta": { "content": delta } }] })
+        )
+    }
+
+    /// 选了档位：请求体必须带 `reasoning_effort`。这是「web 端选思考强度」这条
+    /// 路在 HTTP provider 上的落点——不落字段，上游永远按它自己的默认档跑。
+    #[test]
+    fn picked_thought_level_rides_the_chat_completions_body() {
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorder = bodies.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let Ok(read) = std::io::Read::read(&mut socket, &mut chunk) else {
+                    return;
+                };
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                let Some(header_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                let length = head
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")?
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
+                    })
+                    .unwrap_or(0);
+                let body_end = header_end + 4 + length;
+                if buffer.len() < body_end {
+                    continue;
+                }
+                recorder
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[header_end + 4..body_end]).into_owned());
+                let _ = std::io::Write::write_all(&mut socket, sse_ok("done").as_bytes());
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+                return;
+            }
+        });
+        let adapter =
+            HttpPromptAdapter::new(&format!("http://{address}/v1"), "m", None::<String>).unwrap();
+        adapter
+            .run_prompt(
+                "hello",
+                &crate::RunOptions {
+                    thought_level: Some("high".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("带档位的一轮应当成功");
+        let seen = bodies.lock().unwrap();
+        assert_eq!(seen.len(), 1, "恰好一条请求：{seen:?}");
+        let body: serde_json::Value = serde_json::from_str(seen[0].as_str()).unwrap();
+        assert_eq!(
+            body["reasoning_effort"], "high",
+            "选中的档位必须出现在请求体里：{body}"
+        );
+    }
+
+    /// 没选档位：请求体里不得出现 `reasoning_effort`——空手不替用户做主张，
+    /// provider 保持它自己的默认行为，和改动前完全一致。
+    #[test]
+    fn unpicked_thought_level_leaves_the_body_untouched() {
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorder = bodies.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let Ok(read) = std::io::Read::read(&mut socket, &mut chunk) else {
+                    return;
+                };
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                let Some(header_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                let length = head
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")?
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
+                    })
+                    .unwrap_or(0);
+                let body_end = header_end + 4 + length;
+                if buffer.len() < body_end {
+                    continue;
+                }
+                recorder
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[header_end + 4..body_end]).into_owned());
+                let _ = std::io::Write::write_all(&mut socket, sse_ok("done").as_bytes());
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+                return;
+            }
+        });
+        let adapter =
+            HttpPromptAdapter::new(&format!("http://{address}/v1"), "m", None::<String>).unwrap();
+        adapter
+            .run_prompt("hello", &crate::RunOptions::default())
+            .expect("不带档位的一轮应当成功");
+        let seen = bodies.lock().unwrap();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        let body: serde_json::Value = serde_json::from_str(seen[0].as_str()).unwrap();
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "没人选档位时不得凭空带一个：{body}"
+        );
+    }
+
+    /// 严格网关对 `reasoning_effort` 回 400：剥掉参数重试一次，而不是让整轮
+    /// 失败。与引擎采样器 `is_reasoning_effort_error` → strip-retry 的既有口径一致。
+    #[test]
+    fn a_strict_gateway_400_on_reasoning_effort_gets_one_stripped_retry() {
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorder = bodies.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            // 400 → 剥档位 → 重试：客户端会开第二条连接，两条都要服务。
+            for attempt in 0..2usize {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(read) = std::io::Read::read(&mut socket, &mut chunk) else {
+                        return;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                    let Some(header_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length:")?
+                                .trim()
+                                .parse::<usize>()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    let body_end = header_end + 4 + length;
+                    if buffer.len() < body_end {
+                        continue;
+                    }
+                    let body =
+                        String::from_utf8_lossy(&buffer[header_end + 4..body_end]).into_owned();
+                    recorder.lock().unwrap().push(body.clone());
+                    let response = if attempt == 0 {
+                        "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"Unknown parameter: reasoning_effort is not supported with this model.\"}}".to_string()
+                    } else {
+                        sse_ok("retried")
+                    };
+                    let _ = std::io::Write::write_all(&mut socket, response.as_bytes());
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                    break;
+                }
+            }
+        });
+        let adapter =
+            HttpPromptAdapter::new(&format!("http://{address}/v1"), "m", None::<String>).unwrap();
+        let reply = adapter
+            .run_prompt(
+                "hello",
+                &crate::RunOptions {
+                    thought_level: Some("max".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("剥档位后的重试应当成功");
+        assert_eq!(reply.concat(), "retried");
+        let seen = bodies.lock().unwrap();
+        assert_eq!(seen.len(), 2, "第一次 400，剥掉后重试恰好一次：{seen:?}");
+        let first: serde_json::Value = serde_json::from_str(seen[0].as_str()).unwrap();
+        assert_eq!(first["reasoning_effort"], "max");
+        let second: serde_json::Value = serde_json::from_str(seen[1].as_str()).unwrap();
+        assert!(
+            second.get("reasoning_effort").is_none(),
+            "重试不得再带 reasoning_effort：{second}"
+        );
+    }
+
+    /// 拒绝理由没点名 `reasoning_effort` 的 400 不是这个口径的事：原样报错，
+    /// 不做无依据的重试。
+    #[test]
+    fn an_unrelated_400_is_not_retried() {
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorder = bodies.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let Ok((mut socket, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let Ok(read) = std::io::Read::read(&mut socket, &mut chunk) else {
+                    return;
+                };
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                let Some(header_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                let length = head
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("content-length:")?
+                            .trim()
+                            .parse::<usize>()
+                            .ok()
+                    })
+                    .unwrap_or(0);
+                let body_end = header_end + 4 + length;
+                if buffer.len() < body_end {
+                    continue;
+                }
+                recorder
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[header_end + 4..body_end]).into_owned());
+                let _ = std::io::Write::write_all(
+                    &mut socket,
+                    b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"bad model name\"}}",
+                );
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+                return;
+            }
+        });
+        let adapter =
+            HttpPromptAdapter::new(&format!("http://{address}/v1"), "m", None::<String>).unwrap();
+        let error = adapter
+            .run_prompt(
+                "hello",
+                &crate::RunOptions {
+                    thought_level: Some("high".into()),
+                    ..Default::default()
+                },
+            )
+            .expect_err("与档位无关的 400 必须原样失败");
+        assert!(error.contains("bad model name"), "{error}");
+        assert_eq!(bodies.lock().unwrap().len(), 1, "不重试");
     }
 }

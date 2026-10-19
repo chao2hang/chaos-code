@@ -9,8 +9,13 @@ name = "chaos-web"
 path = "src/main.rs"
 
 [dependencies]
+ring.workspace = true
 anyhow.workspace = true
 axum.workspace = true
+# zcode-agent 附件通道：上行切片是 dataBase64 文本，落盘前要先解回来核实摘要。
+base64.workspace = true
+# 手机中继的 rpc-frame 信封带 crc32 校验和（`checksum:{algorithm:"crc32",value}`）。
+crc32fast.workspace = true
 chaos-engine = { path = "../chaos-engine" }
 dunce.workspace = true
 # The preview proxy dials the developer's own dev server: an HTTP client for
@@ -19,17 +24,31 @@ futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+toml_edit.workspace = true
 tokio-tungstenite.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync"] }
 tower-http = { workspace = true, features = ["cors", "limit", "fs", "set-header"] }
 sha2.workspace = true
 uuid.workspace = true
+# Bridge for the official ZCode frontend's binary @zcode/rpc WebSocket.
+zcode-rpc-protocol = { path = "../../common/zcode-rpc-protocol" }
+# terminal 通道：Web 端真 PTY（创建/写入/resize/退出事件）。
+portable-pty.workspace = true
+# skills 通道的技能发现直接复用 agent 自己的 walker，保证 Web 列表与会话实际加载一致。
+xai-grok-agent = { path = "../xai-grok-agent" }
+# file.searchWorkspaceFiles 的工作区遍历：gitignore / .ignore / .zcodeignore 的
+# 规则语义交给这个库，避免手写一套只认得一部分写法的匹配器。
+ignore.workspace = true
+# [skills] 表的读取/合并/生效层解析（grok_home 双读 ~/.chaos / ~/.grok、deep_merge）。
+xai-grok-config = { workspace = true }
+# 读取 config.toml 的 [skills] 表（写入仍用 toml_edit，注释与无关表原样保留）。
+toml = { workspace = true }
 
 [dev-dependencies]
 flate2.workspace = true
 base64.workspace = true
-tempfile.workspace = true
 # Startup-refusal tests must not block forever if a guard regresses and the host
 # simply starts serving.
 wait-timeout = { workspace = true }

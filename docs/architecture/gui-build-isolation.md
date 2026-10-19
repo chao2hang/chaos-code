@@ -1,21 +1,30 @@
 # GUI build and CI isolation
 
-Date: 2026-09-24.
+Date: 2026-09-24. Updated: 2026-10-17.
 
-- GUI Rust crates are independent workspace members in the marked fork-layer
-  block. The Desktop crate has no Tauri dependency yet, so the default TUI
-  binary does not compile a WebView stack.
-- Frontend dependencies and output live under `apps/chaos-ui`; `node_modules`
-  and `dist` are ignored. They are never copied into Rust `target/`.
-- The existing `rust` CI job remains unchanged in scope. The separate `gui` job
-  runs GUI Rust tests and frontend install/typecheck/build.
-- Local low-memory builds use `CARGO_BUILD_JOBS=4`; cleanups distinguish
-  `target/debug`, `target/release`, and `target/release-dist`.
-- If a future Tauri integration makes the main job exceed its 60-minute budget
-  or materially expands the default TUI dependency graph, remove the GUI host
-  from the shared workspace and publish the engine/host as an independent
-  package before continuing.
+## Current Web build boundary
 
-The current isolation evidence is the passing GUI job structure and the absence
-of Tauri dependencies in the default Cargo dependency graph. Three-platform
-Tauri builds remain a later M5 gate.
+The browser client is the official ZCode Web frontend. Its source is managed
+by this project in a frontend checkout separate from the `chaos-code` Rust
+workspace. This is a build-boundary decision, not a transfer of frontend
+ownership. The retired `apps/chaos-ui` was removed on 2026-10-09. The ZCode
+source/lockfile remains project-managed and is built with its frontend toolchain,
+not through Cargo.
+
+- ZCode UI changes are linted and built from the project-managed ZCode source
+  checkout with its Node 24+/pnpm toolchain (`@zcode/ui`, `@zcode/web`). Its
+  `packages/web/dist/` output is deployed to the directory configured by
+  `CHAOS_WEB_ASSETS_DIR`. The source/build process and deployment checks are documented in
+  [`zcode-web-frontend.md`](zcode-web-frontend.md).
+- `xai-grok-web` remains the Rust host: it serves the deployed assets, handles
+  authentication, and bridges the ZCode binary RPC at `/ws/zcode` to
+  `chaos-engine`. Its Rust build and socket integration tests remain in this
+  workspace and CI.
+- The `gui` CI job covers the Rust host/engine packages only. It does not fetch,
+  typecheck, build, or browser-test the project-managed ZCode frontend checkout.
+  Run its checks there before deploying changed assets.
+- The Desktop crate still has no Tauri dependency; native Desktop build and
+  three-platform acceptance remain separate roadmap gates.
+
+The old `apps/chaos-ui` Node installation/build isolation notes below the former
+M0 plan are historical and no longer describe an active workspace member.

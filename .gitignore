@@ -16,8 +16,7 @@
 # skills) can still be committed deliberately.
 /.chaos/uploads/
 
-# Playwright run artifacts: `outputDir` in `apps/chaos-ui/playwright.config.ts`
-# and the reporter's default `test-results/` directory.
+# Playwright run artifacts: the reporter's default `test-results/` directory.
 /.chaos/playwright-results/
 /test-results/
 
@@ -35,10 +34,6 @@
 # Python bytecode from the l10n checkers (scripts/check-doc-l10n*.py)
 __pycache__/
 *.pyc
-
-# Frontend dependencies and build output
-apps/chaos-ui/node_modules/
-apps/chaos-ui/dist/
 
 # ripgrep that scripts/test-platform.{sh,ps1} downloads when the host has none;
 # a fetched binary is machine-local, never repo content.

@@ -1458,6 +1458,8 @@ pub(super) fn test_subagent_spawned_for_workflow(
         description: "scan src/".into(),
         effective_context_source: None,
         context_normalized: false,
+        is_background: false,
+        parent_tool_call_id: None,
         capability_mode: None,
         workflow_run_id,
         persona: None,

@@ -1,10 +1,81 @@
 use pretty_assertions::assert_eq;
 
+fn track(
+    event: super::ExtEvent,
+    pending: &mut std::collections::HashSet<super::BackgroundWork>,
+    state: &mut super::BackgroundLifecycleState,
+) -> Option<super::ext_protocol::SubagentStreamEvent> {
+    let event = match event {
+        super::ExtEvent::SubagentSpawned { subagent_id, attempt_id, event_seq } => {
+            super::ExtEvent::SubagentLifecycle(super::ext_protocol::SubagentStreamEvent {
+                event: "spawned".into(),
+                child_session_id: subagent_id.clone(),
+                parent_session_id: "parent".into(),
+                subagent_type: "explore".into(),
+                description: "test subagent".into(),
+                parent_tool_call_id: Some("tool-parent".into()),
+                status: Some("running".into()),
+                model: None,
+                workflow_run_id: None,
+                agent_address: None,
+                run_in_background: Some(true),
+                started_at_ms: Some(1),
+                duration_ms: None,
+                subagent_id,
+                attempt_id,
+                event_seq,
+            })
+        }
+        super::ExtEvent::SubagentProgress { subagent_id, attempt_id, event_seq } => {
+            super::ExtEvent::SubagentLifecycle(super::ext_protocol::SubagentStreamEvent {
+                event: "progress".into(),
+                child_session_id: subagent_id.clone(),
+                parent_session_id: "parent".into(),
+                subagent_type: "explore".into(),
+                description: "test subagent".into(),
+                parent_tool_call_id: Some("tool-parent".into()),
+                status: Some("running".into()),
+                model: None,
+                workflow_run_id: None,
+                agent_address: None,
+                run_in_background: Some(true),
+                started_at_ms: Some(1),
+                duration_ms: None,
+                subagent_id,
+                attempt_id,
+                event_seq,
+            })
+        }
+        super::ExtEvent::SubagentFinished { subagent_id, attempt_id, event_seq } => {
+            super::ExtEvent::SubagentLifecycle(super::ext_protocol::SubagentStreamEvent {
+                event: "finished".into(),
+                child_session_id: subagent_id.clone(),
+                parent_session_id: "parent".into(),
+                subagent_type: "explore".into(),
+                description: "test subagent".into(),
+                parent_tool_call_id: Some("tool-parent".into()),
+                status: Some("completed".into()),
+                model: None,
+                workflow_run_id: None,
+                agent_address: None,
+                run_in_background: Some(true),
+                started_at_ms: Some(1),
+                duration_ms: None,
+                subagent_id,
+                attempt_id,
+                event_seq,
+            })
+        }
+        other => other,
+    };
+    super::track_background_lifecycle(event, pending, state)
+}
+
 #[test]
 fn lifecycle_tracking_is_independent_of_wait_flag() {
     let mut pending = std::collections::HashSet::new();
     let mut completed = super::BackgroundLifecycleState::default();
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::TaskBackgrounded {
             task_id: "t1".into(),
             is_monitor: false,
@@ -12,7 +83,7 @@ fn lifecycle_tracking_is_independent_of_wait_flag() {
         &mut pending,
         &mut completed,
     );
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::SubagentSpawned {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -24,14 +95,14 @@ fn lifecycle_tracking_is_independent_of_wait_flag() {
     assert!(pending.contains(&super::BackgroundWork::Task("t1".into())));
     assert!(pending.contains(&super::BackgroundWork::Subagent("s1".into())));
 
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::TaskCompleted {
             task_id: "t1".into(),
         },
         &mut pending,
         &mut completed,
     );
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -47,14 +118,14 @@ fn lifecycle_tracking_is_independent_of_wait_flag() {
 fn completion_before_backgrounded_never_rearms_pending() {
     let mut pending = std::collections::HashSet::new();
     let mut completed = super::BackgroundLifecycleState::default();
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::TaskCompleted {
             task_id: "t1".into(),
         },
         &mut pending,
         &mut completed,
     );
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::TaskBackgrounded {
             task_id: "t1".into(),
             is_monitor: false,
@@ -73,9 +144,9 @@ fn duplicate_backgrounded_after_completion_stays_dead() {
         task_id: "t1".into(),
         is_monitor: false,
     };
-    super::track_background_lifecycle(bg(), &mut pending, &mut completed);
+    track(bg(), &mut pending, &mut completed);
     assert!(pending.contains(&super::BackgroundWork::Task("t1".into())));
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::TaskCompleted {
             task_id: "t1".into(),
         },
@@ -83,7 +154,7 @@ fn duplicate_backgrounded_after_completion_stays_dead() {
         &mut completed,
     );
     assert!(pending.is_empty());
-    super::track_background_lifecycle(bg(), &mut pending, &mut completed);
+    track(bg(), &mut pending, &mut completed);
     assert!(
         pending.is_empty(),
         "a backgrounded for an already-completed id must not re-arm pending"
@@ -126,8 +197,8 @@ fn newer_subagent_spawn_after_finish_rearms_pending() {
     let mut pending = std::collections::HashSet::new();
     let mut completed = super::BackgroundLifecycleState::default();
     let work = super::BackgroundWork::Subagent("s1".into());
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut completed);
-    super::track_background_lifecycle(
+    track(spawn_event("at1.one", 1), &mut pending, &mut completed);
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -139,14 +210,14 @@ fn newer_subagent_spawn_after_finish_rearms_pending() {
     assert!(pending.is_empty());
     assert!(completed.subagents.contains_key("s1"));
 
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut completed);
+    track(spawn_event("at1.one", 1), &mut pending, &mut completed);
     assert!(pending.is_empty());
     assert!(completed.subagents.contains_key("s1"));
 
-    super::track_background_lifecycle(spawn_event("at1.two", 3), &mut pending, &mut completed);
+    track(spawn_event("at1.two", 3), &mut pending, &mut completed);
     assert!(pending.contains(&work));
     assert_eq!(s1(&completed).current_attempt_id(), Some("at1.two"));
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -156,7 +227,7 @@ fn newer_subagent_spawn_after_finish_rearms_pending() {
         &mut completed,
     );
     assert!(pending.contains(&work));
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.two".into()),
@@ -166,7 +237,7 @@ fn newer_subagent_spawn_after_finish_rearms_pending() {
         &mut completed,
     );
     assert!(pending.is_empty());
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -175,7 +246,7 @@ fn newer_subagent_spawn_after_finish_rearms_pending() {
         &mut pending,
         &mut completed,
     );
-    super::track_background_lifecycle(spawn_event("at1.two", 3), &mut pending, &mut completed);
+    track(spawn_event("at1.two", 3), &mut pending, &mut completed);
     assert!(pending.is_empty());
     assert_eq!(s1(&completed).last_event_seq(), Some(4));
 }
@@ -185,10 +256,10 @@ fn retained_prior_finish_records_without_clearing_current_pending() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
     let work = super::BackgroundWork::Subagent("s1".into());
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
-    super::track_background_lifecycle(spawn_event("at1.two", 3), &mut pending, &mut state);
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(spawn_event("at1.two", 3), &mut pending, &mut state);
 
-    super::track_background_lifecycle(
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -209,8 +280,8 @@ fn exact_pending_finish_discards_legacy_before_next_spawn() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
     let work = super::BackgroundWork::Subagent("s1".into());
-    super::track_background_lifecycle(legacy_finish_event(Some(2)), &mut pending, &mut state);
-    super::track_background_lifecycle(
+    track(legacy_finish_event(Some(2)), &mut pending, &mut state);
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -219,11 +290,11 @@ fn exact_pending_finish_discards_legacy_before_next_spawn() {
         &mut pending,
         &mut state,
     );
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
 
     assert!(s1(&state).is_attempt_finished("at1.one"));
     assert!(!s1(&state).retains_attempt(&crate::app::subagent::SubagentAttemptKey::Legacy));
-    super::track_background_lifecycle(spawn_event("at1.two", 4), &mut pending, &mut state);
+    track(spawn_event("at1.two", 4), &mut pending, &mut state);
     assert_eq!(s1(&state).current_attempt_id(), Some("at1.two"));
     assert!(!s1(&state).is_finished());
     assert!(pending.contains(&work));
@@ -233,9 +304,9 @@ fn exact_pending_finish_discards_legacy_before_next_spawn() {
 fn legacy_finish_before_typed_spawn_does_not_leave_pending_work() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
-    super::track_background_lifecycle(legacy_finish_event(Some(2)), &mut pending, &mut state);
+    track(legacy_finish_event(Some(2)), &mut pending, &mut state);
 
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
 
     assert_eq!(s1(&state).current_attempt_id(), Some("at1.one"));
     assert!(s1(&state).is_finished());
@@ -247,10 +318,10 @@ fn legacy_finish_before_two_typed_spawns_rearms_only_the_second() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
     let work = super::BackgroundWork::Subagent("s1".into());
-    super::track_background_lifecycle(legacy_finish_event(Some(2)), &mut pending, &mut state);
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(legacy_finish_event(Some(2)), &mut pending, &mut state);
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
 
-    super::track_background_lifecycle(spawn_event("at1.two", 3), &mut pending, &mut state);
+    track(spawn_event("at1.two", 3), &mut pending, &mut state);
 
     assert!(s1(&state).is_attempt_finished("at1.one"));
     assert_eq!(s1(&state).current_attempt_id(), Some("at1.two"));
@@ -263,10 +334,10 @@ fn legacy_finish_closes_the_only_typed_running_attempt() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
     let work = super::BackgroundWork::Subagent("s1".into());
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
     assert!(pending.contains(&work));
 
-    super::track_background_lifecycle(legacy_finish_event(Some(2)), &mut pending, &mut state);
+    track(legacy_finish_event(Some(2)), &mut pending, &mut state);
 
     assert!(s1(&state).is_finished());
     assert!(pending.is_empty());
@@ -277,8 +348,8 @@ fn legacy_finish_closes_current_typed_attempt_after_wake() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
     let work = super::BackgroundWork::Subagent("s1".into());
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
-    super::track_background_lifecycle(
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -287,10 +358,10 @@ fn legacy_finish_closes_current_typed_attempt_after_wake() {
         &mut pending,
         &mut state,
     );
-    super::track_background_lifecycle(spawn_event("at1.two", 3), &mut pending, &mut state);
+    track(spawn_event("at1.two", 3), &mut pending, &mut state);
     assert!(pending.contains(&work));
 
-    super::track_background_lifecycle(legacy_finish_event(Some(4)), &mut pending, &mut state);
+    track(legacy_finish_event(Some(4)), &mut pending, &mut state);
 
     assert_eq!(s1(&state).current_attempt_id(), Some("at1.two"));
     assert!(s1(&state).is_finished());
@@ -301,8 +372,8 @@ fn legacy_finish_closes_current_typed_attempt_after_wake() {
 fn legacy_finish_after_typed_completion_is_dropped() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
-    super::track_background_lifecycle(spawn_event("at1.one", 1), &mut pending, &mut state);
-    super::track_background_lifecycle(
+    track(spawn_event("at1.one", 1), &mut pending, &mut state);
+    track(
         super::ExtEvent::SubagentFinished {
             subagent_id: "s1".into(),
             attempt_id: Some("at1.one".into()),
@@ -312,7 +383,7 @@ fn legacy_finish_after_typed_completion_is_dropped() {
         &mut state,
     );
 
-    super::track_background_lifecycle(legacy_finish_event(Some(3)), &mut pending, &mut state);
+    track(legacy_finish_event(Some(3)), &mut pending, &mut state);
 
     assert_eq!(s1(&state).current_attempt_id(), Some("at1.one"));
     assert!(s1(&state).is_finished());
@@ -325,9 +396,9 @@ fn legacy_finish_after_typed_completion_is_dropped() {
 fn finished_legacy_duplicate_spawn_does_not_rearm_pending() {
     let mut pending = std::collections::HashSet::new();
     let mut state = super::BackgroundLifecycleState::default();
-    super::track_background_lifecycle(legacy_spawn_event(None), &mut pending, &mut state);
-    super::track_background_lifecycle(legacy_finish_event(None), &mut pending, &mut state);
-    super::track_background_lifecycle(legacy_spawn_event(None), &mut pending, &mut state);
+    track(legacy_spawn_event(None), &mut pending, &mut state);
+    track(legacy_finish_event(None), &mut pending, &mut state);
+    track(legacy_spawn_event(None), &mut pending, &mut state);
 
     assert_eq!(s1(&state).current_attempt_id(), None);
     assert!(s1(&state).is_finished());

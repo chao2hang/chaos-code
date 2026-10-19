@@ -51,6 +51,8 @@ pub(crate) enum StreamEvent {
     AgentThought(String),
     ToolCall(ToolCallEvent),
     ToolCallUpdate(ToolCallUpdateEvent),
+    /// Child-session lifecycle metadata used by a hosting UI to track background work.
+    Subagent(super::ext_protocol::SubagentStreamEvent),
     Plan(Value),
     /// Session metadata; `skills` is the subset of `commands` that are skills.
     AvailableCommands {

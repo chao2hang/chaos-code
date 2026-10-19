@@ -79,10 +79,14 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 ## 9. Chaos GUI fork layer
 - `Cargo.toml`（workspace members 的 GUI fork 区段）
 - `crates/codegen/chaos-engine/**`
-- `crates/codegen/xai-grok-web/**`
+- `crates/codegen/xai-grok-web/**`（含 RPC 桥 `chaos_bridge.rs`）
 - `crates/codegen/xai-grok-desktop/**`
-- `apps/chaos-ui/**`
 - `docs/architecture/adr-00{1,2,3,4,5}-gui-*.md`
+
+自 2026-10-09 决策①起，自研前端 `apps/chaos-ui/**` 已整体退役（全量删除）；
+当前 Web UI 使用本项目管理的 ZCode 官方前端 + Rust RPC 桥。前端源码 checkout
+不属于 `chaos-code` Cargo workspace，也不进入这里定义的 TUI 上游同步清单；
+`xai-grok-web/**` 内的宿主、鉴权与桥接代码仍属于 Chaos fork layer，必须保留并单独维护。
 
 ## 10. 文档
 - `crates/codegen/xai-grok-pager/docs/**`（中文；上游新增章节视情况补译）

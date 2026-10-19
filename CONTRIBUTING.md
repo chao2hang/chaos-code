@@ -142,8 +142,7 @@ habit. `scripts/ci/check-guard-wiring.py` classifies every guard as **mirrored**
 and a guard in neither set fails the check. The CI-only set lives in
 `scripts/ci/docker-entry-ci-only.tsv`, one `<name><TAB><reason>` row per guard, and
 the reasons are all the same shape: something a clean container off this repository
-does not have. Today that is a dev-profile build of `chaos-engine`
-(`check-gui-protocol.sh`), a real PowerShell (`check-powershell-syntax.py --require`),
+does not have. Today that is a real PowerShell (`check-powershell-syntax.py --require`)
 and assembled release artifacts (the release-integrity lab helpers). `--list-mirror`
 prints the classification. When you add a guard, add it to the `gates` array or add
 a row; adding it to CI alone is the one option the check refuses, because that is
@@ -314,44 +313,22 @@ process: it points `GIT_BIN_PATH` at a shim that records its own pid and then bl
 asserts the pid stops existing once the capture budget expires. Take the flag out and that
 test goes red, which is the difference between this gate and a grep.
 
-### A browser spec that no config names is skipped without failing
+### Web frontend source and verification boundary
 
-`npm run test:e2e` in `apps/chaos-ui` is `node ./e2e-runner.mjs`, which loops over a hand-written
-list of two Playwright configs, and each config then decides what to collect by matching `testMatch`
-against the absolute path. That is the whole registration mechanism, and it keeps its names in five
-hand-maintained places: the top-level `testMatch` of `playwright.config.ts`, that list re-typed
-inside each of its three projects, and one `const` in `playwright.git.config.ts`. Nothing in the
-tool makes those lists agree. Measured against the Playwright this package installs (1.63.0) with
-`test --list --reporter=json`: a `*.pw.ts` that no pattern matches is simply not collected and the
-process exits 0; a project's `testMatch` replaces the top-level one rather than narrowing it, and
-all three projects here set their own, so a name added only at the top level -- where a reader looks
-first -- registers nothing while still looking alive, because it matches the twelve the projects do
-name; and a project collecting nothing is silent, since Playwright reports `No tests found` only
-when a whole config collects nothing. Both failure directions are quiet, and "nothing was collected"
-is indistinguishable from "everything passed" at the exit code.
+The self-built React/TypeScript client in `apps/chaos-ui` and its Playwright
+suite were retired on 2026-10-09. The current Web client is the official ZCode
+frontend, whose source is managed by this project in its separate frontend
+checkout; it is not a member of the `chaos-code` Cargo workspace. Chaos CI
+currently does not build that frontend tree. Build, deploy, and verification instructions are in
+[`docs/architecture/zcode-web-frontend.md`](docs/architecture/zcode-web-frontend.md).
 
-`scripts/ci/check-e2e-registration.py` judges those lists against the specs on disk. It reads a
-`testMatch` that is a regex literal, an array of them, or a `const` naming one, and checks six
-things: every `e2e/*.pw.ts` is claimed by exactly one config, so one spec is not run twice against
-two different hosts; a config whose projects all override `testMatch` is asked whether its
-top-level list still selects anything the projects do not; every project collects at least one
-spec, which is the viewport variant nobody notices; every pattern, and every alternative inside a
-`(?:a|b|c)` group, still matches a spec that exists, which is the renamed-file case; the runner's
-`configs` list is the set of config files on disk, because CI types `npm run test:e2e` rather than a
-config path; and `package.json`'s `test:e2e` still names that runner, because a script that went
-back to a bare `playwright test` runs one config and reports a clean suite. `--list` prints the
-resulting map of spec to config and project. Specs are taken from the filesystem and not from git's
-index, because Playwright reads the filesystem and a spec nobody staged is still collected.
-
-What the guard cannot read is a finding and never a pass -- no configs, no specs, a `testMatch`
-outside the three forms it understands, a glob string, an unresolvable `const`, a pattern that will
-not compile, a regex flag whose meaning it has not been given. The glob is the instructive one:
-Playwright does accept a glob `testMatch`, so refusing one is a limit of this reader and not a claim
-about the tool, and the finding says to extend the reader rather than leave a pattern unjudged. The
-gate runs in the container even though that container cannot start a browser, because what it judges
-is two lists and a set of file names. Whether the suite then collects and passes is a separate fact,
-told by the job that does start a browser; being collected is not being green, and this gate does
-not claim otherwise.
+This repository owns the Rust `chaos-web` host, Engine, and ZCode RPC bridge.
+Their behavior is tested by `crates/codegen/xai-grok-web/tests/` over real
+sockets. The retained legacy JSON Engine protocol is pinned by
+`chaos_engine::client_message_samples()` and the exhaustive `safe_mode_tag`
+match; this is not a substitute for checking the ZCode client against the ZCode
+protocol. Run frontend lint/typecheck/build in the project-managed ZCode checkout, and Rust
+bridge/Engine tests in this repository.
 
 ## Fast local gate loop
 
@@ -406,11 +383,11 @@ turn a fast loop into a workspace rebuild. `--self-test` pins all three, includi
 half of each selection case, which asserts that the line of the gate that must not have run is
 absent.
 
-A skipped build gate is not allowed to come back as a pass. The four build gates are what CI runs on
-every push, so a run that skipped them while the diff holds a file one of them measures ends
-`NOT COVERED` with exit 1 and names those files, rather than printing a verdict about a tree it never
-compiled. The files are `*.rs`, `*.toml`, `*.lock`, and `apps/chaos-ui/src/generated/protocol.ts`,
-which is the one input of the `GUI protocol types` gate that lives outside the Rust tree. The diff is
+A skipped build gate is not allowed to come back as a pass. The three build gates (`cargo
+check`/`clippy`/`test`) are what CI runs on every push, so a run that skipped them while the diff
+holds a file one of them measures ends `NOT COVERED` with exit 1 and names those files, rather
+than printing a verdict about a tree it never compiled. The files are `*.rs`, `*.toml`, and
+`*.lock`. The diff is
 `git diff --name-only HEAD` plus everything ahead of `@{u}`, so it catches the sweep run before a
 commit and the one run after it; outside a git checkout, or with no upstream configured, it claims
 nothing. `--allow-unbuilt-changes` is for a run where those files are deliberately not compiled

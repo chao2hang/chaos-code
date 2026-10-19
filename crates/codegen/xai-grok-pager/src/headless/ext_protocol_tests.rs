@@ -154,12 +154,15 @@ fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
             "parent_session_id": "p",
             "child_session_id": "c",
             "subagent_type": "explore",
-            "description": "test"
+            "description": "test",
+            "is_background": true,
+            "parent_tool_call_id": "tool-parent",
+            "model": "grok-test"
         }),
     );
     assert!(matches!(
         handle_ext_notification(&spawned),
-        ExtEvent::SubagentSpawned { subagent_id, attempt_id: None, event_seq: None } if subagent_id == "sub-1"
+        ExtEvent::SubagentLifecycle(SubagentStreamEvent { subagent_id, event, child_session_id, run_in_background, parent_tool_call_id, model, .. }) if subagent_id == "sub-1" && event == "spawned" && child_session_id == "c" && run_in_background == Some(true) && parent_tool_call_id.as_deref() == Some("tool-parent") && model.as_deref() == Some("grok-test")
     ));
     let finished = make_ext_notif(
         "x.ai/session_notification",
@@ -175,7 +178,7 @@ fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
     );
     assert!(matches!(
         handle_ext_notification(&finished),
-        ExtEvent::SubagentFinished { subagent_id, attempt_id: None, event_seq: None } if subagent_id == "sub-1"
+        ExtEvent::SubagentLifecycle(SubagentStreamEvent { subagent_id, event, status, .. }) if subagent_id == "sub-1" && event == "finished" && status.as_deref() == Some("completed")
     ));
 
     let sequenced = make_raw_ext_notif(
@@ -192,11 +195,12 @@ fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
     );
     assert!(matches!(
         handle_ext_notification(&sequenced),
-        ExtEvent::SubagentSpawned {
+        ExtEvent::SubagentLifecycle(SubagentStreamEvent {
             attempt_id: Some(attempt_id),
             event_seq: Some(42),
+            event,
             ..
-        } if attempt_id == "at1.one"
+        }) if attempt_id == "at1.one" && event == "spawned"
     ));
 }
 
@@ -216,11 +220,12 @@ fn headless_subagent_progress_decodes_lifecycle_identity() {
     );
     assert!(matches!(
         handle_ext_notification(&progress),
-        ExtEvent::SubagentProgress {
+        ExtEvent::SubagentLifecycle(SubagentStreamEvent {
             attempt_id: Some(attempt_id),
             event_seq: Some(43),
+            event,
             ..
-        } if attempt_id == "at1.one"
+        }) if attempt_id == "at1.one" && event == "progress"
     ));
 }
 
@@ -712,4 +717,55 @@ fn headless_memory_capture_activity_decodes_without_content() {
         }
         _ => panic!("expected MemoryCaptureActivity"),
     }
+}
+
+/// The shell's `XaiSessionUpdate::RetryState(RetryState::Retrying{..})` wire
+/// shape must decode — a headless host watching a turn silently retry a 503
+/// depends on it (matches a real line captured in updates.jsonl).
+#[test]
+fn headless_retry_state_retrying_decodes_to_retry_event() {
+    let notif = make_ext_notif(
+        "x.ai/session_notification",
+        serde_json::json!({
+            "sessionUpdate": "retry_state",
+            "type": "retrying",
+            "attempt": 3,
+            "max_retries": 8,
+            "reason": "API error (status 503 Service Unavailable): no channel",
+            "error_type": "api"
+        }),
+    );
+    match handle_ext_notification(&notif) {
+        ExtEvent::Retry(xai_grok_shell::extensions::notification::RetryState::Retrying {
+            attempt,
+            max_retries,
+            reason,
+            error_type,
+        }) => {
+            assert_eq!((attempt, max_retries), (3, 8));
+            assert!(reason.contains("503"));
+            assert_eq!(error_type.as_deref(), Some("api"));
+        }
+        ExtEvent::None => panic!("retry_state decoded to ExtEvent::None"),
+        _ => panic!("retry_state decoded to an unexpected ExtEvent variant"),
+    }
+}
+
+/// Exhausted/failed retry states decode too: the emitter needs them to know a
+/// turn ended (the engine reads only `retrying` today, but the wire carries all).
+#[test]
+fn headless_retry_state_failed_decodes_to_retry_event() {
+    let notif = make_ext_notif(
+        "x.ai/session_notification",
+        serde_json::json!({
+            "sessionUpdate": "retry_state",
+            "type": "failed",
+            "error_type": "auth",
+            "message": "bad token"
+        }),
+    );
+    assert!(matches!(
+        handle_ext_notification(&notif),
+        ExtEvent::Retry(xai_grok_shell::extensions::notification::RetryState::Failed { .. })
+    ));
 }

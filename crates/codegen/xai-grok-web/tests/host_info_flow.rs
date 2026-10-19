@@ -7,9 +7,9 @@
 //!   Safe Web Mode answers rather than refusing them, and that the engine
 //!   overwrites a host that reports a store or workspace it was never given;
 //! - `the_refusal_list_matches_what_the_socket_actually_refuses` walks every
-//!   message in the protocol mirror and asserts the socket's verdict matches the
-//!   list the panel renders, so the panel cannot promise a refusal that does not
-//!   happen nor hide one that does.
+//!   client message in the engine's protocol inventory and asserts the socket's
+//!   verdict matches the list the panel renders, so the panel cannot promise a
+//!   refusal that does not happen nor hide one that does.
 
 use axum::serve;
 use chaos_engine::{ClientMessage, Engine, HostInfo, ServerMessage, StateBackend};
@@ -21,191 +21,12 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use uuid::Uuid;
 use xai_grok_web::router_with_safe_mode;
 
-/// Every wire tag in the `ClientMessage` mirror.
-///
-/// The mirror is the same text the browser compiles, and
-/// `scripts/ci/check-protocol-mirror.py` holds it against the Rust enum in CI, so
-/// walking the mirror here is what makes an unclassified new message fail this
-/// test rather than pass it.
-fn protocol_tags() -> Vec<String> {
-    let mirror = chaos_engine::protocol_schema::TYPESCRIPT;
-    let start = mirror
-        .find("export type ClientMessage =")
-        .expect("mirror declares ClientMessage");
-    let end = mirror[start..]
-        .find("export type ServerMessage")
-        .map(|offset| start + offset)
-        .expect("mirror declares ServerMessage");
-    mirror[start..end]
-        .lines()
-        .filter_map(|line| {
-            let after = line.split("type: '").nth(1)?;
-            Some(after.split('\'').next()?.to_string())
-        })
-        .collect()
-}
-
-/// One message per protocol tag, enough to ask the socket about it. Field values
-/// are placeholders: Safe Web Mode decides on the message kind alone, before the
-/// engine ever looks at the payload.
-fn sample_client_message(tag: &str) -> Option<ClientMessage> {
-    let id = Uuid::new_v4().to_string();
-    let session = Uuid::new_v4();
-    let workspace = Uuid::new_v4();
-    let request = Uuid::new_v4();
-    Some(match tag {
-        "create_session" => ClientMessage::CreateSession {
-            client_msg_id: id,
-            workspace_id: None,
-        },
-        "create_workspace" => ClientMessage::CreateWorkspace {
-            client_msg_id: id,
-            name: "probe".into(),
-        },
-        "list_workspaces" => ClientMessage::ListWorkspaces { client_msg_id: id },
-        "archive_workspace" => ClientMessage::ArchiveWorkspace {
-            client_msg_id: id,
-            workspace_id: workspace,
-        },
-        "switch_workspace" => ClientMessage::SwitchWorkspace {
-            client_msg_id: id,
-            workspace_id: workspace,
-        },
-        "resume" => ClientMessage::Resume {
-            client_msg_id: id,
-            session_id: session,
-            workspace_id: None,
-        },
-        "submit" => ClientMessage::Submit {
-            client_msg_id: id,
-            session_id: session,
-            prompt: "probe".into(),
-        },
-        "cancel" => ClientMessage::Cancel {
-            client_msg_id: id,
-            session_id: session,
-        },
-        "snapshot" => ClientMessage::Snapshot {
-            client_msg_id: id,
-            session_id: session,
-            workspace_id: None,
-        },
-        "approve" => ClientMessage::Approve {
-            client_msg_id: id,
-            request_id: request,
-        },
-        "reject" => ClientMessage::Reject {
-            client_msg_id: id,
-            request_id: request,
-            reason: "probe".into(),
-        },
-        "respond_question" => ClientMessage::RespondQuestion {
-            client_msg_id: id,
-            question_id: request,
-            answer: "probe".into(),
-        },
-        "list_files" => ClientMessage::ListFiles {
-            client_msg_id: id,
-            relative_path: ".".into(),
-        },
-        "read_file" => ClientMessage::ReadFile {
-            client_msg_id: id,
-            relative_path: "a.txt".into(),
-        },
-        "search_files" => ClientMessage::SearchFiles {
-            client_msg_id: id,
-            query: "probe".into(),
-        },
-        "propose_file_write" => ClientMessage::ProposeFileWrite {
-            client_msg_id: id,
-            session_id: session,
-            relative_path: "a.txt".into(),
-            contents: "probe".into(),
-        },
-        "propose_terminal" => ClientMessage::ProposeTerminal {
-            client_msg_id: id,
-            session_id: session,
-            command: "printf probe".into(),
-        },
-        "propose_git_mutation" => ClientMessage::ProposeGitMutation {
-            client_msg_id: id,
-            session_id: session,
-            operation: "stage".into(),
-            argument: "a.txt".into(),
-        },
-        "get_settings" => ClientMessage::GetSettings { client_msg_id: id },
-        "get_host_info" => ClientMessage::GetHostInfo { client_msg_id: id },
-        "update_settings" => ClientMessage::UpdateSettings {
-            client_msg_id: id,
-            base_url: None,
-            model: None,
-        },
-        "get_git_status" => ClientMessage::GetGitStatus { client_msg_id: id },
-        "validate_attachment" => ClientMessage::ValidateAttachment {
-            client_msg_id: id,
-            filename: "a.txt".into(),
-            byte_len: 4,
-            content_type: "text/plain".into(),
-        },
-        "begin_attachment" => ClientMessage::BeginAttachment {
-            client_msg_id: id,
-            session_id: session,
-            filename: "a.txt".into(),
-            content_type: "text/plain".into(),
-            byte_len: 4,
-        },
-        "attachment_chunk" => ClientMessage::AttachmentChunk {
-            client_msg_id: id,
-            upload_id: request,
-            chunk: "AAAA".into(),
-        },
-        "cancel_attachment" => ClientMessage::CancelAttachment {
-            client_msg_id: id,
-            upload_id: request,
-        },
-        "finalize_attachment" => ClientMessage::FinalizeAttachment {
-            client_msg_id: id,
-            upload_id: request,
-            relative_path: "a.txt".into(),
-        },
-        "import_tui_session" => ClientMessage::ImportTuiSession {
-            client_msg_id: id,
-            root: "probe".into(),
-            session_id: "probe".into(),
-        },
-        "validate_provider" => ClientMessage::ValidateProvider {
-            client_msg_id: id,
-            base_url: "https://probe.example.test/v1".into(),
-            model: "probe".into(),
-        },
-        "scan_marketplace" => ClientMessage::ScanMarketplace {
-            client_msg_id: id,
-            root: "probe".into(),
-        },
-        "accept_diff" => ClientMessage::AcceptDiff {
-            client_msg_id: id,
-            session_id: session,
-            proposal_id: "probe".into(),
-            summary: "probe".into(),
-        },
-        "rollback_diff" => ClientMessage::RollbackDiff {
-            client_msg_id: id,
-            session_id: session,
-            proposal_id: "probe".into(),
-        },
-        "preview_diff" => ClientMessage::PreviewDiff {
-            client_msg_id: id,
-            session_id: session,
-            proposal_id: "probe".into(),
-        },
-        "suggest_commit_message" => ClientMessage::SuggestCommitMessage {
-            client_msg_id: id,
-            session_id: session,
-        },
-        _ => return None,
-    })
-}
-
+/// Every message the engine can be asked flows from a single inventory,
+/// [`chaos_engine::client_message_samples`], which is now the only enumeration
+/// of the protocol (the TypeScript mirror it used to parse is retired with
+/// `apps/chaos-ui`). Field values in the inventory are placeholders: Safe Web
+/// Mode decides on the message kind alone, before the engine ever looks at the
+/// payload, and `safe_mode_tag` supplies the canonical wire tag.
 /// Serves `engine` on a throwaway port and returns the address. The server shuts
 /// itself down so a test that returns early cannot leak a listener.
 async fn serve_router(
@@ -331,18 +152,18 @@ async fn host_info_reports_the_process_that_answered() {
 
 #[tokio::test]
 async fn every_protocol_message_has_a_sample_to_ask_with() {
-    let tags = protocol_tags();
-    assert!(tags.len() >= 30, "mirror only yielded {} tags", tags.len());
-    let missing: Vec<&str> = tags
-        .iter()
-        .map(String::as_str)
-        .filter(|tag| sample_client_message(tag).is_none())
-        .collect();
+    let samples = chaos_engine::client_message_samples();
     assert!(
-        missing.is_empty(),
-        "these protocol messages have no sample here, so the safe-mode list was \
-         never asked about them: {missing:?}"
+        samples.len() >= 52,
+        "the protocol inventory only yielded {} samples",
+        samples.len()
     );
+    let mut seen = std::collections::HashSet::new();
+    for message in &samples {
+        let tag = chaos_engine::safe_mode_tag(message);
+        assert!(seen.insert(tag), "two samples carry the tag {tag}");
+    }
+    assert_eq!(seen.len(), samples.len());
 }
 
 #[tokio::test]
@@ -366,14 +187,14 @@ async fn the_refusal_list_matches_what_the_socket_actually_refuses() {
         .collect();
 
     let mut disagreement = Vec::new();
-    for tag in protocol_tags() {
-        let message = sample_client_message(&tag).expect("covered by the other test");
+    for message in chaos_engine::client_message_samples() {
+        let tag = chaos_engine::safe_mode_tag(&message);
         let code = refused_code(&first_answer(&address, &message).await);
         let refused = code.as_deref() == Some("safe_web_mode_blocked");
-        if refused && !listed.contains(&tag.as_str()) {
+        if refused && !listed.contains(&tag) {
             disagreement.push(format!("{tag} refused but the panel would not list it"));
         }
-        if !refused && listed.contains(&tag.as_str()) {
+        if !refused && listed.contains(&tag) {
             disagreement.push(format!("{tag} listed as refused but the socket allowed it"));
         }
     }

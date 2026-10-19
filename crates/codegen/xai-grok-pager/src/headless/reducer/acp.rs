@@ -2,7 +2,7 @@
 //! It defines its own line shapes: [`AcpLine`], [`AcpUsageLine`], [`AcpEndLine`].
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::headless::attach_result_usage;
 use xai_grok_shell::extensions::notification::ResponseUsage;
@@ -58,6 +58,99 @@ enum AcpLine {
         #[serde(rename = "rawOutput")]
         raw_output: Value,
         locations: Value,
+    },
+    SubagentSpawned {
+        #[serde(rename = "subagentId")]
+        subagent_id: String,
+        #[serde(rename = "attemptId", skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        #[serde(rename = "eventSeq", skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
+        #[serde(rename = "parentSessionId")]
+        parent_session_id: String,
+        #[serde(rename = "childSessionId")]
+        child_session_id: String,
+        #[serde(rename = "subagentType")]
+        subagent_type: String,
+        description: String,
+        #[serde(rename = "parentToolCallId", skip_serializing_if = "Option::is_none")]
+        parent_tool_call_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(rename = "workflowRunId", skip_serializing_if = "Option::is_none")]
+        workflow_run_id: Option<String>,
+        #[serde(rename = "agentAddress", skip_serializing_if = "Option::is_none")]
+        agent_address: Option<String>,
+        #[serde(rename = "runInBackground", skip_serializing_if = "Option::is_none")]
+        run_in_background: Option<bool>,
+        #[serde(rename = "startedAtMs", skip_serializing_if = "Option::is_none")]
+        started_at_ms: Option<u64>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+    SubagentProgress {
+        #[serde(rename = "subagentId")]
+        subagent_id: String,
+        #[serde(rename = "attemptId", skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        #[serde(rename = "eventSeq", skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
+        #[serde(rename = "parentSessionId")]
+        parent_session_id: String,
+        #[serde(rename = "childSessionId")]
+        child_session_id: String,
+        #[serde(rename = "subagentType")]
+        subagent_type: String,
+        description: String,
+        #[serde(rename = "parentToolCallId", skip_serializing_if = "Option::is_none")]
+        parent_tool_call_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(rename = "workflowRunId", skip_serializing_if = "Option::is_none")]
+        workflow_run_id: Option<String>,
+        #[serde(rename = "agentAddress", skip_serializing_if = "Option::is_none")]
+        agent_address: Option<String>,
+        #[serde(rename = "runInBackground", skip_serializing_if = "Option::is_none")]
+        run_in_background: Option<bool>,
+        #[serde(rename = "startedAtMs", skip_serializing_if = "Option::is_none")]
+        started_at_ms: Option<u64>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+    SubagentFinished {
+        #[serde(rename = "subagentId")]
+        subagent_id: String,
+        #[serde(rename = "attemptId", skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        #[serde(rename = "eventSeq", skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
+        #[serde(rename = "parentSessionId")]
+        parent_session_id: String,
+        #[serde(rename = "childSessionId")]
+        child_session_id: String,
+        #[serde(rename = "subagentType")]
+        subagent_type: String,
+        description: String,
+        #[serde(rename = "parentToolCallId", skip_serializing_if = "Option::is_none")]
+        parent_tool_call_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(rename = "workflowRunId", skip_serializing_if = "Option::is_none")]
+        workflow_run_id: Option<String>,
+        #[serde(rename = "agentAddress", skip_serializing_if = "Option::is_none")]
+        agent_address: Option<String>,
+        #[serde(rename = "runInBackground", skip_serializing_if = "Option::is_none")]
+        run_in_background: Option<bool>,
+        #[serde(rename = "startedAtMs", skip_serializing_if = "Option::is_none")]
+        started_at_ms: Option<u64>,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
     },
     Plan {
         entries: Value,
@@ -138,6 +231,62 @@ impl Reducer for AcpReducer {
                 raw_output: u.raw_output,
                 locations: u.locations,
             },
+            StreamEvent::Subagent(event) => {
+                let line = match event.event.as_str() {
+                    "spawned" => AcpLine::SubagentSpawned {
+                        subagent_id: event.subagent_id,
+                        attempt_id: event.attempt_id,
+                        event_seq: event.event_seq,
+                        parent_session_id: event.parent_session_id,
+                        child_session_id: event.child_session_id,
+                        subagent_type: event.subagent_type,
+                        description: event.description,
+                        parent_tool_call_id: event.parent_tool_call_id,
+                        status: event.status,
+                        model: event.model,
+                        workflow_run_id: event.workflow_run_id,
+                        agent_address: event.agent_address,
+                        run_in_background: event.run_in_background,
+                        started_at_ms: event.started_at_ms,
+                        duration_ms: event.duration_ms,
+                    },
+                    "progress" => AcpLine::SubagentProgress {
+                        subagent_id: event.subagent_id,
+                        attempt_id: event.attempt_id,
+                        event_seq: event.event_seq,
+                        parent_session_id: event.parent_session_id,
+                        child_session_id: event.child_session_id,
+                        subagent_type: event.subagent_type,
+                        description: event.description,
+                        parent_tool_call_id: event.parent_tool_call_id,
+                        status: event.status,
+                        model: event.model,
+                        workflow_run_id: event.workflow_run_id,
+                        agent_address: event.agent_address,
+                        run_in_background: event.run_in_background,
+                        started_at_ms: event.started_at_ms,
+                        duration_ms: event.duration_ms,
+                    },
+                    _ => AcpLine::SubagentFinished {
+                        subagent_id: event.subagent_id,
+                        attempt_id: event.attempt_id,
+                        event_seq: event.event_seq,
+                        parent_session_id: event.parent_session_id,
+                        child_session_id: event.child_session_id,
+                        subagent_type: event.subagent_type,
+                        description: event.description,
+                        parent_tool_call_id: event.parent_tool_call_id,
+                        status: event.status,
+                        model: event.model,
+                        workflow_run_id: event.workflow_run_id,
+                        agent_address: event.agent_address,
+                        run_in_background: event.run_in_background,
+                        started_at_ms: event.started_at_ms,
+                        duration_ms: event.duration_ms,
+                    },
+                };
+                return vec![to_line(&line)];
+            },
             StreamEvent::Plan(entries) => AcpLine::Plan { entries },
             StreamEvent::AvailableCommands {
                 tools,
@@ -209,6 +358,41 @@ impl Reducer for AcpReducer {
             attach_result_usage(&mut line, usage);
         }
         vec![line]
+    }
+}
+
+#[cfg(test)]
+mod subagent_line_tests {
+    use super::*;
+
+    #[test]
+    fn streaming_json_serializes_background_subagent_lifecycle_metadata() {
+        let mut reducer = AcpReducer;
+        let lines = reducer.reduce(StreamEvent::Subagent(
+            crate::headless::ext_protocol::SubagentStreamEvent {
+                event: "spawned".into(),
+                subagent_id: "agent-1".into(),
+                attempt_id: Some("attempt-1".into()),
+                event_seq: Some(7),
+                parent_session_id: "parent-1".into(),
+                child_session_id: "child-1".into(),
+                subagent_type: "explore".into(),
+                description: "Inspect the repository".into(),
+                parent_tool_call_id: Some("tool-1".into()),
+                status: Some("running".into()),
+                model: Some("grok-test".into()),
+                workflow_run_id: None,
+                agent_address: None,
+                run_in_background: Some(true),
+                started_at_ms: Some(1234),
+                duration_ms: None,
+            },
+        ));
+        assert_eq!(lines[0]["type"], "subagent_spawned");
+        assert_eq!(lines[0]["childSessionId"], "child-1");
+        assert_eq!(lines[0]["parentToolCallId"], "tool-1");
+        assert_eq!(lines[0]["runInBackground"], true);
+        assert_eq!(lines[0]["startedAtMs"], 1234);
     }
 }
 

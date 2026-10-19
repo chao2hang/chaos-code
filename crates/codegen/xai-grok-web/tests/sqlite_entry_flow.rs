@@ -1,11 +1,11 @@
-use chaos_engine::{ClientMessage, Engine, PromptAdapter, ServerMessage};
+use chaos_engine::{ClientMessage, Engine, PromptAdapter, RunOptions, ServerMessage};
 use std::sync::Arc;
 use tempfile::tempdir;
 
 struct EchoAdapter;
 
 impl PromptAdapter for EchoAdapter {
-    fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Ok(vec![format!("sqlite provider<{prompt}>")])
     }
 }

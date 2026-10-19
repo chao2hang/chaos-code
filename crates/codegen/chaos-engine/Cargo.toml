@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+# App Usage 聚合的本地时区回退只需要"现在"的 UTC 偏移。
+chrono.workspace = true
 dunce.workspace = true
 reqwest.workspace = true
 xai-grok-extra-ca = { workspace = true }
@@ -22,6 +24,9 @@ sha2.workspace = true
 walkdir = "2"
 rusqlite.workspace = true
 xai-sqlite-journal = { path = "../xai-sqlite-journal" }
+# The CLI's own home resolution ($CHAOS_HOME → $GROK_HOME → ~/.chaos → ~/.grok),
+# so the Web host reads the same session store the terminal writes.
+xai-dirs = { path = "../xai-dirs" }
 xai-grok-plugin-marketplace = { path = "../xai-grok-plugin-marketplace" }
 xai-tty-utils = { path = "../xai-tty-utils" }
 

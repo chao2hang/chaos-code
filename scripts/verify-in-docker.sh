@@ -17,7 +17,7 @@
 # gate re-checked. Labels come from `scripts/verify-gates.sh --list`; a pattern matches a label
 # exactly or as a fragment. A pattern that matches no label is an error rather than a green
 # run, and a filtered run prints `K of M gates` in its verdict so it cannot be quoted back as a
-# full sweep. cargo test and GUI protocol types are appended by --full and so are named only
+# full sweep. cargo test is appended by --full and so is named only
 # by a run that passes it.
 #
 # Environment:
@@ -289,8 +289,6 @@ gates=(
   "pinned protoc launcher: ${bootstrap}; bin/protoc --version"
   "cargo fmt: ${bootstrap}; cargo fmt --all -- --check"
   "ignored-test baseline: ${bootstrap}; python3 scripts/ci/test-ignored-tests.py && python3 scripts/ci/test-ignored-tests-baseline-fixture.py && python3 scripts/ci/test-ignored-tests-baseline.py && python3 scripts/ci/test-ignored-tests-reasons.py && python3 scripts/ci/ignored-tests.py --require-reasons && python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv"
-  "brand/protocol guard: python3 scripts/ci/check-brand-protocol.py && python3 scripts/ci/test-brand-protocol.py"
-  "protocol mirror coverage: python3 scripts/ci/test-check-protocol-mirror.py && python3 scripts/ci/check-protocol-mirror.py"
   "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md && python3 scripts/ci/classify-open-todos.py --check-export"
   "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
   "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
@@ -310,11 +308,6 @@ gates=(
   # `scripts/ci/docker-labs.tsv` saying what CI cannot supply; a row past its date budget fails the
   # same way, and names the command that would refresh it.
   "Docker lab coverage: python3 scripts/ci/test-check-lab-coverage.py && python3 scripts/ci/check-lab-coverage.py"
-  # Which browser specs run is decided by a list inside each Playwright config and a second list in
-  # `apps/chaos-ui/e2e-runner.mjs`. A spec outside both is collected by nobody, and Playwright still
-  # reports the tests it found and exits 0. This container cannot start a browser, but the rule is a
-  # fact about those two lists and the file names on disk, so the judgment does not need one.
-  "e2e registration: python3 scripts/ci/test-check-e2e-registration.py && python3 scripts/ci/check-e2e-registration.py"
   # The host gate runner reads the array below, so it is checked from inside it: the
   # fixture cases of scripts/verify-gates.sh --self-test include parsing this real file,
   # which fails here if the entry format changes and no local runner notices.
@@ -403,12 +396,6 @@ gates=(
 
 if [ "${MODE}" = "full" ]; then
   gates+=("cargo test: ${bootstrap}; cargo test --workspace --locked --no-fail-fast")
-  # Deliberately full-only, and deliberately after `cargo test`: the check works by
-  # `cargo run --bin chaos-protocol-schema`, so in this mode the binary is already
-  # built and the gate costs a comparison. In quick mode it would be a dev build of
-  # chaos-engine added to a run that otherwise stops at check/clippy, which is the
-  # whole reason quick mode is quick.
-  gates+=("GUI protocol types: ${bootstrap}; bash scripts/ci/check-gui-protocol.sh")
 fi
 
 # --only filters the array; it never reorders it and never adds to it. The check runs before
@@ -426,7 +413,7 @@ if [ "${#ONLY[@]}" -gt 0 ]; then
     if [ "${hits}" -eq 0 ]; then
       echo "--only ${pattern}: no gate label matches it." >&2
       echo '           labels are listed by: scripts/verify-gates.sh --list' >&2
-      echo '           (cargo test and GUI protocol types are appended by --full)' >&2
+      echo '           (cargo test is appended by --full)' >&2
       exit 2
     fi
   done

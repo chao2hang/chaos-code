@@ -1,10 +1,17 @@
 # GUI protocol v1
 
-The Rust `chaos-engine` crate is the single source for the logical envelope used
-by WebSocket, HTTP, and Desktop transports. The wire encoding is JSON in M0.
-`cargo run -p chaos-engine --bin chaos-protocol-schema` generates the committed
-TypeScript declarations at `apps/chaos-ui/src/generated/protocol.ts`; CI rejects
-protocol drift with `scripts/ci/check-gui-protocol.sh`.
+The Rust `chaos-engine` crate is the single source for the legacy JSON envelope
+used by its HTTP and `/ws` compatibility transports. ZCode does **not** consume
+that legacy JSON protocol: the current ZCode frontend speaks its versioned binary
+RPC protocol on `/ws/zcode`, translated by `xai-grok-web/src/chaos_bridge.rs`.
+
+The old TypeScript mirror (`chaos-protocol-schema`, `protocol.ts`) and the
+`apps/chaos-ui` client retired on 2026-10-09. The retained JSON surface is guarded
+in-tree by `chaos_engine::client_message_samples()` (the single protocol inventory,
+compiled against every `ClientMessage` variant), the exhaustive `safe_mode_tag`
+match, and `xai-grok-web` integration tests that walk every sample over a real
+socket. ZCode V4 framing and row/state contracts are documented separately in
+[`../verification/zcode-v4-contract-2026-10-11.md`](../verification/zcode-v4-contract-2026-10-11.md).
 
 ## Envelope rules
 

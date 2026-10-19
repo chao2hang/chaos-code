@@ -10,10 +10,19 @@ Status: reproducibility protocol for a local Linux/Chromium comparison only. Thi
 | CPU | Intel Core i7-14700; 20 cores / 28 online logical CPUs; one socket |
 | Memory | 62 GiB RAM; 8 GiB swap (availability varies during tests) |
 | Runtime | Node.js v22.23.2, npm 10.9.8 |
-| Browser driver | Playwright 1.63.0 from `apps/chaos-ui` lockfile installation |
+| Browser driver | Playwright 1.63.0 from the retired `apps/chaos-ui` lockfile installation |
 | Browser | Chrome Headless Shell 153.0.8010.12 (Playwright Chromium revision 1243); capture exact version at run time |
-| GUI build | `npm run build` in `apps/chaos-ui`; record commit, lockfile hash and build output |
+| GUI build | Retired with `apps/chaos-ui` (2026-10-09); the observed `npm run build` baselines no longer exist |
 | Rust build | `cargo build --release -p xai-grok-web`; record rustc version and Cargo.lock hash |
+
+The browser and GUI-build rows above record the environment as observed on
+2026-10-01 for the retired self-built UI. They are historical only. The current
+ZCode client is project-managed in a frontend checkout separate from the Rust
+workspace and has its own dependency/toolchain baseline; these Node, Playwright,
+and UI build observations must not be used as a current ZCode performance
+baseline. The Rust host/Engine rows still apply, but a comparable UI
+benchmark requires recording the exact ZCode source revision, lockfile, Node,
+Playwright, and browser versions.
 
 This machine is a developer host; CPU frequency, background load, thermal state, kernel scheduling and browser cache are not controlled. Treat its numbers as exploratory and never use them as stable CI thresholds.
 
@@ -39,13 +48,24 @@ This machine is a developer host; CPU frequency, background load, thermal state,
 | File search | Create 100,000 files with a fixed path/content distribution and seed; measure index/setup separately from repeated query latency and verify result correctness. |
 | Large Diff | Use a checked-in or generated fixed-seed diff fixture with documented file and line counts; measure parse/render latency and peak RSS, and verify the expected rendered file/hunk counts. |
 
-For UI workloads, use the repository Playwright version and a fixed viewport/device scale factor. Include a browser trace or raw timing JSON with each report. For Rust filesystem/search workloads, use a release build and keep fixture creation outside the measured interval. Report filesystem type and whether the OS page cache was warm; do not claim cold disk measurements without a reproducible cache-control method.
+For UI workloads, use the Playwright/browser version pinned by the project-managed ZCode source revision and a fixed viewport/device scale factor. Record that frontend revision and include a browser trace or raw timing JSON with each report; the current Chaos Cargo CI does not provision the ZCode frontend toolchain. For Rust filesystem/search workloads, use a release build and keep fixture creation outside the measured interval. Report filesystem type and whether the OS page cache was warm; do not claim cold disk measurements without a reproducible cache-control method.
 
-## Current local collector
+## Collector and current status
 
-`apps/chaos-ui/perf-benchmark.mjs` launches the local Vite UI on a dynamically allocated loopback port and emits a JSON report. For a connected Engine path, run `cargo run -p xai-grok-web` separately and configure `CHAOS_PERF_BASE_URL` to point to a UI page whose `/api`, `/health` and `/ws` proxy reaches that host; the collector does not launch or validate a Web host. Run it from `apps/chaos-ui` with `CHAOS_PERF_REPORT_DIR=/path/to/reports npm run perf:collect`; optionally set `CHAOS_PERF_SAMPLES` (1–100, default 20). It records web-page-ready time, 900 browser-side synthetic DOM append scheduler samples (nominally 150/s), and Node runner RSS after a 60-second idle settle plus 60 one-second samples. `npm run test:perf` exercises invalid input and the complete local smoke run.
+The former `apps/chaos-ui/perf-benchmark.mjs` collector was retired with that
+frontend on 2026-10-09. Its reports are historical and are not ZCode measurements.
+There is currently no in-repository GUI performance collector; the Rust
+Web/Engine path also has no complete benchmark harness. The matrix above remains
+a protocol, not a runnable gate. A replacement should live with the ZCode frontend
+harness, with Rust filesystem/search workloads benchmarked from a release build.
 
-Current collector results are deliberately incomplete. “Web page ready” is not application cold startup; the synthetic updates do not use the real Engine/WebSocket/React path; RSS excludes Chromium and Web host process trees; it does not generate the 100,000-file search or large Diff fixture. The local smoke used one page-ready sample to prove report generation, not to establish a baseline. CI artifact upload, stable-runner repetition, release profile and accepted regression thresholds remain unimplemented.
+The old collector's results are deliberately incomplete: “Web page ready” is not
+application cold startup; synthetic updates do not use the real Engine/WebSocket/UI
+path; RSS excludes Chromium and Web host process trees; it does not generate the
+100,000-file search or large Diff fixture. The local smoke used one page-ready
+sample to prove report generation, not establish a baseline. CI artifact upload,
+stable-runner repetition, release profile and accepted regression thresholds
+remain unimplemented.
 
 ## Machine-readable result format
 

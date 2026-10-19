@@ -17,7 +17,7 @@
 #   * the `${bootstrap}` prefix (git safe.directory plus an identity) is dropped. The
 #     container needs it because the tree is bind-mounted from a foreign uid; a test runner
 #     rewriting a contributor's global git config is not acceptable.
-#   * the build gates (`cargo check`, `cargo clippy`, `cargo test`, `GUI protocol types`)
+#   * the build gates (`cargo check`, `cargo clippy`, `cargo test`)
 #     are skipped unless --with-build, because rebuilding the workspace is the part this
 #     runner exists to avoid.
 #
@@ -41,7 +41,7 @@
 #
 # Usage:
 #   scripts/verify-gates.sh                 # cheap gates, in array order
-#   scripts/verify-gates.sh --with-build    # plus cargo check/clippy/test and GUI types
+#   scripts/verify-gates.sh --with-build    # plus cargo check/clippy/test
 #   scripts/verify-gates.sh --only <label>  # only the gates whose label matches (repeatable)
 #   scripts/verify-gates.sh --list          # print the extracted labels, run nothing
 #   scripts/verify-gates.sh --verbose       # stream every gate's output, not just failures
@@ -56,11 +56,11 @@
 # `K of T selected by --only` instead of reading like a sweep.
 #
 # Skipping the build gates is the point of this runner, but the skip is not allowed to come back
-# as a pass. Four of the gates (cargo check/clippy/test, GUI protocol types) are what CI runs on
+# as a pass. Three of the gates (cargo check/clippy/test) are what CI runs on
 # every push, and on 2026-10-04 a batch whose only Rust change was a new test file swept green
 # here -- `all gates passed on the host (35 run, 4 skipped)` -- and CI's clippy leg failed on it
 # within the hour. So when the build gates were skipped and the diff holds a file one of them
-# measures (`*.rs`, `*.toml`, `*.lock`, the generated protocol types), the run ends `NOT COVERED`
+# measures (`*.rs`, `*.toml`, `*.lock`), the run ends `NOT COVERED`
 # with exit 1 and names the files, rather than printing a verdict about a tree it never compiled.
 # `--allow-unbuilt-changes` is there for the run where that is the intended answer.
 #
@@ -169,20 +169,18 @@ extract_gates() {
 # by a fuzzy match nobody notices.
 is_build_gate() {
   case "$1" in
-    "cargo check" | "cargo clippy" | "cargo test" | "GUI protocol types") return 0 ;;
+    "cargo check" | "cargo clippy" | "cargo test") return 0 ;;
     *) return 1 ;;
   esac
 }
 
-# Of the skipped build gates' four, which changed files could change the verdict? `cargo
+# Of the skipped build gates, which changed files could change the verdict? `cargo
 # check`, `cargo clippy` and `cargo test` read every Rust source and every manifest in the
-# workspace; `GUI protocol types` compares the schema binary's output against the one
-# generated TypeScript file. Nothing else a diff can hold moves one of those four, so a
+# workspace. Nothing else a diff can hold moves one of those three, so a
 # docs-only sweep keeps the fast loop this runner exists to be.
 is_build_relevant_path() {
   case "$1" in
     *.rs | *.toml | *.lock) return 0 ;;
-    apps/chaos-ui/src/generated/protocol.ts) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -429,7 +427,7 @@ run_gates() {
     # Selecting a gate is not the same as measuring it. A filter whose every match is a skipped
     # build gate ran nothing, and exit 0 would read as a clean sweep.
     echo "nothing ran: every selected gate was skipped ($((ran + skipped)) of ${total} gates selected by --only)" >&2
-    echo '              the build gates (cargo check/clippy/test, GUI protocol types) need --with-build' >&2
+    echo '              the build gates (cargo check/clippy/test) need --with-build' >&2
     return 1
   fi
   # The skipped build gates and the diff are compared only on a run that otherwise looks green,
@@ -696,11 +694,6 @@ crates/b.rs"
   run_case "a change no build gate reads keeps the sweep cheap and green" 0 build-gate.sh
   reject_line "so the fast loop is not held hostage by an unrelated diff" "^NOT COVERED"
 
-  VERIFY_GATES_CHANGED="apps/chaos-ui/src/generated/protocol.ts"
-  run_case "the generated protocol types count as the GUI gate's" 1 build-gate.sh
-
-  # A filtered run already refuses to read as a sweep (`K of T selected by --only`), so the
-  # unbuilt rule is not layered on top of it; pinned here because both shapes are quoted.
   VERIFY_GATES_CHANGED="crates/a.rs"
   run_case "a filtered run is judged by its own disclaimer, not this rule" 0 build-gate.sh \
     --only "cheap neighbour"

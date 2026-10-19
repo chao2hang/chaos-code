@@ -702,3 +702,38 @@ fn preview_diff_reports_the_recorded_sides_again() {
         "the undo point should still be there after a preview read"
     );
 }
+
+#[test]
+fn session_diff_summary_aggregates_files_additions_and_deletions() {
+    let directory = tempdir().unwrap();
+    std::fs::write(directory.path().join("a.txt"), b"1\n2\n3\n").unwrap();
+    let engine = Engine::with_workspace(directory.path())
+        .unwrap()
+        .with_workspace_diff_adapter()
+        .unwrap();
+    let session_id = create_session(&engine);
+
+    // 修改 a.txt（增加 2 行），并新建 b.txt（增加 2 行）
+    approved_write(&engine, session_id, "a.txt", "1\n2\n3\n4\n5\n");
+    approved_write(&engine, session_id, "b.txt", "new\nfile\n");
+
+    let events = engine.handle(ClientMessage::GetSessionDiffSummary {
+        client_msg_id: msg_id("summary"),
+        session_id,
+    });
+    match events.as_slice() {
+        [
+            ServerMessage::Ack { .. },
+            ServerMessage::SessionDiffSummary { summary, .. },
+        ] => {
+            assert_eq!(summary.files_changed, 2);
+            assert_eq!(summary.additions, 4);
+            assert_eq!(summary.deletions, 0);
+            assert_eq!(
+                summary.file_paths,
+                vec!["a.txt".to_string(), "b.txt".to_string()]
+            );
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}

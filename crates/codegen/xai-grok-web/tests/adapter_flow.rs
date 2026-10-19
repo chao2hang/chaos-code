@@ -1,5 +1,5 @@
 use axum::serve;
-use chaos_engine::{ClientMessage, Engine, PromptAdapter, ServerMessage};
+use chaos_engine::{ClientMessage, Engine, PromptAdapter, RunOptions, ServerMessage};
 use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -9,7 +9,7 @@ use xai_grok_web::router;
 struct TestAgent;
 
 impl PromptAdapter for TestAgent {
-    fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+    fn run_prompt(&self, prompt: &str, _options: &RunOptions) -> Result<Vec<String>, String> {
         Ok(vec![format!("agent:{prompt}")])
     }
 }
