@@ -1,0 +1,27 @@
+[
+  {
+    "category": "features",
+    "description": "ZCode 前端全面深度集成：完成 ZCode Web 与 Chaos 引擎全链路对接，支持多工作区、会话树、模型动态配置与工具卡片原生交互。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修复终端工具调用输出在快照加载时被通配规则误当作 assistantText 塞入会话正文的问题，严格分流工具卡与助手文本。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修复 CommonMark 缩进代码块（Indented Code Block）误伤：在 Markdown 解析管线禁用 4 空格缩进代码块，避免模型在列表或带缩进输出时将连续逻辑碎裂拆分成多张 text 代码卡片。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "终端卡片视觉与排版优化：隐藏命令缺失时孤立无意义的 $ 提示符，并为终端输出引入原生 ANSI 色彩解析与无 ANSI 纯文本语义着色引擎（支持 Git status 状态色、Diff 增删行、坐标与警告错误等高亮）。",
+    "breaking_change": false
+  },
+  {
+    "category": "compatibility",
+    "description": "版本号正式升级至 1.0.0。",
+    "breaking_change": false
+  }
+]

@@ -109,4 +109,38 @@ describe("foreground Bash output following", () => {
     expect(reopened.queryByTestId("bash-output-resume")).toBeNull();
     expect(reopened.getByTestId("bash-output-scroll").scrollTop).toBe(500);
   });
+
+  it("renders git status keywords with semantic highlight colors", () => {
+    const gitStatusText = [
+      "On branch main",
+      "Changes not staged for commit:",
+      "  (use \"git add <file>...\" to update what will be committed)",
+      "	modified:   packages/ui/src/DesktopTopOverlay.tsx",
+      "	deleted:    old-file.ts",
+      "Untracked files:",
+      "	new file:   new-file.ts",
+    ].join("\n");
+
+    const screen = render(view(gitStatusText, false));
+    const output = screen.getByTestId("bash-result-output");
+
+    // 验证 modified / deleted / new file 关键字和分支渲染为高亮 span
+    expect(output.innerHTML).toContain("text-amber-500");
+    expect(output.innerHTML).toContain("modified:");
+    expect(output.innerHTML).toContain("text-rose-500");
+    expect(output.innerHTML).toContain("deleted:");
+    expect(output.innerHTML).toContain("text-emerald-500");
+    expect(output.innerHTML).toContain("new file:");
+    expect(output.innerHTML).toContain("text-cyan-500");
+    expect(output.innerHTML).toContain("main");
+  });
+
+  it("renders ANSI colors using Ansi component when ANSI escape sequences exist", () => {
+    const ansiText = "\u001b[32mPASS\u001b[0m \u001b[31mFAIL\u001b[0m";
+    const screen = render(view(ansiText, false));
+    const output = screen.getByTestId("bash-result-output");
+
+    expect(output.innerHTML).toContain("rgb(0, 187, 0)");
+    expect(output.innerHTML).toContain("rgb(187, 0, 0)");
+  });
 });

@@ -17,10 +17,16 @@ export function ExecuteCommand({ command }: { command: string | undefined }) {
     // 原命令区域只有限高和截断，没有阅读完整内容的入口；按实际换行测量，兼容窄屏与字号变化。
     const measure = () => setOverflowing(element.scrollHeight > element.clientHeight + 1);
     measure();
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
   }, [command, expanded]);
+
+  // 命令为空时不渲染任何内容，避免孤立展示无意义的 "$" 提示符
+  if (!command?.trim()) {
+    return null;
+  }
 
   return (
     <div className="min-w-0 flex-1 grid grid-cols-[1ch_minmax(0,1fr)] gap-x-2 gap-y-1 font-mono">

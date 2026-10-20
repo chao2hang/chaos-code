@@ -690,6 +690,39 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).toContain("Use $HOME and $PATH to inspect environment variables.");
   });
 
+  it("keeps indented text within lists as prose instead of fragmenting into code blocks", () => {
+    const listWithIndentedCode = [
+      "* const forceOpenHistory = shouldForceOpenAbnormalHistory(unit.header, options.sessionPhase);",
+      "* const assistantHistoryDefaultOpen =",
+      "* unit.workSegments && unit.workSegments.length > 0",
+      "    ? !unit.timelineOnly &&",
+      "      (forceOpenHistory ||",
+      '        (isLastTurn && unit.workSegments.at(-1)?.workStatus?.state === "running") ||',
+      "        (unit.workSegments.length === 1 &&",
+      "          unit.latestAssistantTextRow === undefined &&",
+      "          unit.assistantWorkRows.length > 0))",
+      "* }; });",
+    ].join("\n");
+
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "zh-CN" },
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(MessageResponse, { workspacePath: "/workspace" }, listWithIndentedCode),
+        ),
+      ),
+    );
+
+    // 禁用 CommonMark 缩进代码块后，列表项内部的缩进不会被切碎成独立的 text 代码卡片
+    expect(html).not.toContain('data-language="text"');
+    expect(html).not.toContain("<pre");
+    expect(html).toContain("forceOpenHistory");
+    expect(html).toContain("unit.workSegments");
+  });
+
   it("loads KaTeX CSS so MathML fallback does not duplicate visual output", () => {
     const styles = readFileSync(resolve(process.cwd(), "packages/ui/src/styles.css"), "utf8");
     const packageJson = JSON.parse(

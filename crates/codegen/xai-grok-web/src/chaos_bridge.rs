@@ -6979,6 +6979,32 @@ fn chaos_rows_from_snapshot(
                             }
                             row
                         }
+                        "tool" => {
+                            let mut row = base;
+                            row["kind"] = json!("toolCall");
+                            let (tool_name, output_text) = if let Some((name, out)) = message.text.split_once('：') {
+                                (name.trim(), out)
+                            } else if let Some((name, out)) = message.text.split_once(':') {
+                                (name.trim(), out)
+                            } else {
+                                ("tool", message.text.as_str())
+                            };
+                            row["toolCallId"] = json!(format!("tool-{session_id}-{row_id}"));
+                            row["toolName"] = json!(tool_name);
+                            row["status"] = json!("success");
+                            row["inputText"] = json!("");
+                            if !output_text.is_empty() {
+                                row["output"] = json!({ "text": output_text });
+                            }
+                            row
+                        }
+                        "reasoning" | "thought" => {
+                            let mut row = base;
+                            row["kind"] = json!("reasoning");
+                            row["text"] = json!(message.text);
+                            row["state"] = json!("complete");
+                            row
+                        }
                         _ => {
                             let mut row = base;
                             row["kind"] = json!("assistantText");
@@ -10752,5 +10778,41 @@ mod attachment_prompt_tests {
         };
         let (rows, _) = chaos_rows_from_snapshot(&snapshot, "session-1");
         assert!(rows["window"][0].get("attachments").is_none(), "{rows}");
+    }
+
+    #[test]
+    fn a_tool_message_in_snapshot_maps_to_tool_call_not_assistant_text() {
+        let snapshot = chaos_engine::ServerMessage::SessionSnapshot {
+            session_id: uuid::Uuid::new_v4(),
+            workspace_id: None,
+            messages: vec![
+                chaos_engine::TimelineMessage {
+                    role: "user".to_string(),
+                    text: "run diff".to_string(),
+                },
+                chaos_engine::TimelineMessage {
+                    role: "tool".to_string(),
+                    text: "run_terminal_command：diff --git a/foo b/foo\n- old\n+ new".to_string(),
+                },
+                chaos_engine::TimelineMessage {
+                    role: "assistant".to_string(),
+                    text: "完成".to_string(),
+                },
+            ],
+            sequence: 3,
+            pending_approval: None,
+            pending_question: None,
+            api_retry: None,
+        };
+        let (rows, _) = chaos_rows_from_snapshot(&snapshot, "session-1");
+        let window = rows["window"].as_array().expect("window array");
+        // window[0]: turnHeader, window[1]: userInput, window[2]: toolCall, window[3]: assistantText
+        assert_eq!(window[1]["kind"], "userInput");
+        assert_eq!(window[2]["kind"], "toolCall");
+        assert_eq!(window[2]["toolName"], "run_terminal_command");
+        assert_eq!(window[2]["status"], "success");
+        assert_eq!(window[2]["output"]["text"], "diff --git a/foo b/foo\n- old\n+ new");
+        assert_eq!(window[3]["kind"], "assistantText");
+        assert_eq!(window[3]["text"], "完成");
     }
 }

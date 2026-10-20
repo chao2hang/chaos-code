@@ -39,7 +39,7 @@ import {
 } from "react";
 import type { BundledTheme } from "shiki";
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
-import type { Pluggable, PluggableList } from "unified";
+import type { Pluggable, PluggableList, Processor } from "unified";
 import { CodeBlock, CodeBlockHeader } from "@/components/ai-elements/code-block.js";
 import {
   ContextMenu,
@@ -827,8 +827,29 @@ const messageRehypePlugins: PluggableList = [
   ...Object.values(defaultRehypePlugins),
 ];
 
-const messageDefaultRemarkPlugins: PluggableList = Object.entries(defaultRemarkPlugins).map(
-  ([name, plugin]) => {
+/**
+ * 禁用 CommonMark 4 空格缩进代码块（Indented Code Block）。
+ * 原因：模型输出列表项逻辑时，常在换行后留出对齐缩进（如三元表达式分支）；
+ * CommonMark 默认会把 4 空格缩进识别为缩进代码块，导致单段逻辑被碎裂拆分成多个带 'text' 标签的独立卡片。
+ * AI 场景下所有真实代码块均使用围栏（```），因此在 micromark 扩展中关闭 codeIndented，
+ * 将缩进文本保留为自然段落。
+ */
+function disableIndentedCodeRemarkPlugin(this: Processor) {
+  const data = this.data() as {
+    micromarkExtensions?: Array<{ disable?: { null?: string[] } }>;
+  };
+  const micromarkExtensions =
+    data.micromarkExtensions ||
+    (data.micromarkExtensions = []);
+  micromarkExtensions.push({
+    disable: {
+      null: ["codeIndented"],
+    },
+  });
+}
+
+const messageDefaultRemarkPlugins: PluggableList = [
+  ...Object.entries(defaultRemarkPlugins).map(([name, plugin]) => {
     if (name !== "gfm") {
       return plugin;
     }
@@ -836,8 +857,9 @@ const messageDefaultRemarkPlugins: PluggableList = Object.entries(defaultRemarkP
     // remark-gfm 与 Streamdown CJK 删除线扩展都默认开启 singleTilde，
     // 后者还会覆盖前者的解析结果；两处必须同时关闭，才能让 `~text~` 按 GFM 规范保留原文。
     return disableSingleTilde(plugin);
-  },
-);
+  }),
+  disableIndentedCodeRemarkPlugin,
+];
 
 function resolveMessageCodeTheme(
   theme: Theme,

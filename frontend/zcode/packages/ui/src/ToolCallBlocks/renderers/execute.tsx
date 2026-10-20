@@ -301,14 +301,16 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
         data-testid="execute-detail"
         className="space-y-3 mb-2 rounded-xl border border-border bg-panel px-4 py-3"
       >
-        <div className="space-y-1">
-          <div className="flex items-start gap-2 font-sans text-ui-base text-foreground">
-            <ExecuteCommand
-              key={contentParts.executionCommand}
-              command={contentParts.executionCommand}
-            />
+        {contentParts.executionCommand ? (
+          <div className="space-y-1">
+            <div className="flex items-start gap-2 font-sans text-ui-base text-foreground">
+              <ExecuteCommand
+                key={contentParts.executionCommand}
+                command={contentParts.executionCommand}
+              />
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {context.isPermissionPreview ? null : outputPreview || failureVisibleText || resultText ? (
           <ExecuteOutput
