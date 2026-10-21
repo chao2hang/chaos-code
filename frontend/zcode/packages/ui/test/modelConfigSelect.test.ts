@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { Locale } from "@zcode/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
@@ -291,5 +291,60 @@ describe("picker focus restoration", () => {
         isCoarseTouchDevice: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("ModelConfigSelect search functionality", () => {
+  it("展示全局搜索栏并支持跨供应商快速过滤模型", () => {
+    const groups: ModelSelectGroup[] = [
+      {
+        key: "bblbb",
+        label: "BBLBB",
+        items: [
+          { key: "qwen-8b", value: "bblbb/qwen3-8b", name: "Qwen3-8B-AWQ" },
+          { key: "phi-4", value: "bblbb/phi-4", name: "AiHubmix-Phi-4" },
+          { key: "bge-m3", value: "bblbb/bge-m3", name: "BAAI/bge-m3" },
+        ],
+      },
+      {
+        key: "openai",
+        label: "OpenAI",
+        items: [
+          { key: "gpt-4o", value: "openai/gpt-4o", name: "GPT-4o" },
+          { key: "o3-mini", value: "openai/o3-mini", name: "o3-mini" },
+          { key: "qwen-cloud", value: "openai/qwen-cloud", name: "Qwen-Cloud" },
+        ],
+      },
+    ];
+
+    const screen = renderInteractive(
+      createElement(ModelConfigSelect, {
+        modelGroups: groups,
+        normalizedValue: "bblbb/qwen3-8b",
+        triggerLabel: "Qwen3-8B",
+        showManageModelsAction: false,
+        lockReasonMessage: "Locked",
+        isItemLocked: () => false,
+        onValueChange: () => {},
+        open: true,
+        showProviderLevel: true,
+      }),
+      "zh-CN",
+    );
+
+    const searchInput = screen.getByTestId("model-global-search-input");
+    expect(searchInput).toBeTruthy();
+    expect(searchInput.getAttribute("placeholder")).toBe("搜索模型...");
+
+    // 输入 "Qwen" 搜索
+    fireEvent.change(searchInput, { target: { value: "Qwen" } });
+    expect(screen.getByText("Qwen3-8B-AWQ")).toBeTruthy();
+    expect(screen.getByText("Qwen-Cloud")).toBeTruthy();
+    expect(screen.queryByText("AiHubmix-Phi-4")).toBeNull();
+    expect(screen.queryByText("BAAI/bge-m3")).toBeNull();
+
+    // 输入不存在的模型
+    fireEvent.change(searchInput, { target: { value: "nonexistent-model-xyz" } });
+    expect(screen.getByText("未找到匹配模型")).toBeTruthy();
   });
 });

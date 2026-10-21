@@ -272,6 +272,12 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
   const { toolCall } = toolCallNode;
   const secondaryText = getExecuteSecondaryText(toolCall.input);
   const contentParts = getExecuteContentParts(toolCall.input);
+  const executionCommand =
+    contentParts.executionCommand ??
+    (toolCall.title &&
+    !/^(?:run_terminal_command|terminal|bash|shell|execute|终端)$/i.test(toolCall.title.trim())
+      ? getExecuteContentParts(toolCall.title).executionCommand
+      : undefined);
   const outputText = extractExecuteResultText(toolCall.output);
   const rawOutputText = isPlainRecord(toolCall.raw)
     ? extractExecuteResultText(toolCall.raw.rawOutput)
@@ -301,12 +307,12 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
         data-testid="execute-detail"
         className="space-y-3 mb-2 rounded-xl border border-border bg-panel px-4 py-3"
       >
-        {contentParts.executionCommand ? (
+        {executionCommand ? (
           <div className="space-y-1">
             <div className="flex items-start gap-2 font-sans text-ui-base text-foreground">
               <ExecuteCommand
-                key={contentParts.executionCommand}
-                command={contentParts.executionCommand}
+                key={executionCommand}
+                command={executionCommand}
               />
             </div>
           </div>

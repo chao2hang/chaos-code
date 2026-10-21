@@ -1953,6 +1953,8 @@ pub enum ServerMessage {
     ToolStarted {
         session_id: Uuid,
         tool: String,
+        #[serde(default)]
+        raw_input: Option<String>,
         /// CLI 给的真实工具调用 id（streaming-json 的 `toolCallId`）；引擎内部
         /// 产生的工具事件没有这个东西，桥会按会话序号合成。带真实 id 时恢复
         /// 视图（updates.jsonl）与 live 行同 id，resync 不重影。
@@ -2959,6 +2961,8 @@ struct SessionState {
     pending_question_prompt: Option<String>,
     pending_file_writes: HashMap<Uuid, (Uuid, String, String)>,
     pending_attachment_moves: HashMap<Uuid, (Uuid, Uuid, String)>,
+    #[serde(default)]
+    pending_tool_inputs: HashMap<String, String>,
     #[serde(default)]
     target: Option<SessionTargetInfo>,
     #[serde(default)]
@@ -5773,18 +5777,38 @@ impl Engine {
                             };
                             session.sequence += 1;
                             let tool_call_id = Some(tool.tool_call_id.to_string());
+                            let raw_input_opt = if !tool.raw_input.is_empty() {
+                                Some(tool.raw_input.to_string())
+                            } else {
+                                None
+                            };
                             let event = if tool.started {
+                                if let Some(input_str) = &raw_input_opt {
+                                    session
+                                        .pending_tool_inputs
+                                        .insert(tool.tool_call_id.to_string(), input_str.clone());
+                                }
                                 ServerMessage::ToolStarted {
                                     session_id,
                                     tool: tool.tool_name.to_string(),
+                                    raw_input: raw_input_opt,
                                     tool_call_id,
                                     sequence: session.sequence,
                                 }
                             } else if let Some(ok) = tool.completed {
+                                let input_str = session
+                                    .pending_tool_inputs
+                                    .remove(tool.tool_call_id)
+                                    .unwrap_or_default();
                                 if ok {
                                     session.messages.push(TimelineMessage {
                                         role: "tool".into(),
-                                        text: format!("{}：{}", tool.tool_name, tool.output_text),
+                                        text: serde_json::json!({
+                                            "tool": tool.tool_name,
+                                            "input": input_str,
+                                            "output": tool.output_text,
+                                        })
+                                        .to_string(),
                                     });
                                 }
                                 ServerMessage::ToolResult {
@@ -5995,10 +6019,20 @@ impl Engine {
         // 重试提示的信号，会话上的状态必须与之一致。
         session.api_retry = None;
         let events = match failure {
-            Some(message) => vec![ServerMessage::Error {
-                code: "agent_failed".into(),
-                message,
-            }],
+            Some(message) => {
+                if let Some(last) = session.messages.last_mut() {
+                    if last.role == "assistant" && last.text.is_empty() {
+                        last.text = format!("请求失败：{message}");
+                    }
+                }
+                session.sequence += 1;
+                session.record_preview();
+                session.touch();
+                vec![ServerMessage::Error {
+                    code: "agent_failed".into(),
+                    message,
+                }]
+            }
             None => {
                 session.sequence += 1;
                 session.record_preview();
@@ -7714,6 +7748,7 @@ impl Engine {
                         events.push(ServerMessage::ToolStarted {
                             session_id: write_session_id,
                             tool: "workspace.write_file".into(),
+                            raw_input: None,
                             tool_call_id: None,
                             sequence: session.sequence,
                         });
@@ -7846,6 +7881,7 @@ impl Engine {
             events.push(ServerMessage::ToolStarted {
                 session_id,
                 tool: pending.tool.clone(),
+                raw_input: None,
                 tool_call_id: None,
                 sequence: session.sequence,
             });

@@ -33,7 +33,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip.js";
-import { AlertCircle, CheckIcon, ChevronDownIcon, LoaderIcon, PackageIcon, Settings } from "lucide-react";
+import { AlertCircle, CheckIcon, ChevronDownIcon, LoaderIcon, PackageIcon, SearchIcon, Settings, XIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   TID_CHAT_MODEL_SELECT_GROUP,
@@ -187,6 +187,99 @@ interface ModelConfigSelectProps {
   onConfigureModel?: (item: ModelSelectGroupItem) => void;
 }
 
+interface ModelSelectSubmenuContentProps {
+  group: ModelSelectGroup;
+  renderModelItems: (items: readonly ModelSelectGroupItem[]) => ReactNode;
+  providerSubmenuClassName?: string;
+}
+
+function ModelSelectSubmenuContent({
+  group,
+  renderModelItems,
+  providerSubmenuClassName,
+}: ModelSelectSubmenuContentProps) {
+  const { intl } = useZCodeIntl();
+  const [searchQuery, setSearchQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return group.items;
+    return group.items.filter(
+      (item) => item.name.toLowerCase().includes(q) || item.value.toLowerCase().includes(q),
+    );
+  }, [group.items, searchQuery]);
+
+  // 当选项 >= 4 时，在子菜单顶部展示搜索栏
+  const showSearch = group.items.length >= 4;
+
+  return (
+    <DropdownMenuSubContent
+      className={cn(
+        "max-h-80 overflow-y-auto p-0",
+        // 固定宽度会提前截断模型名；按内容扩展，并让可用空间优先于最小宽度。
+        providerSubmenuClassName ??
+          "w-max min-w-[min(14rem,var(--radix-dropdown-menu-content-available-width))] max-w-(--radix-dropdown-menu-content-available-width)",
+      )}
+    >
+      {showSearch ? (
+        <div className="sticky top-0 z-10 bg-menu px-2 py-1.5 border-b border-border/50">
+          <div className="flex items-center gap-1.5 rounded-md bg-input/20 px-2 py-1 text-ui-sm border border-border/40 focus-within:border-ring">
+            <SearchIcon className="size-3.5 shrink-0 text-foreground-subtle" />
+            <input
+              ref={inputRef}
+              type="text"
+              data-testid="model-submenu-search-input"
+              placeholder={intl.formatMessage(
+                { id: "chat.toolbar.model.searchProviderPlaceholder" },
+                { provider: group.label },
+              )}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+                  e.stopPropagation();
+                }
+                if (e.key === "Escape" && searchQuery) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSearchQuery("");
+                }
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full min-w-0 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-foreground-subtlest"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSearchQuery("");
+                  inputRef.current?.focus();
+                }}
+                className="text-foreground-subtle hover:text-foreground cursor-pointer"
+              >
+                <XIcon className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="p-1">
+        {filteredItems.length > 0 ? (
+          renderModelItems(filteredItems)
+        ) : (
+          <div className="px-3 py-4 text-center text-ui-sm text-foreground-subtle">
+            {intl.formatMessage({ id: "chat.toolbar.model.empty" })}
+          </div>
+        )}
+      </div>
+    </DropdownMenuSubContent>
+  );
+}
+
 export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   modelGroups,
   normalizedValue,
@@ -252,6 +345,34 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
     labelVisibilityClassName,
     triggerLabelClassName: customTriggerLabelClassName,
   });
+
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const globalInputRef = useRef<HTMLInputElement>(null);
+
+  const totalModelCount = useMemo(
+    () => modelGroups.reduce((acc, g) => acc + g.items.length, 0),
+    [modelGroups],
+  );
+
+  const showGlobalSearch = totalModelCount >= 6;
+
+  const matchingGlobalItems = useMemo(() => {
+    const q = globalSearchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const results: Array<{ group: ModelSelectGroup; item: ModelSelectGroupItem }> = [];
+    for (const group of modelGroups) {
+      for (const item of group.items) {
+        if (
+          item.name.toLowerCase().includes(q) ||
+          item.value.toLowerCase().includes(q) ||
+          group.label.toLowerCase().includes(q)
+        ) {
+          results.push({ group, item });
+        }
+      }
+    }
+    return results;
+  }, [globalSearchQuery, modelGroups]);
 
   const handlePopoverOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -582,11 +703,13 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
           className={cn(
             shouldShowProviderLevel
               ? "w-max min-w-48 max-w-[calc(100vw-2rem)]"
-              : "w-48 max-h-72 overflow-y-auto",
+              : "w-48 max-h-80 overflow-y-auto",
+            "p-0",
           )}
           align={contentAlign}
           side={contentSide}
           onCloseAutoFocus={(event) => {
+            setGlobalSearchQuery("");
             if (!focusSelectorOnClose) {
               // Automations 没有聊天输入框可恢复；保留 Radix 默认行为，
               // 让键盘焦点回到触发器，而不是 preventDefault 后掉到 body。
@@ -606,74 +729,132 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
             input?.focus();
           }}
         >
-          {leadingItems !== undefined && leadingItems.length > 0 ? (
-            <>
-              {renderModelItems(leadingItems)}
-              {hasSelectableModel ? <DropdownMenuSeparator /> : null}
-            </>
+          {showGlobalSearch ? (
+            <div className="sticky top-0 z-20 bg-menu px-2 py-1.5 border-b border-border/50">
+              <div className="flex items-center gap-1.5 rounded-md bg-input/20 px-2 py-1 text-ui-sm border border-border/40 focus-within:border-ring">
+                <SearchIcon className="size-3.5 shrink-0 text-foreground-subtle" />
+                <input
+                  ref={globalInputRef}
+                  type="text"
+                  data-testid="model-global-search-input"
+                  placeholder={intl.formatMessage({ id: "chat.toolbar.model.searchPlaceholder" })}
+                  value={globalSearchQuery}
+                  onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+                      e.stopPropagation();
+                    }
+                    if (e.key === "Escape" && globalSearchQuery) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setGlobalSearchQuery("");
+                    }
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full min-w-0 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-foreground-subtlest"
+                />
+                {globalSearchQuery ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setGlobalSearchQuery("");
+                      globalInputRef.current?.focus();
+                    }}
+                    className="text-foreground-subtle hover:text-foreground cursor-pointer"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
           ) : null}
-          {hasSelectableModel && shouldShowProviderLevel
-            ? modelGroups.map((group, index) => {
-                const groupSeparator = shouldRenderModelGroupSeparator(
-                  modelGroups[index - 1],
-                  group,
-                ) ? (
-                  <DropdownMenuSeparator />
-                ) : null;
-                if (group.directItems) {
-                  return (
-                    <Fragment key={group.key}>
-                      {groupSeparator}
-                      <div>
-                        <DropdownMenuLabel
-                          className="flex min-h-8 items-center px-2 py-1"
-                          data-testid={testId(TID_CHAT_MODEL_SELECT_GROUP, group.key)}
-                          data-model-provider-key={group.key}
-                        >
-                          {renderGroupLabel(group)}
-                        </DropdownMenuLabel>
-                        {renderProviderConnectionHeader(group)}
-                        <DropdownMenuRadioGroup value={normalizedValue}>
-                          {group.items.map((item) => renderModelItem(item))}
-                        </DropdownMenuRadioGroup>
-                      </div>
-                    </Fragment>
-                  );
-                }
 
-                const groupSelected = isModelSelectGroupSelected(group, normalizedValue);
-                return (
-                  <Fragment key={group.key}>
-                    {groupSeparator}
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger
-                        className="min-h-8"
-                        data-testid={testId(TID_CHAT_MODEL_SELECT_GROUP, group.key)}
-                        data-model-provider-key={group.key}
-                        data-model-provider-selected={groupSelected ? "true" : undefined}
-                      >
-                        {renderGroupLabel(group)}
-                        {groupSelected ? (
-                          <CheckIcon className="size-4 text-foreground-subtle" />
-                        ) : null}
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent
-                        className={cn(
-                          "max-h-72 overflow-y-auto",
-                          // 固定宽度会提前截断模型名；按内容扩展，并让可用空间优先于最小宽度。
-                          providerSubmenuClassName ??
-                            "w-max min-w-[min(12rem,var(--radix-dropdown-menu-content-available-width))] max-w-(--radix-dropdown-menu-content-available-width)",
-                        )}
-                      >
-                        {renderModelItems(group.items)}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  </Fragment>
-                );
-              })
-            : hasSelectableModel
-              ? renderModelItems(modelGroups[0]?.items ?? [])
-              : null}
+          <div className="p-1 max-h-80 overflow-y-auto">
+            {globalSearchQuery.trim() ? (
+              matchingGlobalItems.length > 0 ? (
+                <DropdownMenuRadioGroup value={normalizedValue}>
+                  {matchingGlobalItems.map(({ group, item }) =>
+                    renderModelItem({
+                      ...item,
+                      badgeLabel: item.badgeLabel ?? group.label,
+                    }),
+                  )}
+                </DropdownMenuRadioGroup>
+              ) : (
+                <div className="px-3 py-6 text-center text-ui-sm text-foreground-subtle">
+                  {intl.formatMessage({ id: "chat.toolbar.model.empty" })}
+                </div>
+              )
+            ) : (
+              <>
+                {leadingItems !== undefined && leadingItems.length > 0 ? (
+                  <>
+                    {renderModelItems(leadingItems)}
+                    {hasSelectableModel ? <DropdownMenuSeparator /> : null}
+                  </>
+                ) : null}
+                {hasSelectableModel && shouldShowProviderLevel
+                  ? modelGroups.map((group, index) => {
+                      const groupSeparator = shouldRenderModelGroupSeparator(
+                        modelGroups[index - 1],
+                        group,
+                      ) ? (
+                        <DropdownMenuSeparator />
+                      ) : null;
+                      if (group.directItems) {
+                        return (
+                          <Fragment key={group.key}>
+                            {groupSeparator}
+                            <div>
+                              <DropdownMenuLabel
+                                className="flex min-h-8 items-center px-2 py-1"
+                                data-testid={testId(TID_CHAT_MODEL_SELECT_GROUP, group.key)}
+                                data-model-provider-key={group.key}
+                              >
+                                {renderGroupLabel(group)}
+                              </DropdownMenuLabel>
+                              {renderProviderConnectionHeader(group)}
+                              <DropdownMenuRadioGroup value={normalizedValue}>
+                                {group.items.map((item) => renderModelItem(item))}
+                              </DropdownMenuRadioGroup>
+                            </div>
+                          </Fragment>
+                        );
+                      }
+
+                      const groupSelected = isModelSelectGroupSelected(group, normalizedValue);
+                      return (
+                        <Fragment key={group.key}>
+                          {groupSeparator}
+                          <DropdownMenuSub>
+                            <DropdownMenuSubTrigger
+                              className="min-h-8"
+                              data-testid={testId(TID_CHAT_MODEL_SELECT_GROUP, group.key)}
+                              data-model-provider-key={group.key}
+                              data-model-provider-selected={groupSelected ? "true" : undefined}
+                            >
+                              {renderGroupLabel(group)}
+                              {groupSelected ? (
+                                <CheckIcon className="size-4 text-foreground-subtle" />
+                              ) : null}
+                            </DropdownMenuSubTrigger>
+                            <ModelSelectSubmenuContent
+                              group={group}
+                              renderModelItems={renderModelItems}
+                              providerSubmenuClassName={providerSubmenuClassName}
+                            />
+                          </DropdownMenuSub>
+                        </Fragment>
+                      );
+                    })
+                  : hasSelectableModel
+                    ? renderModelItems(modelGroups[0]?.items ?? [])
+                    : null}
+              </>
+            )}
+          </div>
           {renderedFooterActions.length > 0 ? (
             <div className="sticky bottom-0 z-10 bg-menu after:absolute after:left-0 after:top-full after:h-1 after:w-full after:bg-menu after:content-['']">
               {hasSelectableModel ? <DropdownMenuSeparator /> : null}

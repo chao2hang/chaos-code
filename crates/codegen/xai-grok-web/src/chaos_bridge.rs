@@ -2233,6 +2233,8 @@ fn model_selection_view() -> Value {
     model_selection_view_with_selection(None)
 }
 
+static LAST_SEEN_DEFAULT_MODEL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 /// `model-selection.getView(input)` 的宿主侧解析，逐字段对齐上游
 /// `ModelSelectionFacade.getView` + `resolveEffectiveModelSelection`：
 /// - 无 input：返回 `{revision, providers, preferredSelection, selection, effectiveSelection}`；
@@ -2244,6 +2246,19 @@ fn model_selection_view_with_selection(requested: Option<&Value>) -> Value {
     let revision = MODEL_SELECTION_REVISION.load(Ordering::SeqCst);
     let remembered_model = bridge_selected_model();
     let (mut view, catalog_ids) = if let Some(cfg) = chaos_config() {
+        let current_cfg_default = cfg.effective_default_model();
+        let mut last_seen = LAST_SEEN_DEFAULT_MODEL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let default_changed = *last_seen != current_cfg_default;
+        if default_changed {
+            *last_seen = current_cfg_default.clone();
+            // config.toml 里的默认模型发生变动（如终端执行 /model 或编辑配置），
+            // 清理掉之前在网页端暂存的旧模型记忆，让 ZCode 的选择跟随新的默认模型！
+            apply_bridge_selected_model("");
+        }
+        drop(last_seen);
+        let remembered_model = if default_changed { None } else { remembered_model };
         let runtime_models = cfg.runtime_models();
         let models: Vec<Value> = runtime_models
             .iter()
@@ -2256,15 +2271,18 @@ fn model_selection_view_with_selection(requested: Option<&Value>) -> Value {
         // The selection must speak the same UI id as the catalog, otherwise
         // the trigger cannot match its checked row. An explicit pick from the
         // browser wins over the config file's default for this process.
-        let selected_model = remembered_model.clone().unwrap_or_else(|| {
-            cfg.effective_default_model()
-                .map(|alias| {
-                    cfg.entry_by_alias(&alias)
-                        .map(|entry| cfg.ui_model_id(entry))
-                        .unwrap_or(alias)
-                })
-                .unwrap_or_else(|| "chaos-default".into())
-        });
+        let selected_model = remembered_model
+            .clone()
+            .filter(|m| ids.iter().any(|id| id == m))
+            .unwrap_or_else(|| {
+                cfg.effective_default_model()
+                    .map(|alias| {
+                        cfg.entry_by_alias(&alias)
+                            .map(|entry| cfg.ui_model_id(entry))
+                            .unwrap_or(alias)
+                    })
+                    .unwrap_or_else(|| "chaos-default".into())
+            });
         let provider = json!({
             "providerId": "account:chaos",
             "providerName": chaos_provider_name(&cfg),
@@ -2905,6 +2923,17 @@ enum WorkerCommand {
         rpc_id: u32,
         task_id: String,
     },
+    V4DeleteSession {
+        rpc_id: u32,
+        command_id: String,
+        session_id: String,
+    },
+    V4RenameSession {
+        rpc_id: u32,
+        command_id: String,
+        session_id: String,
+        title: String,
+    },
     ListTasks {
         rpc_id: u32,
         workspace_path: String,
@@ -3161,6 +3190,7 @@ fn map_engine_event(event: &chaos_engine::ServerMessage) -> Option<(String, Valu
         chaos_engine::ServerMessage::ToolStarted {
             session_id,
             tool,
+            raw_input,
             tool_call_id,
             sequence,
             ..
@@ -3177,6 +3207,7 @@ fn map_engine_event(event: &chaos_engine::ServerMessage) -> Option<(String, Valu
                     .clone()
                     .unwrap_or_else(|| format!("tool-{session_id}-{sequence}")),
                 "toolName": tool,
+                "rawInput": raw_input,
             }),
             false,
         )),
@@ -3883,6 +3914,44 @@ fn spawn_engine_worker(
                     });
                     let _ = events.send(BridgeEvent::V4SessionListChanged);
                 }
+                WorkerCommand::V4DeleteSession {
+                    rpc_id,
+                    command_id,
+                    session_id,
+                } => {
+                    let sid_str = wire_session_id(&session_id);
+                    if let Ok(sid) = uuid::Uuid::parse_str(&sid_str) {
+                        engine.handle(chaos_engine::ClientMessage::DeleteSession {
+                            client_msg_id: format!("zbridge-delete-{}", uuid::Uuid::new_v4()),
+                            session_id: sid,
+                        });
+                    }
+                    let _ = events.send(BridgeEvent::Reply {
+                        rpc_id,
+                        value: v4_command_ack(&command_id),
+                    });
+                    let _ = events.send(BridgeEvent::V4SessionListChanged);
+                }
+                WorkerCommand::V4RenameSession {
+                    rpc_id,
+                    command_id,
+                    session_id,
+                    title,
+                } => {
+                    let sid_str = wire_session_id(&session_id);
+                    if let Ok(sid) = uuid::Uuid::parse_str(&sid_str) {
+                        engine.handle(chaos_engine::ClientMessage::RenameSession {
+                            client_msg_id: format!("zbridge-rename-{}", uuid::Uuid::new_v4()),
+                            session_id: sid,
+                            title,
+                        });
+                    }
+                    let _ = events.send(BridgeEvent::Reply {
+                        rpc_id,
+                        value: v4_command_ack(&command_id),
+                    });
+                    let _ = events.send(BridgeEvent::V4SessionListChanged);
+                }
                 WorkerCommand::ListTasks {
                     rpc_id,
                     workspace_path,
@@ -4252,6 +4321,11 @@ pub(crate) async fn run_chaos_session<S>(
         std::collections::HashMap::new();
     // Model-selection listeners receive a refreshed view after the default changes.
     let mut model_selection_listens: Vec<u32> = Vec::new();
+    let mut provider_settings_listens: Vec<u32> = Vec::new();
+    let mut last_config_check = Instant::now();
+    let mut last_config_mtime = chaos_config_path().and_then(|p| std::fs::metadata(p).ok()?.modified().ok());
+    let mut last_config_default = chaos_config().and_then(|c| c.effective_default_model());
+    let mut last_config_models_count = chaos_config().map(|c| c.models.len()).unwrap_or(0);
     // rpc ids of `window-controller.onDynamicControllerFrame` listeners: the
     // official workspace shell awaits snapshot/delta frames on them.
     let mut controller_listens: Vec<u32> = Vec::new();
@@ -5258,6 +5332,11 @@ pub(crate) async fn run_chaos_session<S>(
                                 {
                                     model_selection_listens.push(incoming.id);
                                 }
+                                if incoming.channel == "provider-settings"
+                                    && incoming.name == "onDidChange"
+                                {
+                                    provider_settings_listens.push(incoming.id);
+                                }
                                 // `zcode-task.onDynamicStreamEvent(taskId)` registers a
                                 // stream listener; remember its rpc id for EventFire.
                                 if incoming.channel == "zcode-task"
@@ -5303,6 +5382,7 @@ pub(crate) async fn run_chaos_session<S>(
                             Outbound::Cancel { id } => {
                                 stream_listens.remove(&id);
                                 model_selection_listens.retain(|listener_id| *listener_id != id);
+                                provider_settings_listens.retain(|listener_id| *listener_id != id);
                                 terminal_data_listens.remove(&id);
                                 terminal_exit_listens.remove(&id);
                             }
@@ -5990,7 +6070,11 @@ pub(crate) async fn run_chaos_session<S>(
                             if tool_call_id.is_empty() {
                                 continue;
                             }
-                            let tool_call = json!({
+                            let raw_input_str = event
+                                .get("rawInput")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            let mut tool_call = json!({
                                 "rowId": conversation_row_id,
                                 "turnId": turn_id,
                                 "createdAt": now_ms(),
@@ -5999,8 +6083,11 @@ pub(crate) async fn run_chaos_session<S>(
                                 "toolCallId": tool_call_id,
                                 "toolName": event.get("toolName").cloned().unwrap_or(json!("tool")),
                                 "status": "running",
-                                "inputText": "",
+                                "inputText": raw_input_str,
                             });
+                            if let Ok(parsed) = serde_json::from_str::<Value>(raw_input_str) {
+                                tool_call["input"] = parsed;
+                            }
                             conversation_row_id += 1;
                             tool_rows.insert(tool_call_id, tool_call.clone());
                             vec![json!({ "op": "row.appended", "row": tool_call })]
@@ -6250,6 +6337,54 @@ pub(crate) async fn run_chaos_session<S>(
                 None => return, // engine worker gone
             },
             _ = ticker.tick() => {
+                if last_config_check.elapsed() >= std::time::Duration::from_millis(500) {
+                    last_config_check = Instant::now();
+                    if let Some(path) = chaos_config_path() {
+                        let current_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+                        if current_mtime != last_config_mtime {
+                            last_config_mtime = current_mtime;
+                            if let Some(cfg) = chaos_config() {
+                                let current_default = cfg.effective_default_model();
+                                let current_models_count = cfg.models.len();
+                                let default_changed = current_default != last_config_default;
+                                let models_changed = current_models_count != last_config_models_count;
+                                if default_changed || models_changed {
+                                    last_config_default = current_default.clone();
+                                    last_config_models_count = current_models_count;
+                                    if default_changed {
+                                        apply_bridge_selected_model("");
+                                        if let (Some(new_default), Some(engine)) = (current_default.as_deref(), history_engine.as_ref()) {
+                                            let api_model = chaos_api_model_id(new_default);
+                                            engine.dispatch_to(
+                                                chaos_engine::ClientMessage::SetModel {
+                                                    client_msg_id: format!("cfg-sync-{}", uuid::Uuid::new_v4()),
+                                                    model: api_model,
+                                                },
+                                                None,
+                                                &mut |_| {},
+                                            );
+                                        }
+                                    }
+                                    MODEL_SELECTION_REVISION.fetch_add(1, Ordering::SeqCst);
+                                    let view = RpcValue::Json(model_selection_view());
+                                    for listener_id in &model_selection_listens {
+                                        let frame = ChannelServer::event_fire_frame(*listener_id, &view);
+                                        if socket.send(Message::Binary(write_frame(&frame).into())).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                    let provider_view = RpcValue::Json(chaos_provider_settings_view());
+                                    for listener_id in &provider_settings_listens {
+                                        let frame = ChannelServer::event_fire_frame(*listener_id, &provider_view);
+                                        if socket.send(Message::Binary(write_frame(&frame).into())).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 for expired in server.expire_pending(Instant::now()) {
                     if socket.send(Message::Binary(write_frame(&expired).into())).await.is_err() {
                         return;
@@ -6734,6 +6869,9 @@ fn chaos_rows_from_stored(
                     value["toolName"] = json!(tool_name);
                     value["status"] = json!(status);
                     value["inputText"] = json!(input_text);
+                    if let Ok(parsed_input) = serde_json::from_str::<Value>(input_text) {
+                        value["input"] = parsed_input;
+                    }
                     if !output_text.is_empty() {
                         value["output"] = json!({ "text": output_text });
                     }
@@ -6982,17 +7120,25 @@ fn chaos_rows_from_snapshot(
                         "tool" => {
                             let mut row = base;
                             row["kind"] = json!("toolCall");
-                            let (tool_name, output_text) = if let Some((name, out)) = message.text.split_once('：') {
-                                (name.trim(), out)
+                            let (tool_name, input_text, output_text) = if let Ok(parsed) = serde_json::from_str::<Value>(&message.text) {
+                                let name = parsed.get("tool").and_then(Value::as_str).unwrap_or("tool").to_string();
+                                let inp = parsed.get("input").and_then(Value::as_str).unwrap_or("").to_string();
+                                let out = parsed.get("output").and_then(Value::as_str).unwrap_or("").to_string();
+                                (name, inp, out)
+                            } else if let Some((name, out)) = message.text.split_once('：') {
+                                (name.trim().to_string(), String::new(), out.to_string())
                             } else if let Some((name, out)) = message.text.split_once(':') {
-                                (name.trim(), out)
+                                (name.trim().to_string(), String::new(), out.to_string())
                             } else {
-                                ("tool", message.text.as_str())
+                                ("tool".to_string(), String::new(), message.text.clone())
                             };
                             row["toolCallId"] = json!(format!("tool-{session_id}-{row_id}"));
                             row["toolName"] = json!(tool_name);
                             row["status"] = json!("success");
-                            row["inputText"] = json!("");
+                            row["inputText"] = json!(input_text);
+                            if let Ok(parsed_input) = serde_json::from_str::<Value>(&input_text) {
+                                row["input"] = parsed_input;
+                            }
                             if !output_text.is_empty() {
                                 row["output"] = json!({ "text": output_text });
                             }
@@ -7923,6 +8069,43 @@ fn delegate_to_engine(
                         .ok()?;
                     Some(Vec::new())
                 }
+                "deleteSession" => {
+                    let session_id = envelope
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    worker_tx
+                        .send(WorkerCommand::V4DeleteSession {
+                            rpc_id: incoming.id,
+                            command_id,
+                            session_id,
+                        })
+                        .ok()?;
+                    Some(Vec::new())
+                }
+                "renameSession" => {
+                    let session_id = envelope
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    let title = envelope
+                        .get("payload")
+                        .and_then(|p| p.get("title"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    worker_tx
+                        .send(WorkerCommand::V4RenameSession {
+                            rpc_id: incoming.id,
+                            command_id,
+                            session_id,
+                            title,
+                        })
+                        .ok()?;
+                    Some(Vec::new())
+                }
                 other => Some(ChannelServer::promise_error_frame(
                     incoming.id,
                     "ChaosBridgeError",
@@ -8317,6 +8500,25 @@ default = "fast"
         );
         assert!(!config.is_runtime_model("other"));
         assert_eq!(config.effective_default_model().as_deref(), Some("fast"));
+    }
+
+    #[test]
+    fn model_selection_view_resets_memory_and_tracks_new_default_model_from_config() {
+        apply_bridge_selected_model("some-stale-model");
+        assert_eq!(bridge_selected_model(), Some("some-stale-model".to_string()));
+
+        // 当从磁盘读取并发现 config default 与之前不同时，清除之前网页上的临时记忆
+        let mut last_seen = LAST_SEEN_DEFAULT_MODEL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *last_seen = Some("old-default-model".to_string());
+        drop(last_seen);
+
+        let view = model_selection_view();
+        assert_eq!(
+            view["effectiveSelection"]["modelId"],
+            json!("deepseek-flash")
+        );
     }
 
     #[test]
@@ -9342,6 +9544,7 @@ mod v4_command_wiring_tests {
         let started = chaos_engine::ServerMessage::ToolStarted {
             session_id: id,
             tool: "run_command".into(),
+            raw_input: None,
             // CLI 路径带真实 id：映射必须原样透传而不是合成。
             tool_call_id: Some("call_real_1".into()),
             sequence: 12,
