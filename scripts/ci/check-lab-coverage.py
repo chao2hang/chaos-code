@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """Reject a Docker acceptance lab that nothing runs.
 
-`scripts/` ships six files ending in `-in-docker.sh`: five acceptance labs that build a real
+`scripts/` ships files ending in `-in-docker.sh`: acceptance labs that build a real
 binary or download a real artifact and interrogate it inside a container that has never seen this
-repository, and `verify-in-docker.sh`, the container entry point that owns the gate list. The rule
+repository, plus `verify-in-docker.sh`, the container entry point that owns the gate list. The rule
 does not try to tell them apart by what they are, because that is not decidable from a name; it
 asks one question of each, and each is worth exactly one thing: the transcript it printed the last
 time something ran it.
 
-Four of the six were named by nothing -- every acceptance lab except
+Most were named by nothing -- every acceptance lab except
 `install-integrity-in-docker.sh`. `check-guard-wiring.py` accounts for `scripts/ci/`, so a
 lab one directory up is invisible to every gate in the repository: on 2026-10-04 the only
 labs a workflow named were `install-integrity-in-docker.sh` and the entry point itself, and
 the newest transcripts of `install-sh-in-docker.sh`,
-`npm-install-in-docker.sh`, `remote-acceptance-in-docker.sh` and
-`web-deployment-in-docker.sh` were two days old, 48 to 70 commits behind the tree, and their
-verdicts described code that had since changed. Nothing
+`npm-install-in-docker.sh` and `remote-acceptance-in-docker.sh` were two days old, 48 to
+70 commits behind the tree, and their verdicts described code that had since changed. Nothing
 would have noticed if a change had broken one, because the only reader of their verdicts is a
 person who happens to remember to run them.
 

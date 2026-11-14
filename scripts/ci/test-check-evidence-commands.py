@@ -450,15 +450,6 @@ class ScanTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 2, f"{label}: {proc.stderr}")
                 self.assertIn("bad allowlist", proc.stderr)
 
-    def test_nested_frontend_workspace_docs_are_not_anchored_to_Chaos_root(self) -> None:
-        write(self.root, "frontend/zcode/docs/README.md", "```sh\npython3 scripts/missing.py\n```\n")
-        write(self.root, "docs/guide.md", "```sh\npython3 scripts/missing.py\n```\n")
-        git(self.root, "add", "-A")
-        proc = run(self.root)
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertIn("docs/guide.md", proc.stderr)
-        self.assertNotIn("frontend/zcode/", proc.stderr)
-
     def test_list_prints_transcripts_and_documents_only(self) -> None:
         write(self.root, "docs/verification/notes.txt", "    $ python3 x.sh\n")
         write(self.root, "scripts/ci/other.log", "    $ python3 x.sh\n")

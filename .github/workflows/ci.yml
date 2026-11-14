@@ -542,36 +542,6 @@ jobs:
           python3 scripts/ci/test-check-evidence-commands.py
           python3 scripts/ci/check-evidence-commands.py
 
-  gui:
-    name: GUI engine, Web host and bridge
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install dotslash
-        run: |
-          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-linux-musl.x86_64.v0.5.3.tar.gz -o /tmp/dotslash.tar.gz
-          tar -xzf /tmp/dotslash.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
-      - name: Read pinned toolchain
-        id: toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^" ]*\)".*/\1/p' rust-toolchain.toml)"
-          test -n "$channel"
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.channel }}
-      # This job intentionally covers the Chaos-owned Rust Engine, Web host and
-      # ZCode RPC bridge only. The ZCode UI source is maintained in a separate
-      # checkout; its Node 24+/pnpm lint/typecheck/build and browser E2E are not
-      # fetched or run by this workflow. The legacy Chaos JSON protocol remains
-      # guarded by `chaos-engine::client_message_samples` and Web socket tests.
-      - name: Rust GUI checks
-        run: cargo test -p chaos-engine -p xai-grok-web -p xai-grok-desktop --locked
-
   npm-scripts:
     name: npm package scripts
     runs-on: ubuntu-latest

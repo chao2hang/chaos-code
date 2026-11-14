@@ -18,3 +18,4 @@ scripts/ci/test-check-e2e-registration.py	historical	fixture suite of the retire
 scripts/ci/check-protocol-mirror.py	historical	the mirror-coverage gate retired with apps/chaos-ui on 2026-10-09; three transcripts quoting it describe that guard, correct about then and stale as an instruction now
 scripts/ci/test-check-protocol-mirror.py	historical	fixture suite of the retired mirror-coverage gate, quoted by the protocol-mirror transcript as the gate that checked mirrors then
 crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs	historical	upstream grok-build prefetch file the lock-poison-prefetch transcript drove; this fork never grew that tree, so the line reproduces a measurement, not a path here
+scripts/web-deployment-in-docker.sh	historical	the TLS deployment lab was removed with the Web host on 2026-11-14; the two transcripts quote the command that ran then, not an instruction now

@@ -53,9 +53,7 @@ README broken.
 
 What is enforced:
 
-- Chaos-owned Markdown under the repository root and its Rust workspace is checked. Nested
-  source workspaces (currently `frontend/zcode/`) own their internal docs and path roots;
-  those documents are not interpreted as Chaos-root citations.
+- Chaos-owned Markdown under the repository root and its Rust workspace is checked.
 - Link targets: no exemptions. A click that goes nowhere is a defect wherever it lives,
   and three were present when this gate was written (evidence log
   `docs/verification/doc-path-refs-2026-10-03.log`).
@@ -123,9 +121,6 @@ PATTERN_CHARS = ("...", "…", "<", ">", "$", "%", "[", "]", "*", "?", "~")
 NOT_A_PATH_PREFIX = ("#", "http://", "https://", "mailto:", "file://", "~", "/", "$")
 DOC_SUFFIXES = (".md",)
 SKIP_TOPS = {"target", "node_modules", "dist", "test-results", ".git"}
-# These documents belong to a nested project with its own workspace/release root;
-# their paths are not anchored at Chaos repository root.
-SKIP_DOC_PREFIXES = ("frontend/zcode/",)
 
 
 class Repo:
@@ -159,7 +154,6 @@ class Repo:
             for f in self.known
             if f.endswith(DOC_SUFFIXES)
             and f.split("/", 1)[0] not in SKIP_TOPS
-            and not f.startswith(SKIP_DOC_PREFIXES)
         )
 
     def claims_repo(self, tok: str) -> bool:

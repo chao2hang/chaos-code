@@ -1,4 +1,4 @@
-# GUI/CLI release signing status
+# Release signing status
 
 Date: 2026-09-24.
 

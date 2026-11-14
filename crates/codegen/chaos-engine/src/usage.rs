@@ -80,7 +80,7 @@ pub struct UsageFacts<'a> {
     pub tool_events: &'a [ToolEvent],
 }
 
-// ── 汇总输出的 serde 形状（对齐 @zcode/shared 的 appUsageSnapshotSchema）──
+// ── 汇总输出的 serde 形状（appUsageSnapshotSchema）──
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

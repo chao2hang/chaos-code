@@ -8,7 +8,7 @@
 
 ## Decision
 
-The accepted product goal remains the single-user local developer workbench described in `TODO.md`, including its Web and Tauri desktop targets. This record does not cancel those deliverables. A capability is not supported for release merely because a protocol type, UI seam, fixture, or local-only adapter exists; support claims require their existing acceptance gates.
+The accepted product goal remains the desktop workbench described in `TODO.md`; its Web target was dropped on 2026-11-14 when the ZCode frontend and `chaos-web` host were removed. This record does not cancel the remaining deliverables. A capability is not supported for release merely because a protocol type, UI seam, fixture, or local-only adapter exists; support claims require their existing acceptance gates.
 
 The following first-stable boundaries are explicit:
 

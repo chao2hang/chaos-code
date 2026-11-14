@@ -160,11 +160,11 @@ budget is a one-commit change to two files.
 
 ### Acceptance labs have to keep being run
 
-`scripts/*-in-docker.sh` is six acceptance labs: the container gate runner, an
-installer integrity run, an `install.sh` run, an `npm install` run, a TLS-terminating
-web deployment, and the remote-workspace acceptance run. Each builds a real image and
+`scripts/*-in-docker.sh` is five scripts: the container gate runner, an
+installer integrity run, an `install.sh` run, an `npm install` run, and the
+remote-workspace acceptance run. Each builds a real image and
 drives a real container, so none of them is cheap -- and none of them is evidence once
-it goes stale. As of 2026-10-04, four of the six were named by no workflow at all;
+it goes stale. As of 2026-10-04, three of the five were named by no workflow at all;
 their most recent run was 48 to 70 commits behind the tree, and their green verdicts
 lived only in `docs/verification/` transcripts, which do not turn red when you break
 `install.sh`.
@@ -179,9 +179,9 @@ placeholders, which is a release action this repository does not perform from CI
 There is no allow list, so a lab nobody schedules has to keep re-earning its row by
 hand, and a lab whose verdict CI could produce has no row to hide behind.
 
-`.github/workflows/docker-labs.yml` is the schedule for the two labs that fit one: it
-rebuilds the verification image nightly and runs the web-deployment and
-remote-workspace labs against it. `ci.yml` runs the coverage check itself, and the
+`.github/workflows/docker-labs.yml` is the schedule for the lab that fits one: it
+rebuilds the verification image nightly and runs the remote-workspace lab against it.
+`ci.yml` runs the coverage check itself, and the
 entry point's `gates` array runs the check's fixtures first, so a ledger that has
 quietly gone stale is caught by both roots.
 
@@ -312,23 +312,6 @@ outside the script distinguished the two groups. Both are marked now, and
 process: it points `GIT_BIN_PATH` at a shim that records its own pid and then blocks, and
 asserts the pid stops existing once the capture budget expires. Take the flag out and that
 test goes red, which is the difference between this gate and a grep.
-
-### Web frontend source and verification boundary
-
-The self-built React/TypeScript client in `apps/chaos-ui` and its Playwright
-suite were retired on 2026-10-09. The current Web client is the official ZCode
-frontend, whose source is managed by this project in its separate frontend
-checkout; it is not a member of the `chaos-code` Cargo workspace. Chaos CI
-currently does not build that frontend tree. Build, deploy, and verification instructions are in
-[`docs/architecture/zcode-web-frontend.md`](docs/architecture/zcode-web-frontend.md).
-
-This repository owns the Rust `chaos-web` host, Engine, and ZCode RPC bridge.
-Their behavior is tested by `crates/codegen/xai-grok-web/tests/` over real
-sockets. The retained legacy JSON Engine protocol is pinned by
-`chaos_engine::client_message_samples()` and the exhaustive `safe_mode_tag`
-match; this is not a substitute for checking the ZCode client against the ZCode
-protocol. Run frontend lint/typecheck/build in the project-managed ZCode checkout, and Rust
-bridge/Engine tests in this repository.
 
 ## Fast local gate loop
 
@@ -609,82 +592,6 @@ is a kept example. The lab is Linux-only and there is no SSH transport in this
 build, so it is not evidence about SSH host-key handling or about a macOS or
 Windows remote host.
 
-## Serving the Web host behind TLS
-
-`chaos-web` binds `127.0.0.1` and stays that way: a TLS terminator in front of it
-is the deployment, not a `--bind 0.0.0.0` flag. Because the proxy dials loopback,
-it has to share the backend's network namespace (a sidecar pod, or
-`docker run --network container:<web>`), and it forwards headers the backend has
-never seen from a local browser:
-
-- `Host: chaos.example.com` — refused unless you declare it, because the Host
-  check is what stops DNS rebinding against a loopback server.
-- `Origin: https://chaos.example.com:8443` — an `https` origin can never be
-  same-origin with the `http` request the backend actually receives, so it is
-  accepted only for a declared name.
-
-`CHAOS_WEB_PUBLIC_ORIGIN=https://<name>[:<port>]` is that declaration. It must be
-a bare `https` origin — no path, query, fragment or credentials — and it requires
-`CHAOS_WEB_TOKEN`: a server that answers a public name is never anonymous. The
-proxy must then set `X-Forwarded-Proto: https`; without that claim the `https`
-origin is refused, so a plaintext hop cannot present itself as the TLS deployment.
-`X-Forwarded-For` is not used for any authorization decision.
-
-A proxy that "fixes" the 401 by rewriting `Host` to the upstream
-(`proxy_set_header Host $proxy_host;`) makes plain requests work while the
-WebSocket keeps failing, because a WebSocket handshake always carries an `Origin`.
-Every refusal says which rule fired in its JSON body — `host_not_allowed`,
-`origin_not_allowed`, `origin_requires_forwarded_proto` or `credential_required` —
-so the operator edits the thing that is actually wrong.
-
-```sh
-scripts/web-deployment-in-docker.sh 2>&1 | tee "web-deployment-$(date +%F).log"
-```
-
-That lab runs the built binary behind stock nginx with a lab-issued certificate
-chain and checks the handshake, the credential, the declared-name rules, a real
-`wss:` session, a credential rotation, Safe Web Mode through the proxy, and that
-the backend is unreachable from anywhere but the proxy. It is a deployment-shape
-check on Linux; it is not a certificate-authority, CDN or multi-tenant review.
-
-## Previewing a dev server through the Web host
-
-`CHAOS_WEB_PREVIEW_PORTS=3000,5173` maps each named port to `http://127.0.0.1:<port>`
-and serves it under `/preview/<port>/`, so a browser that reaches this host by name
-can use a dev server that has no authentication of its own without that server
-becoming reachable by anyone else. Only what a prefix actually breaks is rewritten:
-`Host` and `Origin` become the upstream's own (a request that carried no `Origin` is
-given the upstream's, which is what a direct request would have looked like),
-`Set-Cookie` is scoped to the prefix with `Domain` dropped, `Location` is put back
-under the prefix, and a WebSocket upgrade is bridged with the proxy's own handshake.
-The browser's `Sec-WebSocket-Key`, `Sec-WebSocket-Version`, `Connection` and
-`Upgrade` belong to the other connection and are not forwarded; its subprotocol offer
-and its cookies are. Request bodies are buffered up to 32 MiB rather than capped at
-the API's 64 KiB, because uploading to a dev server is a thing dev servers do.
-
-Two things to know before blaming the proxy:
-
-- The app has to build its own URLs under the prefix — Vite's
-  `base: '/preview/3000/'`, webpack's `publicPath`. No proxy can rewrite a
-  `/main.js` that the app's own HTML already resolved against this host.
-  `X-Forwarded-Prefix` is sent on every request so a server-rendered app can do the
-  same, and the app's HMR client picks its own socket host and port, so a dev server
-  that hard-codes its port produces a socket that bypasses this host.
-- A preview is refused unless the request arrived over loopback, even when
-  `CHAOS_WEB_PUBLIC_ORIGIN` is set (`preview_loopback_only`). Publishing this host
-  and publishing someone's dev server are two different decisions; the second one is
-  `CHAOS_WEB_PREVIEW_ALLOW_PUBLIC=1`. From another machine the answer is usually
-  `chaos-remote forward`, which puts the remote preview behind this machine's
-  loopback instead.
-
-Refusals are JSON with a reason code — `preview_disabled`, `preview_port_not_allowed`,
-`preview_loopback_only`, `preview_target_invalid`, `preview_upstream_unreachable`,
-`preview_body_too_large`, `preview_upstream_failed`, `preview_upgrade_unsupported` —
-and `GET /preview` lists what is enabled. `cargo test -p xai-grok-web` drives the
-built binary against a stand-in dev server that refuses a `Host` or `Origin` that is
-not its own, and against a raw socket server that reads the proxied handshake
-byte-for-byte and answers with the accept key derived from the key it was handed.
-
 ## Auto-update tests
 
 `cargo test -p xai-grok-update` runs the whole updater against fake feeds it starts
@@ -741,10 +648,10 @@ fails instead of quietly checking less. Rename one asset on either side and this
 check that says so, rather than a Windows user's install returning a 404 that looks like a
 missing version.
 
-Four crates deliberately do **not** follow the release version, and the check fails if
-this list and that paragraph drift apart: `xai-grok-web` and `xai-grok-desktop` are
-versioned by their own bundles, `chaos-engine` is versioned by the protocol it speaks,
-and `xai-grok-update` still carries the numbering it inherited from upstream. None of
+Three crates deliberately do **not** follow the release version, and the check fails if
+this list and that paragraph drift apart: `xai-grok-desktop` is versioned by its own
+bundle, `chaos-engine` is versioned by the protocol it speaks, and `xai-grok-update`
+still carries the numbering it inherited from upstream. None of
 them publishes an artifact of its own, so nothing a user installs reads their version.
 Bumping one of them to match the release version is not a fix and the check will not ask
 for it.

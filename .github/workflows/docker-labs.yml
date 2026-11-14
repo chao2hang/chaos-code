@@ -1,17 +1,16 @@
 # Docker acceptance labs that build this commit and interrogate the binary.
 #
-# `scripts/` ships six files ending in `-in-docker.sh`; five of them are acceptance
-# labs. Two of those labs -- the TLS deployment lab and the M4 remote-workspace lab
-# -- compile the tree they are standing in and then ask the deployed program
-# questions that no unit test can ask (does a browser trusting only a lab CA complete
-# the handshake; does a session survive the tunnel dropping). Their verdict is about
-# the commit under test, so they belong to CI. They are not wired into `ci.yml`
-# because each one pays for a cold cargo build plus a container image build, and a
-# per-push leg would cost more than the two verdicts are worth on every commit. A
-# daily sweep is what keeps them from rotting into archaeology, which is the failure
-# `scripts/ci/check-lab-coverage.py` exists to catch: on 2026-10-04 four of the six
-# files had no workflow that named them and had last been run by a person who happened
-# to remember, 48 to 70 commits behind the tree.
+# `scripts/` ships five files ending in `-in-docker.sh`; four of them are acceptance
+# labs. One of those labs -- the M4 remote-workspace lab -- compiles the tree it is
+# standing in and then asks the deployed program questions that no unit test can ask
+# (does a session survive the tunnel dropping). Its verdict is about the commit under
+# test, so it belongs to CI. It is not wired into `ci.yml` because the lab pays for a
+# cold cargo build plus a container image build, and a per-push leg would cost more
+# than the verdict is worth on every commit. A daily sweep is what keeps it from
+# rotting into archaeology, which is the failure `scripts/ci/check-lab-coverage.py`
+# exists to catch: on 2026-10-04 four of the six files had no workflow that named them
+# and had last been run by a person who happened to remember, 48 to 70 commits behind
+# the tree.
 #
 # `scripts/ci/docker-labs.tsv` records the labs that stay out of CI, with the
 # reason each one cannot be a merge gate. If this file stops naming a lab above,
@@ -33,15 +32,14 @@ permissions:
 
 concurrency:
   group: docker-labs-${{ github.workflow }}-${{ github.ref }}
-  # Two of these runs at once would fight over the fixed ports each lab publishes
-  # (the TLS lab serves the declared origin on 8443, the remote lab tunnels on a
-  # fixed port base), so a superseded run is cancelled rather than left to collide.
+  # Two of these runs at once would fight over the fixed port base the remote lab
+  # tunnels on, so a superseded run is cancelled rather than left to collide.
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # Both labs default to `--offline --locked`, which is right on a developer box
+  # The lab defaults to `--offline --locked`, which is right on a developer box
   # with a warm registry and wrong on a runner that has never fetched this
   # manifest. Overriding it here rather than in the lab keeps the offline default
   # where it belongs: a local lab must not start reaching for the network.
@@ -49,10 +47,10 @@ env:
 
 jobs:
   labs:
-    name: web TLS deployment and M4 remote acceptance
+    name: M4 remote acceptance
     runs-on: ubuntu-latest
-    # Each lab is a cargo build of 1000+ crates cold plus its own container
-    # topology, and neither has been timed on a GitHub runner: 150 is a budget,
+    # The lab is a cargo build of 1000+ crates cold plus its own container
+    # topology, and it has not been timed on a GitHub runner: 150 is a budget,
     # not a measurement. It is stated high because the failure mode of a low one
     # is worse than the waste of a high one -- a job that hits the ceiling reports
     # a timeout instead of a verdict, and a scheduled job nobody is watching will
@@ -63,24 +61,22 @@ jobs:
 
       # socat is the tunnel between the two machines in the remote lab: the
       # transport dials loopback only, so killing socat is how a dropped network
-      # is produced. openssl mints the lab CA the TLS lab hands to curl. Nothing
-      # here is a compiler: both labs build inside the image they deploy into
-      # (see the next step's comment), so the runner needs no Rust toolchain, no
-      # protoc launcher and no cargo cache.
+      # is produced. Nothing here is a compiler: the lab builds inside the image
+      # it deploys into (see the next step's comment), so the runner needs no Rust
+      # toolchain, no protoc launcher and no cargo cache.
       - name: Install lab dependencies
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            ca-certificates git socat openssl
+            ca-certificates git socat
           socat -V >/dev/null && echo "socat ready"
-          openssl version
 
-      # Both labs run their workload inside an image that has never seen this
-      # repository -- that is the whole point of them -- and default to this tag.
+      # The lab runs its workload inside an image that has never seen this
+      # repository -- that is the whole point of it -- and defaults to this tag.
       #
-      # The labs also *compile* inside it, and that is the fix for scheduled run
+      # The lab also *compiles* inside it, and that is the fix for scheduled run
       # 37297270032, which went red with nothing but "the backend never answered
       # on loopback inside its container". The binaries used to be built on this
       # runner and mounted in: this runner is Ubuntu 24.04 at glibc 2.39 while the
@@ -92,16 +88,6 @@ jobs:
       - name: Build the clean-host image
         shell: bash
         run: docker build -f docker/verify.Dockerfile -t chaos-verify:local .
-
-      # The proxy is a stock nginx, not a lab artifact. The lab refuses to run
-      # rather than pulling mid-check, so the pull is stated here.
-      - name: Pull the proxy image
-        shell: bash
-        run: docker pull nginx:1.27-alpine
-
-      - name: Web host behind a TLS-terminating proxy
-        shell: bash
-        run: bash scripts/web-deployment-in-docker.sh
 
       - name: M4 remote workspace acceptance
         shell: bash

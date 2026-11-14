@@ -5,16 +5,16 @@
 //! `summary.json` carries the metadata (cwd, title, counts, timestamps) and
 //! `chat_history.jsonl` carries the model-facing transcript. That store is the
 //! fact source for "which conversations exist, and in which directory" — the
-//! GUI's own state file is a second, younger copy of the same idea.
+//! engine's own state file is a second, younger copy of the same idea.
 //!
-//! This module reads that store so the Web/ZCode front end can show and continue
-//! conversations the terminal had, in the directory they happened in, instead of
-//! only the ones the browser itself started. Two rules hold the seam in place:
+//! This module reads that store so a host can show and continue conversations the
+//! terminal had, in the directory they happened in, instead of only the ones the
+//! host itself started. Two rules hold the seam in place:
 //!
 //! * **Read-only.** Nothing here opens a file for writing. The continuation of a
 //!   conversation is produced by the CLI itself (see
 //!   [`crate::RunOptions::resume_session`]), which appends to its own transcript;
-//!   a GUI that rewrote those files would fork a conversation in two places.
+//!   a host that rewrote those files would fork a conversation in two places.
 //! * **Directory names are a claim, not the truth.** The parent directory is
 //!   `urlencoding::encode(cwd)`, and the machine's real store on this box shows
 //!   that the field inside `summary.json` (`info.cwd`) is the authoritative one:

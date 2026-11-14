@@ -15172,40 +15172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xai-grok-web"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.22.1",
- "chaos-engine",
- "crc32fast",
- "dunce",
- "flate2",
- "futures-util",
- "ignore",
- "portable-pty",
- "reqwest 0.12.24",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "tokio-tungstenite",
- "toml",
- "toml_edit 0.22.27",
- "tower",
- "tower-http",
- "uuid",
- "wait-timeout",
- "xai-grok-agent",
- "xai-grok-config",
- "xai-grok-test-support",
- "zcode-rpc-protocol",
-]
-
-[[package]]
 name = "xai-grok-workspace"
 version = "0.1.220-alpha.4"
 dependencies = [
@@ -15746,14 +15712,6 @@ dependencies = [
  "serde",
  "winnow",
  "zvariant",
-]
-
-[[package]]
-name = "zcode-rpc-protocol"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]

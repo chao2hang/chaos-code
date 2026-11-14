@@ -260,7 +260,7 @@ pub struct TurnTool<'a> {
     pub output_text: &'a str,
 }
 
-/// 一条会话内的排队输入（ZCode 队列合同，2026-10-12 取证）。
+/// 一条会话内的排队输入（宿主队列合同，2026-10-12 取证）。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueuedInput {
@@ -1635,7 +1635,7 @@ pub enum ClientMessage {
         objective: String,
         token_budget: Option<u64>,
     },
-    /// 只改目标状态（ZCode 的 pauseGoal/resumeGoal）。目标本身不动。
+    /// 只改目标状态（pauseGoal/resumeGoal 合同）。目标本身不动。
     SetSessionTargetStatus {
         client_msg_id: String,
         session_id: Uuid,
@@ -1685,7 +1685,7 @@ pub enum ClientMessage {
         client_msg_id: String,
         session_id: Uuid,
     },
-    /// 运行中到达的输入：进队列（ZCode `requestedDelivery:"queue"`）。
+    /// 运行中到达的输入：进队列（`requestedDelivery:"queue"` 合同）。
     QueueInput {
         client_msg_id: String,
         session_id: Uuid,
@@ -2326,8 +2326,8 @@ pub struct WorkspaceInfo {
     pub last_session_id: Option<Uuid>,
     /// The directory this workspace *is*, absolute.
     ///
-    /// A workspace used to be only a name the browser typed, which is why every
-    /// front end that read it had to guess a directory: the ZCode bridge
+    /// A workspace used to be only a name the client typed, which is why every
+    /// front end that read it had to guess a directory: the host bridge
     /// reported `std::env::current_dir()` for every task, and a conversation the
     /// terminal had in `~/project-a` appeared in the sidebar as though it had
     /// happened in whatever directory the server happened to be started from.
@@ -2560,12 +2560,9 @@ pub const SAFE_MODE_REFUSALS: &[(&str, &str)] = &[
 /// were not. The flow is refused as a unit, from either end.
 ///
 /// This lives beside the enum it classifies, and beside [`SAFE_MODE_REFUSALS`],
-/// the list the browser renders. A host that enforced a policy without reporting
-/// it produced a settings panel that promised nothing while the socket refused
-/// messages the panel had never listed;
-/// `the_refusal_list_matches_what_the_socket_actually_refuses` in
-/// `xai-grok-web/tests/host_info_flow.rs` drives a real socket against the list
-/// to keep the two from drifting apart. How many entries that is stays out of
+/// the list the engine publishes. `the_refusal_list_matches_what_the_policy_refuses`
+/// in `mod tests` walks the same samples through both, keeping the published list
+/// and the policy from drifting apart. How many entries that is stays out of
 /// prose here: the list gains one every time a message that touches the
 /// workspace is added, and a number in a comment goes stale on the very commit
 /// that adds it.
@@ -2592,16 +2589,15 @@ pub fn safe_mode_refusals() -> Vec<SafeModeRefusal> {
 pub struct SafeModeRefusal {
     /// Wire tag of the refused client message, `propose_file_write`.
     pub message: String,
-    /// What it would have done, in the browser's own words.
+    /// What it would have done, in the client's own words.
     pub capability: String,
 }
 
-/// One probe per `ClientMessage` variant, for tests and for the Web host.
+/// One probe per `ClientMessage` variant, for tests.
 ///
 /// This list is the single protocol inventory now that the retired TypeScript
-/// mirror is gone: `xai-grok-web` integration tests walk every message over a
-/// real socket, and `mod tests` runs the Safe Web Mode policy over the same
-/// samples. A variant added to [`ClientMessage`] must be represented here or a
+/// mirror is gone: `mod tests` runs the Safe Web Mode policy over every sample.
+/// A variant added to [`ClientMessage`] must be represented here or a
 /// test fails: `safe_mode_tag`'s exhaustive match refuses to compile until the
 /// tag exists, and `safe_mode_policy_never_refuses_the_read_only_surface` pins
 /// the total, so an unlisted message is a failure rather than a silence.
@@ -3009,7 +3005,7 @@ struct SessionState {
     /// 宿主打开会话时用 MarkSessionSeen 清掉。`None` 就是「没有未读」。
     #[serde(default)]
     unread_at: Option<u64>,
-    /// 运行中到达的输入排队（ZCode 队列合同，2026-10-12 取证）。FIFO；自动
+    /// 运行中到达的输入排队（宿主队列合同，2026-10-12 取证）。FIFO；自动
     /// 排水在轮次完成后把队头交给下一轮。
     #[serde(default)]
     queued_inputs: Vec<QueuedInput>,
@@ -5562,7 +5558,7 @@ impl Engine {
         });
     }
 
-    /// 轮次终局后的队列排水（ZCode 队列合同的自动排水半边）。
+    /// 轮次终局后的队列排水（队列合同的自动排水半边）。
     ///
     /// 规则：`auto_drain` 开着、没有暂停、队列非空、会话没有挂着待答的交互时，
     /// 把队头交给下一轮。用户按过停止（`queue_paused`）之后不自动开新一轮——
@@ -6157,7 +6153,7 @@ impl Engine {
             }
         }
         let result = match message {
-            // ---- 运行中输入的队列（ZCode 队列合同）。全部幂等、只动队列，
+            // ---- 运行中输入的队列（宿主队列合同）。全部幂等、只动队列，
             // 不开新一轮；真正的排水发生在轮次终局或 SendQueuedNow。
             ClientMessage::QueueInput {
                 client_msg_id,
@@ -6922,7 +6918,7 @@ impl Engine {
             } => {
                 // 与 `ReasoningEffort::from_str`（xai-grok-sampling-types）同域：这里收
                 // 下的每个值都要能原样走到 provider 或 CLI 的 --reasoning-effort。
-                // 以前的 4 值清单会把 Web 端（ZCode 前端默认补全最后一档）发来的
+                // 以前的 4 值清单会把客户端（默认补全最后一档）发来的
                 // "max" 静默改写成 "medium"——档位越界时宁可拒收也不偷改。
                 let valid_levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
                 let trimmed = thought_level.trim();
@@ -11020,8 +11016,8 @@ mod tests {
         assert_eq!(engine.run_options().thought_level.as_deref(), Some("high"));
     }
 
-    /// 档位值域与 `ReasoningEffort::from_str` 同域：ZCode 前端切模型时默认补全
-    /// `values` 的最后一档（桥广告的是 "max"），旧实现只认 4 档、把 max 静默改写成
+    /// 档位值域与 `ReasoningEffort::from_str` 同域：客户端切模型时默认补全
+    /// `values` 的最后一档（宿主广告的是 "max"），旧实现只认 4 档、把 max 静默改写成
     /// medium。越界值现在必须被拒收并报错，而不是偷改。
     #[test]
     fn thought_level_accepts_every_canonical_tier_and_refuses_unknown_ones() {

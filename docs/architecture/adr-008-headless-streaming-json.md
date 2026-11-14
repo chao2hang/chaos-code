@@ -1,18 +1,18 @@
 # ADR-008: headless 轮次改走 `--output-format streaming-json`
 
-- Status: proposed（设计结论已定，实现待下一批）
+- Status: accepted（Phase 2.2 已实现）
 - Date: 2026-10-12
-- 依据: `docs/verification/zcode-v4-contract-2026-10-11.md`、`crates/codegen/chaos-engine/src/chaos_store.rs` 的 `read_updates_transcript` 取证
+- 依据: `crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs` 的 streaming-json 用例、`crates/codegen/chaos-engine/src/chaos_store.rs` 的 `read_updates_transcript` 取证
 
 ## 背景
 
-Web/ZCode 桥对镜像（CLI 拥有的）会话续聊时，`HeadlessProcessAdapter`（`crates/codegen/chaos-engine/src/lib.rs`）
+宿主对镜像（CLI 拥有的）会话续聊时，`HeadlessProcessAdapter`（`crates/codegen/chaos-engine/src/lib.rs`）
 以阻塞 `.output()` 跑 `--single --resume`，`--output-format json`（单个结果对象）。后果有四，
 全部在本机实测确认：
 
 1. **假流式**：整轮结束后才把文本切块「流」出（`bounded_text_chunks`），界面与真实生产脱节。
 2. **工具不可见**：CLI 在轮内执行的工具（updates.jsonl 里 222 次 `tool_call`）在主机侧零事件，
-   ZCode 面板的工具卡只能靠恢复时读 `updates.jsonl`（Phase 2.1 已接）补，live 轮次没有。
+   live 视图只能靠恢复时读 `updates.jsonl`（Phase 2.1 已接）补。
 3. **停止无效**：`RunControl.cancelled` 只在块间检查，而阻塞路径没有块——停止要等整轮跑完才生效。
 4. **用量缺失**：`TurnReport::default()`，会话内用量恒 0（Phase 2.1 用 `turn_completed` 的历史账
    兑现了恢复视图，live 轮次仍无账）。
@@ -48,7 +48,7 @@ reducer `headless/reducer/acp.rs`），NDJSON 每行一个 ACP 会话更新，�
 配套改动：
 
 - `ServerMessage::ToolStarted/ToolProgress/ToolResult` 增 `#[serde(default)] tool_call_id: Option<String>`，
-  桥的 `map_engine_event` 有真 id 用真 id（与 `updates.jsonl` 同 id，恢复视图与 live 行不会重影），
+  事件映射有真 id 用真 id（与 `updates.jsonl` 同 id，恢复视图与 live 行不会重影），
   没有则沿用 `tool-{session}-{sequence}` 合成。
 - **停止生效**：`deliver` 返回 `false`（宿主在取消后不再听）即杀子进程
   （`process_scope.kill_all()` + `child.kill()`），已交付文本留在会话里——阻塞路径做不到的
@@ -69,9 +69,9 @@ reducer `headless/reducer/acp.rs`），NDJSON 每行一个 ACP 会话更新，�
    `Tool*` 事件 + 转录本 role="tool" 记录）。
 2. 适配器重写为行解析 + 子进程取消；fixture 测试沿用现有假二进制模式
    （`streaming_headless_turn_reports_stderr_api_retry_and_still_delivers_text` 的写法）。
-3. 桥侧真 `toolCallId` 贯通 + 更新 `map_engine_event` 测试。
+3. 事件映射侧真 `toolCallId` 贯通 + 更新映射测试。
 4. 验收：fixture 轮次里 stop 真的中断子进程；`usage` 行进 `TurnReport` 后
-   `app_usage_snapshot` 有真数；ZCode live 面板出现工具卡。
+   `app_usage_snapshot` 有真数；live 视图出现工具卡。
 
 ## 不支持的说法
 

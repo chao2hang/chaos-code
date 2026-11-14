@@ -122,10 +122,25 @@ class DocumentGuardTests(unittest.TestCase):
         # Transposing one row's two columns is the shape of the real bug: a well-formed,
         # plausible, wrong table.
         text = DOC.read_text(encoding='utf-8')
-        real_line = next(line for line in text.splitlines() if line.startswith('| M4 |'))
-        doc_unchecked, doc_partial = (int(cell) for cell in real_line.strip('|').split('|')[1:3])
-        todo_unchecked, todo_partial = real_groups()['M4']
-        stale_line = f'| M4 | {doc_partial} | {doc_unchecked} |'
+
+        def counts(line: str) -> tuple[int, int] | None:
+            cells = [cell.strip() for cell in line.strip('|').split('|')]
+            if len(cells) != 3 or not all(cell.isdigit() for cell in cells[1:]):
+                return None
+            return int(cells[1]), int(cells[2])
+
+        asymmetric = []
+        for line in text.splitlines():
+            if not line.startswith('| ') or line.count('|') != 4:
+                continue
+            row_counts = counts(line)
+            if row_counts is not None and row_counts[0] != row_counts[1]:
+                asymmetric.append((line, row_counts))
+        self.assertTrue(asymmetric, 'no asymmetric row left to transpose')
+        real_line, (doc_unchecked, doc_partial) = asymmetric[0]
+        group = real_line.strip('|').split('|')[0].strip()
+        todo_unchecked, todo_partial = real_groups()[group]
+        stale_line = f'| {group} | {doc_partial} | {doc_unchecked} |'
         self.assertNotEqual(stale_line, real_line, 'a symmetric row cannot prove anything')
         with tempfile.TemporaryDirectory() as directory:
             doc = write(Path(directory) / 'classification.md', text.replace(real_line, stale_line, 1))
@@ -133,7 +148,9 @@ class DocumentGuardTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         out = result.stdout + result.stderr
         self.assertIn('does not match TODO.md', out)
-        self.assertIn(f'M4 unchecked: document says {doc_partial}, TODO.md has {todo_unchecked}', out)
+        self.assertIn(
+            f'{group} unchecked: document says {doc_partial}, TODO.md has {todo_unchecked}', out
+        )
         self.assertIn('recompute with', out)
 
     def test_a_missing_group_row_is_refused(self):

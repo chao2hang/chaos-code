@@ -52,7 +52,6 @@ SHIPPED_VERSION_CRATES = ["xai-grok-pager", "xai-grok-pager-bin"]
 # CONTRIBUTING.md as well -- an exception nobody can read about is how the next
 # person "fixes" it by bumping one file.
 INDEPENDENT_VERSION_CRATES = {
-    "xai-grok-web": "served assets; versioned by its own bundle",
     "xai-grok-desktop": "native shell; versioned by its own bundle",
     "chaos-engine": "engine protocol crate; versioned by the protocol it speaks",
     "xai-grok-update": "updater; version numbers inherited from upstream",
