@@ -3,7 +3,7 @@
 ![CI](https://github.com/chao2hang/chaos-code/actions/workflows/ci.yml/badge.svg?branch=main)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
-**Chaos** 是终端 AI 编码助手（二进制名 `chaos`）。**不使用 Grok / xAI 登录**；模型、接口与密钥由用户自行配置（BYOK）。产品说明见 [CHAOS.md](CHAOS.md)。
+**Chaos** 是终端 AI 编码助手（二进制名 `chaos`），只提供 TUI，不提供浏览器 UI。**不使用 Grok / xAI 登录**；模型、接口与密钥由用户自行配置（BYOK）。产品说明见 [CHAOS.md](CHAOS.md)。
 
 本仓库基于 [Grok Build](https://github.com/xai-org/grok-build) 改造；crate 仍保留 `xai-grok-*` 命名以便同步上游。`SOURCE_REV` 记录对齐的 monorepo 提交。
 

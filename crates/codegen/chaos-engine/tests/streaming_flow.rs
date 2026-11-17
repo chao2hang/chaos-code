@@ -1,8 +1,8 @@
 //! A prompt turn is a live run, not a request/response pair.
 //!
 //! Every assertion here drives the shipped [`Engine`] through the same two entry
-//! points the Web host uses: [`Engine::subscribe`] for the per-connection event
-//! stream and [`Engine::dispatch_to`] for the client message. What they pin down is
+//! points a host uses: [`Engine::subscribe`] for the per-client event stream and
+//! [`Engine::dispatch_to`] for the client message. What they pin down is
 //! the part that a `Vec<ServerMessage>` return value cannot express -- that chunks
 //! leave while the Producer is still producing them, that `cancel` reaches a run
 //! that has not finished, and that a connection which stops reading is cut off
@@ -93,7 +93,7 @@ fn submit(session_id: Uuid, prompt: &str) -> ClientMessage {
     }
 }
 
-/// Runs one client message the way the Web host does: on a thread with no runtime,
+/// Runs one client message on a thread with no runtime,
 /// with the answers addressed to a subscription and the return path ignored.
 fn dispatch(engine: Engine, message: ClientMessage, sink: &chaos_engine::EventSink) {
     engine.dispatch_to(message, Some(sink), &mut |_event| {});

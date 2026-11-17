@@ -2,7 +2,7 @@
 //!
 //! Every case here goes through `Engine::handle` with `WorkspaceDiffAdapter`
 //! attached the way a host attaches it, and checks the bytes on disk afterwards.
-//! A proposal the browser can see but cannot put back, or a rollback that erases
+//! A proposal the client can see but cannot put back, or a rollback that erases
 //! someone else's later edit, is the failure these tests exist to catch.
 
 use chaos_engine::{ClientMessage, DIFF_PROPOSAL_LIMIT, DiffAdapter, Engine, ServerMessage};
@@ -132,7 +132,7 @@ fn landed_write_offers_a_preview_naming_the_bytes_it_replaced() {
     );
 }
 
-/// A write that created the path has no prior bytes, and the browser shows that
+/// A write that created the path has no prior bytes, and the client shows that
 /// as a newly created file rather than an empty old version.
 #[test]
 fn created_file_previews_with_no_before_side() {
@@ -285,7 +285,7 @@ fn rollback_refuses_an_edit_it_did_not_make_and_leaves_the_file_alone() {
         !events
             .iter()
             .any(|event| matches!(event, ServerMessage::DiffResolved { .. })),
-        "a refusal must not clear the browser preview: {events:?}"
+        "a refusal must not clear the client preview: {events:?}"
     );
     assert!(
         events.iter().any(|event| matches!(
@@ -438,7 +438,7 @@ fn rollback_cannot_be_redirected_by_a_symlink_swapped_in_after_the_write() {
     assert!(std::fs::symlink_metadata(directory.path().join("note.txt")).is_ok());
 }
 
-/// Overwriting bytes the browser could not have read is refused outright rather
+/// Overwriting bytes the client could not have read is refused outright rather
 /// than written and then left un-displayable: the proposal's old side has to be
 /// text, so the target has to be text before the write starts.
 #[test]
@@ -477,7 +477,7 @@ fn a_binary_target_refuses_the_write_and_keeps_its_bytes() {
 }
 
 /// An unknown or already handled id is refused without touching the file the
-/// browser happens to be showing.
+/// client happens to be showing.
 #[test]
 fn an_unknown_proposal_id_changes_nothing() {
     let directory = tempdir().unwrap();
@@ -638,7 +638,7 @@ fn the_seam_refuses_to_be_installed_twice_or_without_a_workspace() {
 }
 
 /// The refusal above is what keeps a host's own adapter in charge: it is still
-/// the one answering, and its answer is what the browser sees.
+/// the one answering, and its answer is what the client sees.
 #[test]
 fn a_host_that_brought_its_own_diff_adapter_keeps_it() {
     let directory = tempdir().unwrap();
@@ -662,7 +662,7 @@ fn a_host_that_brought_its_own_diff_adapter_keeps_it() {
 }
 
 /// `preview_diff` for a live proposal reports the same pair of sides the write
-/// offered, because the browser's 加载差异 button goes through this call after a
+/// offered, because the client's 加载差异 button goes through this call after a
 /// reload, when it no longer holds the id from the write.
 #[test]
 fn preview_diff_reports_the_recorded_sides_again() {

@@ -1,7 +1,10 @@
-# ADR-003: GUI persistence boundary
+# ADR-003: former GUI persistence boundary (superseded)
 
-- Status: accepted for M0 implementation
+- Status: Superseded on 2026-11-14 when the Web/GUI product line was removed; retained as an implementation-history record only
 - Date: 2026-09-24
+
+This decision no longer describes a supported user-facing GUI. The Web/GUI client and
+host were retired; current product scope is recorded in [ADR-007](adr-007-first-stable-product-scope.md).
 
 M0 uses the engine's in-memory session store and transitional JSON snapshot to prove protocol behavior. The
 canonical persistent boundary is now `chaos-engine::SqliteSessionStore`, backed by
@@ -14,11 +17,11 @@ The GUI does not write provider secrets
 or API keys into its session snapshot; credentials remain in the existing
 configuration/secrets boundary.
 
-A session resume request is an explicit snapshot operation. On process restart,
-missing or corrupt storage returns a typed recovery error rather than silently
-creating a new session. `CHAOS_WEB_SQLITE` now selects the canonical SQLite
-engine entry; `CHAOS_WEB_STATE` remains a transitional JSON fallback. A
-read-only `ImportTuiSession` seam validates the real TUI `summary.json`/
-`updates.jsonl` shape under a host-configured root and proves source bytes are
-unchanged. Full ACP update conversion into GUI SQLite, GUI write-back to TUI,
-multi-process/NFS coverage, and migration rollback remain open.
+At the time this decision was active, a session resume request was an explicit
+snapshot operation and missing or corrupt storage returned a typed recovery error.
+`CHAOS_WEB_SQLITE` selected the canonical SQLite engine entry and `CHAOS_WEB_STATE`
+was a transitional JSON fallback. The read-only `ImportTuiSession` seam validated
+the real TUI `summary.json`/`updates.jsonl` shape under a host-configured root and
+proved source bytes were unchanged. These GUI entry points and their open follow-up
+items were retired with the Web/GUI product line; they are not current configuration
+or roadmap instructions.

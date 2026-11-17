@@ -23,7 +23,7 @@ chaos agent stdio
 ## 目录
 
 - [安装](#installation)
-- [认证](#authentication) — 浏览器登录、API key、OIDC、外部认证 Provider
+- [认证](#authentication) — BYOK/API key；含上游 OAuth/OIDC 对照说明
 - **使用 Chaos**
   - [交互式 TUI](#interactive-tui) — 快捷键、斜杠命令、文件引用
   - [无头模式](#headless-mode) — 脚本、CI/CD、输出格式
@@ -827,15 +827,9 @@ chaos agent stdio
 | `--reauth`            | 强制走重新认证流程                                                        |
 
 <details>
-<summary><strong>Advanced: WebSocket Relay</strong></summary>
+<summary><strong>Advanced: Grok WebSocket Relay (unsupported in Chaos)</strong></summary>
 
-要把代理暴露到公网（而不是局域网）上，可以运行一个 WebSocket 中继服务器，让代理连上去：
-
-```bash
-chaos agent headless --grok-ws-url wss://your-relay.example.com/ws
-```
-
-代理向外连接到你的中继，你的网页客户端也连到同一个中继。用于构建浏览器无法拉起本地进程的 Web UI。
+上游的 `headless --grok-ws-url` 需要 Grok/xAI 登录态，使用的也不是 ACP `serve` 协议。Chaos 采用 BYOK、不提供 xAI 登录，因此此中继模式在 Chaos 中不可用；它不是 Chaos 的浏览器 UI。远程 ACP 客户端请使用 `chaos agent serve` 及其令牌认证。
 
 </details>
 

@@ -268,14 +268,13 @@ class ContainerHygieneTests(Base):
 
     # -- the scan itself ---------------------------------------------------------------------
 
-    # Every entry point that mounts the checkout, named. The two acceptance labs joined
-    # this list on 2026-10-05, when they started compiling inside the image instead of
-    # copying host binaries in, and both of them then owed the host-side `mkdir` the
-    # target-volume rule checks for.
+    # Every entry point that mounts the checkout, named. The remote acceptance lab
+    # joined this list on 2026-10-05, when it started compiling inside the image instead
+    # of copying a host binary in, and then owed the host-side `mkdir` the target-volume
+    # rule checks for.
     MOUNTS_CHECKOUT = (
         "scripts/remote-acceptance-in-docker.sh",
         "scripts/verify-in-docker.sh",
-        "scripts/web-deployment-in-docker.sh",
     )
 
     def test_repository_is_clean_and_actually_scanned(self) -> None:

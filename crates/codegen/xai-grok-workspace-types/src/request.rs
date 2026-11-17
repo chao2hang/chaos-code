@@ -6,7 +6,7 @@
 //! Both are **runtime concerns**, not wire concerns:
 //!
 //! - `tokio_util::sync::CancellationToken` is a tokio type.
-//!   Adding it here would force every consumer of `xai-grok-workspace-types` (including the eventual WASM browser SDK) to pull in tokio.
+//!   Adding it here would force every consumer of `xai-grok-workspace-types` to pull in tokio.
 //!   Cancellation is a transport mechanism: in-process, the receiver drop signal handles it; over gRPC, the client closing the stream handles it.
 //! - `Extensions` (a typed `HashMap<TypeId, Box<dyn Any + Send + Sync>>`) is in-process only and not serialized.
 //!   It carries tracing spans and telemetry context that have no wire representation, so it belongs with the runtime.

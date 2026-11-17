@@ -358,7 +358,7 @@ pub trait PromptAdapter: Send + Sync {
         self.run_prompt_turn(prompt, options, &mut |text| deliver(TurnOutput::Text(text)))
     }
 
-    /// Which models this adapter can actually serve, asked when the browser opens
+    /// Which models this adapter can actually serve, asked when the client opens
     /// the model picker. `selected` is the model a run would use right now, so
     /// the answer can say whether that choice is real. The default reports
     /// "unknown" rather than an empty list, because "this adapter never lists
@@ -388,7 +388,7 @@ pub trait PromptAdapter: Send + Sync {
 }
 
 /// Boundary for tools that require an explicit approval before execution.
-/// The adapter receives only the declared tool and summary, never browser
+/// The adapter receives only the declared tool and summary, never client
 /// transport objects or raw credentials.
 pub trait ToolAdapter: Send + Sync {
     fn execute(&self, tool: &str, summary: &str) -> Result<String, String>;
@@ -453,7 +453,7 @@ pub struct StagedDiff {
 }
 
 /// Bytes of staged diff one commit-message request may send to the Provider.
-/// The browser can stage a generated file of any size, and the diff goes into a
+/// The client can stage a generated file of any size, and the diff goes into a
 /// prompt, so the read itself has to stop at a limit rather than at whatever the
 /// staging area happens to hold.
 pub const COMMIT_DIFF_LIMIT: usize = 24 * 1024;
@@ -487,7 +487,7 @@ fn commit_message_prompt(branch: Option<&str>, diff: &StagedDiff) -> String {
     prompt
 }
 
-/// What the browser is offered as the commit message.
+/// What the client is offered as the commit message.
 ///
 /// Models wrap the answer in code fences, bullet it, or open with a label like
 /// 「这是建议：」. All of that would be pasted verbatim into `git commit -m`, so it
@@ -918,8 +918,8 @@ fn drain_output(mut reader: impl std::io::Read, limit: usize) -> std::io::Result
 }
 
 /// Adapter that invokes the installed `chaos --headless` binary in JSON mode.
-/// The binary path is explicit so Web/Desktop hosts cannot accidentally execute
-/// an arbitrary command from a browser message.
+/// The binary path is explicit so the Desktop host cannot accidentally execute
+/// an arbitrary command from a client message.
 pub struct HeadlessProcessAdapter {
     binary: std::path::PathBuf,
     cwd: std::path::PathBuf,
@@ -1535,12 +1535,6 @@ pub enum ClientMessage {
     GetSettings {
         client_msg_id: String,
     },
-    /// Ask what the serving process actually started with. Read-only, and
-    /// answerable in Safe Web Mode, because the browser is entitled to know
-    /// which capabilities were withheld from it and why.
-    GetHostInfo {
-        client_msg_id: String,
-    },
     UpdateSettings {
         client_msg_id: String,
         base_url: Option<String>,
@@ -1594,7 +1588,7 @@ pub enum ClientMessage {
         model: String,
     },
     /// Asks the host's own Provider which models it serves, so the model picker
-    /// shows real choices. Deliberately carries no base URL: the browser cannot
+    /// shows real choices. Deliberately carries no base URL: the client cannot
     /// point this request at an endpoint the operator did not configure, which
     /// would otherwise turn a "list models" click into a way to make the host
     /// send its credential somewhere else.
@@ -1742,7 +1736,7 @@ pub enum ClientMessage {
         client_msg_id: String,
         /// "all" | "7d" | "30d"；其余按 "all" 处理。
         range: String,
-        /// 浏览器的 IANA 时区；解析不了就回退服务进程本地时区。
+        /// 客户端的 IANA 时区；解析不了就回退服务进程本地时区。
         #[serde(default)]
         time_zone: Option<String>,
     },
@@ -1807,7 +1801,6 @@ impl ClientMessage {
             | Self::ReadFile { .. }
             | Self::SearchFiles { .. }
             | Self::GetSettings { .. }
-            | Self::GetHostInfo { .. }
             | Self::UpdateSettings { .. }
             | Self::GetGitStatus { .. }
             | Self::ValidateAttachment { .. }
@@ -2045,9 +2038,6 @@ pub enum ServerMessage {
         base_url: Option<String>,
         model: Option<String>,
     },
-    HostInfo {
-        info: HostInfo,
-    },
     GitStatus {
         branch: Option<String>,
         entries: Vec<String>,
@@ -2141,7 +2131,7 @@ pub enum ServerMessage {
         message_count: usize,
         source_unchanged: bool,
     },
-    /// A commit message the browser may put in its commit form. `truncated`
+    /// A commit message the client may put in its commit form. `truncated`
     /// says the staged diff the Provider saw was cut short, so a short answer
     /// may be short because the model never saw the rest of it.
     CommitMessageSuggestion {
@@ -2215,7 +2205,6 @@ impl ServerMessage {
             | Self::SearchResults { .. }
             | Self::Settings { .. }
             | Self::SettingsUpdated { .. }
-            | Self::HostInfo { .. }
             | Self::GitStatus { .. }
             | Self::TerminalResult { .. }
             | Self::GitMutationResult { .. }
@@ -2295,7 +2284,6 @@ impl ServerMessage {
             | Self::SearchResults { .. }
             | Self::Settings { .. }
             | Self::SettingsUpdated { .. }
-            | Self::HostInfo { .. }
             | Self::GitStatus { .. }
             | Self::AttachmentValidated { .. }
             | Self::AttachmentProgress { .. }
@@ -2395,514 +2383,6 @@ pub struct SessionInfo {
     /// turn ends rather than reconstructed each time the list is drawn.
     #[serde(default)]
     pub preview: Option<String>,
-}
-
-/// How the serving process keeps what it has learned between restarts.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum StateBackend {
-    /// Nothing survives the process; a restart loses every session.
-    #[default]
-    Memory,
-    /// The transitional JSON snapshot at a path the operator set at startup.
-    JsonFile,
-    /// SQLite.
-    Sqlite,
-}
-
-/// Whether the process serving the browser replaces its own binary.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdateMode {
-    /// The process swaps its own binary and restarts.
-    SelfUpdate,
-    /// Something outside the process owns updates: `cargo`, `npm`, an installer.
-    #[default]
-    External,
-}
-
-/// Which origins the preview proxy will forward to a forwarded port.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PreviewProxyState {
-    /// No port is forwarded, so every `/preview` request is refused.
-    #[default]
-    Disabled,
-    /// Ports are forwarded, and only the declared public name may reach them.
-    NamedOnly,
-    /// Ports are forwarded and an operator opted into loopback-only origins too.
-    AnyOrigin,
-}
-
-/// One client message Safe Web Mode refuses, and what it would have done.
-///
-/// `message` is the wire tag rather than a paraphrase, so a client can hide the
-/// control that would have sent it instead of letting the user click and be
-/// refused.
-/// The wire tag of a client message, matching the serde `rename_all` on the
-/// enum. Exhaustive on purpose: a new variant does not compile until it is
-/// classified.
-pub fn safe_mode_tag(message: &ClientMessage) -> &'static str {
-    match message {
-        ClientMessage::CreateSession { .. } => "create_session",
-        ClientMessage::CreateWorkspace { .. } => "create_workspace",
-        ClientMessage::ListWorkspaces { .. } => "list_workspaces",
-        ClientMessage::ArchiveWorkspace { .. } => "archive_workspace",
-        ClientMessage::SwitchWorkspace { .. } => "switch_workspace",
-        ClientMessage::Resume { .. } => "resume",
-        ClientMessage::Submit { .. } => "submit",
-        ClientMessage::Cancel { .. } => "cancel",
-        ClientMessage::Snapshot { .. } => "snapshot",
-        ClientMessage::Approve { .. } => "approve",
-        ClientMessage::ApproveRemembered { .. } => "approve_remembered",
-        ClientMessage::Reject { .. } => "reject",
-        ClientMessage::RespondQuestion { .. } => "respond_question",
-        ClientMessage::ListFiles { .. } => "list_files",
-        ClientMessage::ReadFile { .. } => "read_file",
-        ClientMessage::SearchFiles { .. } => "search_files",
-        ClientMessage::ProposeFileWrite { .. } => "propose_file_write",
-        ClientMessage::ProposeTerminal { .. } => "propose_terminal",
-        ClientMessage::ProposeGitMutation { .. } => "propose_git_mutation",
-        ClientMessage::GetSettings { .. } => "get_settings",
-        ClientMessage::GetHostInfo { .. } => "get_host_info",
-        ClientMessage::UpdateSettings { .. } => "update_settings",
-        ClientMessage::GetGitStatus { .. } => "get_git_status",
-        ClientMessage::SuggestCommitMessage { .. } => "suggest_commit_message",
-        ClientMessage::ValidateAttachment { .. } => "validate_attachment",
-        ClientMessage::BeginAttachment { .. } => "begin_attachment",
-        ClientMessage::AttachmentChunk { .. } => "attachment_chunk",
-        ClientMessage::CancelAttachment { .. } => "cancel_attachment",
-        ClientMessage::FinalizeAttachment { .. } => "finalize_attachment",
-        ClientMessage::ImportTuiSession { .. } => "import_tui_session",
-        ClientMessage::ValidateProvider { .. } => "validate_provider",
-        ClientMessage::ListProviderModels { .. } => "list_provider_models",
-        ClientMessage::ListModes { .. } => "list_modes",
-        ClientMessage::SetMode { .. } => "set_mode",
-        ClientMessage::SetThoughtLevel { .. } => "set_thought_level",
-        ClientMessage::SetModel { .. } => "set_model",
-        ClientMessage::ListWorkflows { .. } => "list_workflows",
-        ClientMessage::ListSubagents { .. } => "list_subagents",
-        ClientMessage::GetSessionTarget { .. } => "get_session_target",
-        ClientMessage::SetSessionTarget { .. } => "set_session_target",
-        ClientMessage::SetSessionTargetStatus { .. } => "set_session_target_status",
-        ClientMessage::ScanMarketplace { .. } => "scan_marketplace",
-        ClientMessage::AcceptDiff { .. } => "accept_diff",
-        ClientMessage::RollbackDiff { .. } => "rollback_diff",
-        ClientMessage::PreviewDiff { .. } => "preview_diff",
-        ClientMessage::GetSessionDiffSummary { .. } => "get_session_diff_summary",
-        ClientMessage::ListSessions { .. } => "list_sessions",
-        ClientMessage::RenameSession { .. } => "rename_session",
-        ClientMessage::PinSession { .. } => "pin_session",
-        ClientMessage::MarkSessionSeen { .. } => "mark_session_seen",
-        ClientMessage::QueueInput { .. } => "queue_input",
-        ClientMessage::EditQueueItem { .. } => "edit_queue_item",
-        ClientMessage::DeleteQueueItem { .. } => "delete_queue_item",
-        ClientMessage::ReorderQueueItem { .. } => "reorder_queue_item",
-        ClientMessage::SendQueuedNow { .. } => "send_queued_now",
-        ClientMessage::SetQueueAutoDrain { .. } => "set_queue_auto_drain",
-        ClientMessage::ArchiveSession { .. } => "archive_session",
-        ClientMessage::DeleteSession { .. } => "delete_session",
-        ClientMessage::ForkSession { .. } => "fork_session",
-        ClientMessage::UsageStats { .. } => "usage_stats",
-    }
-}
-
-/// Every client message Safe Web Mode refuses, with what it would have done.
-///
-/// This is the refusal policy, not a description of it: [`safe_mode_allows`]
-/// returns false for exactly these tags. The browser renders it verbatim, so a
-/// refusal the panel does not list is a refusal the user finds by clicking, and
-/// the panel is tested against the protocol mirror to keep that from happening.
-pub const SAFE_MODE_REFUSALS: &[(&str, &str)] = &[
-    ("create_workspace", "新建工作区"),
-    ("list_workspaces", "列出工作区"),
-    ("archive_workspace", "归档工作区"),
-    ("switch_workspace", "切换工作区"),
-    ("rename_session", "重命名会话"),
-    ("pin_session", "置顶会话"),
-    ("delete_session", "删除会话"),
-    ("fork_session", "分叉会话"),
-    ("approve", "批准待审操作"),
-    ("approve_remembered", "总是批准待审操作"),
-    ("reject", "驳回待审操作"),
-    ("propose_file_write", "把文件写进工作区"),
-    ("propose_terminal", "在工作区执行命令"),
-    ("propose_git_mutation", "执行 Git 变更"),
-    ("update_settings", "修改设置"),
-    ("get_git_status", "读取 Git 状态"),
-    (
-        "suggest_commit_message",
-        "读取暂存差异并向 Provider 请求提交信息建议",
-    ),
-    ("validate_attachment", "校验附件"),
-    ("begin_attachment", "开始上传附件"),
-    ("attachment_chunk", "上传附件分片"),
-    ("cancel_attachment", "取消附件上传"),
-    ("finalize_attachment", "把附件落进工作区"),
-    ("validate_provider", "探测 Provider 连通性"),
-    ("list_provider_models", "向 Provider 查询模型列表"),
-    ("set_mode", "设置运行模式"),
-    ("set_thought_level", "设置思考强度"),
-    ("set_session_target", "设置目标与预算"),
-    ("accept_diff", "接受 Diff"),
-    ("rollback_diff", "回滚 Diff"),
-];
-
-/// Whether Safe Web Mode lets a client send this message.
-///
-/// The line drawn here is "no workspace or host mutation, not even behind an
-/// approval prompt": `propose_file_write`, `propose_terminal` and
-/// `propose_git_mutation` are refused although the engine would ask the user
-/// first. `finalize_attachment` used to sit on the allowlist, which made it
-/// unreachable rather than permissive — an `upload_id` only comes from
-/// `begin_attachment`, which is refused — so the one attachment step that writes
-/// into the workspace was allowlisted while the three that merely stage bytes
-/// were not. The flow is refused as a unit, from either end.
-///
-/// This lives beside the enum it classifies, and beside [`SAFE_MODE_REFUSALS`],
-/// the list the engine publishes. `the_refusal_list_matches_what_the_policy_refuses`
-/// in `mod tests` walks the same samples through both, keeping the published list
-/// and the policy from drifting apart. How many entries that is stays out of
-/// prose here: the list gains one every time a message that touches the
-/// workspace is added, and a number in a comment goes stale on the very commit
-/// that adds it.
-#[must_use]
-pub fn safe_mode_allows(message: &ClientMessage) -> bool {
-    !SAFE_MODE_REFUSALS
-        .iter()
-        .any(|(tag, _)| *tag == safe_mode_tag(message))
-}
-
-/// [`SAFE_MODE_REFUSALS`] as a wire payload.
-#[must_use]
-pub fn safe_mode_refusals() -> Vec<SafeModeRefusal> {
-    SAFE_MODE_REFUSALS
-        .iter()
-        .map(|(tag, capability)| SafeModeRefusal {
-            message: (*tag).to_string(),
-            capability: (*capability).to_string(),
-        })
-        .collect()
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct SafeModeRefusal {
-    /// Wire tag of the refused client message, `propose_file_write`.
-    pub message: String,
-    /// What it would have done, in the client's own words.
-    pub capability: String,
-}
-
-/// One probe per `ClientMessage` variant, for tests.
-///
-/// This list is the single protocol inventory now that the retired TypeScript
-/// mirror is gone: `mod tests` runs the Safe Web Mode policy over every sample.
-/// A variant added to [`ClientMessage`] must be represented here or a
-/// test fails: `safe_mode_tag`'s exhaustive match refuses to compile until the
-/// tag exists, and `safe_mode_policy_never_refuses_the_read_only_surface` pins
-/// the total, so an unlisted message is a failure rather than a silence.
-#[doc(hidden)]
-pub fn client_message_samples() -> Vec<ClientMessage> {
-    use uuid::Uuid;
-    let session = Uuid::new_v4();
-    let workspace = Uuid::new_v4();
-    let request = Uuid::new_v4();
-    let upload = Uuid::new_v4();
-    let id = |n: u32| format!("msg-{n}");
-    vec![
-        ClientMessage::CreateSession {
-            client_msg_id: id(1),
-            workspace_id: None,
-        },
-        ClientMessage::CreateWorkspace {
-            client_msg_id: id(2),
-            name: "workspace".into(),
-        },
-        ClientMessage::ListWorkspaces {
-            client_msg_id: id(3),
-        },
-        ClientMessage::ArchiveWorkspace {
-            client_msg_id: id(4),
-            workspace_id: workspace,
-        },
-        ClientMessage::SwitchWorkspace {
-            client_msg_id: id(5),
-            workspace_id: workspace,
-        },
-        ClientMessage::Resume {
-            client_msg_id: id(6),
-            session_id: session,
-            workspace_id: None,
-        },
-        ClientMessage::Submit {
-            client_msg_id: id(7),
-            session_id: session,
-            prompt: "prompt".into(),
-        },
-        ClientMessage::Cancel {
-            client_msg_id: id(8),
-            session_id: session,
-        },
-        ClientMessage::Snapshot {
-            client_msg_id: id(9),
-            session_id: session,
-            workspace_id: None,
-        },
-        ClientMessage::Approve {
-            client_msg_id: id(10),
-            request_id: request,
-        },
-        ClientMessage::ApproveRemembered {
-            client_msg_id: id(43),
-            request_id: request,
-        },
-        ClientMessage::Reject {
-            client_msg_id: id(11),
-            request_id: request,
-            reason: "reason".into(),
-        },
-        ClientMessage::RespondQuestion {
-            client_msg_id: id(12),
-            question_id: request,
-            answer: "answer".into(),
-        },
-        ClientMessage::ListFiles {
-            client_msg_id: id(13),
-            relative_path: ".".into(),
-        },
-        ClientMessage::ReadFile {
-            client_msg_id: id(14),
-            relative_path: "a.txt".into(),
-        },
-        ClientMessage::SearchFiles {
-            client_msg_id: id(15),
-            query: "query".into(),
-        },
-        ClientMessage::ProposeFileWrite {
-            client_msg_id: id(16),
-            session_id: session,
-            relative_path: "a.txt".into(),
-            contents: "contents".into(),
-        },
-        ClientMessage::ProposeTerminal {
-            client_msg_id: id(17),
-            session_id: session,
-            command: "true".into(),
-        },
-        ClientMessage::ProposeGitMutation {
-            client_msg_id: id(18),
-            session_id: session,
-            operation: "stage".into(),
-            argument: ".".into(),
-        },
-        ClientMessage::GetSettings {
-            client_msg_id: id(19),
-        },
-        ClientMessage::GetHostInfo {
-            client_msg_id: id(20),
-        },
-        ClientMessage::UpdateSettings {
-            client_msg_id: id(21),
-            base_url: None,
-            model: None,
-        },
-        ClientMessage::GetGitStatus {
-            client_msg_id: id(22),
-        },
-        ClientMessage::ValidateAttachment {
-            client_msg_id: id(23),
-            filename: "a.txt".into(),
-            byte_len: 1,
-            content_type: "text/plain".into(),
-        },
-        ClientMessage::BeginAttachment {
-            client_msg_id: id(24),
-            session_id: session,
-            filename: "a.txt".into(),
-            content_type: "text/plain".into(),
-            byte_len: 1,
-        },
-        ClientMessage::AttachmentChunk {
-            client_msg_id: id(25),
-            upload_id: upload,
-            chunk: "AA==".into(),
-        },
-        ClientMessage::CancelAttachment {
-            client_msg_id: id(26),
-            upload_id: upload,
-        },
-        ClientMessage::FinalizeAttachment {
-            client_msg_id: id(27),
-            upload_id: upload,
-            relative_path: "a.txt".into(),
-        },
-        ClientMessage::ImportTuiSession {
-            client_msg_id: id(28),
-            root: ".".into(),
-            session_id: "tui".into(),
-        },
-        ClientMessage::ValidateProvider {
-            client_msg_id: id(29),
-            base_url: "https://api.example.test/v1".into(),
-            model: "model".into(),
-        },
-        ClientMessage::ListProviderModels {
-            client_msg_id: id(35),
-        },
-        ClientMessage::ListModes {
-            client_msg_id: id(36),
-        },
-        ClientMessage::SetMode {
-            client_msg_id: id(37),
-            mode: "plan".into(),
-        },
-        ClientMessage::SetThoughtLevel {
-            client_msg_id: id(38),
-            thought_level: "high".into(),
-        },
-        ClientMessage::ListWorkflows {
-            client_msg_id: id(39),
-            session_id: session,
-        },
-        ClientMessage::ListSubagents {
-            client_msg_id: id(40),
-            session_id: session,
-        },
-        ClientMessage::GetSessionTarget {
-            client_msg_id: id(41),
-            session_id: session,
-        },
-        ClientMessage::SetSessionTarget {
-            client_msg_id: id(42),
-            session_id: session,
-            objective: "目标".into(),
-            token_budget: Some(1000),
-        },
-        ClientMessage::ScanMarketplace {
-            client_msg_id: id(30),
-            root: ".".into(),
-        },
-        ClientMessage::AcceptDiff {
-            client_msg_id: id(31),
-            session_id: session,
-            proposal_id: "proposal".into(),
-            summary: "summary".into(),
-        },
-        ClientMessage::RollbackDiff {
-            client_msg_id: id(32),
-            session_id: session,
-            proposal_id: "proposal".into(),
-        },
-        ClientMessage::PreviewDiff {
-            client_msg_id: id(33),
-            session_id: session,
-            proposal_id: "proposal".into(),
-        },
-        ClientMessage::SuggestCommitMessage {
-            client_msg_id: id(34),
-            session_id: session,
-        },
-        ClientMessage::GetSessionDiffSummary {
-            client_msg_id: id(44),
-            session_id: session,
-        },
-        ClientMessage::ListSessions {
-            client_msg_id: id(45),
-            workspace_id: None,
-        },
-        ClientMessage::RenameSession {
-            client_msg_id: id(46),
-            session_id: session,
-            title: "title".into(),
-        },
-        ClientMessage::PinSession {
-            client_msg_id: id(47),
-            session_id: session,
-            pinned: true,
-        },
-        ClientMessage::DeleteSession {
-            client_msg_id: id(48),
-            session_id: session,
-        },
-        ClientMessage::ForkSession {
-            client_msg_id: id(49),
-            session_id: session,
-        },
-        ClientMessage::UsageStats {
-            client_msg_id: id(50),
-            range: "all".into(),
-            time_zone: Some("Asia/Shanghai".into()),
-        },
-        ClientMessage::ArchiveSession {
-            client_msg_id: id(51),
-            session_id: session,
-            archived: false,
-        },
-        ClientMessage::SetModel {
-            client_msg_id: id(52),
-            model: "probe".into(),
-        },
-    ]
-}
-
-/// The configuration the serving process actually started with.
-///
-/// Nothing here is chosen by the browser: each field is a decision the host had
-/// to make before it could bind a socket, and the host fills this in once, at
-/// startup. It exists because most of the settings panel's categories have no
-/// editable field to show — the answer is a fact about the deployment, and the
-/// honest control surface says which fact and why the browser cannot change it,
-/// rather than rendering an input that goes nowhere.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct HostInfo {
-    /// Version of the binary serving the browser, which is not the version of
-    /// the bundle the browser loaded.
-    pub host_version: String,
-    /// The wire protocol the handshake agreed on.
-    pub protocol_version: u16,
-    /// The address the socket really bound, `127.0.0.1:8787` for the loopback
-    /// host. Reachability beyond that is a property of the proxy in front.
-    pub bind_addr: String,
-    pub state_backend: StateBackend,
-    /// Safe Web Mode is on: the refusals listed in `safe_mode_refusals` are in
-    /// force right now, not merely available as a policy.
-    pub safe_web_mode: bool,
-    /// Absolute path of the bound workspace. `None` means the browser can read,
-    /// search, write or run in no workspace at all.
-    pub workspace_root: Option<String>,
-    /// A token has to accompany every request.
-    pub token_required: bool,
-    /// The public name declared for this host, if any. The `Host`/`Origin` rules
-    /// key off it, so the browser is shown the value instead of inferring it
-    /// from `location.host`, which a proxy may have rewritten.
-    pub public_origin: Option<String>,
-    pub preview_proxy: PreviewProxyState,
-    /// Ports the preview proxy forwards; empty unless it is enabled.
-    pub preview_ports: Vec<u16>,
-    pub update_mode: UpdateMode,
-    /// What Safe Web Mode withholds, each paired with the error code it returns.
-    /// Populated whether or not Safe Web Mode is on, so the panel can say what
-    /// turning it on would cost.
-    pub safe_mode_refusals: Vec<SafeModeRefusal>,
-}
-
-impl Default for HostInfo {
-    fn default() -> Self {
-        Self {
-            host_version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol_version: PROTOCOL_VERSION,
-            bind_addr: String::new(),
-            state_backend: StateBackend::default(),
-            safe_web_mode: false,
-            workspace_root: None,
-            token_required: false,
-            public_origin: None,
-            preview_proxy: PreviewProxyState::default(),
-            preview_ports: Vec::new(),
-            update_mode: UpdateMode::default(),
-            safe_mode_refusals: safe_mode_refusals(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -3199,7 +2679,7 @@ impl WorkspaceAdapter {
         })
     }
 
-    /// The canonical path this adapter is confined to. Reported to the browser
+    /// The canonical path this adapter is confined to. Reported to the client
     /// so the settings panel can name the workspace it is talking about instead
     /// of the workspace it assumes.
     #[must_use]
@@ -3396,7 +2876,7 @@ impl WorkspaceAdapter {
     }
 
     fn write(&self, relative: &str, contents: &str) -> Result<usize, ServerMessage> {
-        // This seam only ever carries text, so overwriting a file the browser
+        // This seam only ever carries text, so overwriting a file the client
         // could not have read is refused: those bytes can be neither shown nor
         // put back, and a write that destroys them silently is not a write this
         // GUI can take responsibility for.
@@ -4041,7 +3521,6 @@ pub struct Engine {
     /// `0` means never, which is what makes the first listing do the work
     /// instead of skipping it.
     chaos_store_scan_ms: Arc<AtomicU64>,
-    host_info: Arc<HostInfo>,
     /// How long the built-in stand-in responder waits between chunks. A real
     /// adapter is paced by whatever produces it, so this only shapes the answer a
     /// host without a provider gives.
@@ -4441,17 +3920,6 @@ impl Engine {
         sqlite_store: Option<Arc<SqliteSessionStore>>,
     ) -> Self {
         let initial_settings = state.settings.clone();
-        // Derived before `path` and `sqlite_store` are moved into the struct.
-        let state_backend = if sqlite_store.is_some() {
-            StateBackend::Sqlite
-        } else if path.is_some() {
-            StateBackend::JsonFile
-        } else {
-            StateBackend::Memory
-        };
-        let workspace_root = workspace
-            .as_ref()
-            .map(|adapter| adapter.root().display().to_string());
         Self {
             subagents: Arc::new(Mutex::new(HashMap::new())),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
@@ -4476,11 +3944,6 @@ impl Engine {
             chaos_store_root: None,
             chaos_store_scan_ms: Arc::new(AtomicU64::new(0)),
             demo_chunk_gap: Duration::ZERO,
-            host_info: Arc::new(HostInfo {
-                state_backend,
-                workspace_root,
-                ..HostInfo::default()
-            }),
         }
     }
 
@@ -4630,8 +4093,8 @@ impl Engine {
 
     /// Pending interactions of one session, counted for the sidebar badge.
     ///
-    /// Web 桥的会话索引行带 `pendingInteractionSummary`；那格数字以前是写死的
-    /// 零，而审批与提问确实会停在会话里等人。返回 `(approvals, questions)`；
+    /// 客户端会话索引可用 `pendingInteractionSummary` 展示待处理交互；这格数字
+    /// 不能写死为零，因为审批与提问确实会停在会话里等人。返回 `(approvals, questions)`；
     /// 会话不存在或没有 pending 时是 `(0, 0)`——「没有交互」是事实，不是省略。
     #[must_use]
     pub fn pending_interaction_counts(&self, session_id: Uuid) -> (usize, usize) {
@@ -4657,34 +4120,6 @@ impl Engine {
             .map(str::trim)
             .filter(|level| !level.is_empty())
             .map(str::to_owned)
-    }
-
-    /// Fill in the parts of [`HostInfo`] that only the serving process knows.
-    ///
-    /// `state_backend` and `workspace_root` are derived by the engine from the
-    /// store and workspace it was actually handed, and any value the host sets
-    /// for them is ignored: a panel claiming SQLite, or naming a workspace the
-    /// engine cannot reach, would be worse than no panel at all.
-    #[must_use]
-    pub fn with_host_info(mut self, configure: impl FnOnce(&mut HostInfo)) -> Self {
-        let mut info = (*self.host_info).clone();
-        configure(&mut info);
-        info.state_backend = if self.sqlite_store.is_some() {
-            StateBackend::Sqlite
-        } else if self.store_path.is_some() {
-            StateBackend::JsonFile
-        } else {
-            StateBackend::Memory
-        };
-        info.workspace_root = self
-            .workspace
-            .as_ref()
-            .map(|workspace| workspace.root().display().to_string());
-        // Same reason: the refusal list is what the transport enforces, and a
-        // host that cleared it would show a Safe Web Mode user an empty panel.
-        info.safe_mode_refusals = safe_mode_refusals();
-        self.host_info = Arc::new(info);
-        self
     }
 
     pub fn with_tui_session_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
@@ -4728,7 +4163,7 @@ impl Engine {
 
     /// Find — or create — the workspace that *is* this directory.
     ///
-    /// The point is that a conversation created in the browser in `~/project-a`
+    /// The point is that a conversation created in the client in `~/project-a`
     /// and one the terminal had in `~/project-a` land in the same workspace,
     /// under the same id, rather than in a name the client invented and a
     /// directory the host guessed.
@@ -4757,8 +4192,8 @@ impl Engine {
     /// every conversation the terminal had — in whichever directory it had it —
     /// is a session here: listed, opened, and continuable.
     ///
-    /// This is deliberately *not* a browser message. The root is the machine's
-    /// own Chaos home, decided by the operator's environment, and a browser that
+    /// This is deliberately *not* a client message. The root is the machine's
+    /// own Chaos home, decided by the operator's environment, and a client that
     /// could name an arbitrary root would be naming arbitrary directories.
     /// [`ClientMessage::ImportTuiSession`] stays the allowlisted, one-at-a-time
     /// path for a client that was handed a root; this is the host saying "the
@@ -4953,8 +4388,8 @@ impl Engine {
     /// Names the CLI's session store this host mirrors, so a listing can refresh
     /// it later without being told where it is a second time.
     ///
-    /// Only the host calls this. A browser is never handed a root, because a root
-    /// a browser chooses is a directory the browser chooses.
+    /// Only the host calls this. A client is never handed a root, because a root
+    /// a client chooses is a directory the client chooses.
     #[must_use]
     pub fn with_chaos_store_root(mut self, root: impl AsRef<Path>) -> Self {
         let given = root.as_ref();
@@ -5247,9 +4682,9 @@ impl Engine {
 
     /// 汇总本引擎记录的真实用量，返回官方前端 `AppUsageSnapshot` 形状的 JSON 值。
     ///
-    /// 这是 Web 桥 `usage-stats.getAppUsageSnapshot` 的取数入口。没有 sqlite /
-    /// JSON 后端（纯内存）时同样可答，只是账本只覆盖本进程的生命周期。
-    /// 任何内部失败都降级为形状完整的空快照，而不是让浏览器看到报错。
+    /// 这是引擎客户端 API 的用量快照入口。没有 sqlite / JSON 后端（纯内存）时
+    /// 同样可答，只是账本只覆盖本进程的生命周期。
+    /// 任何内部失败都降级为形状完整的空快照，而不是让客户端看到报错。
     #[must_use]
     pub fn app_usage_snapshot(&self, range: &str, time_zone: Option<&str>) -> serde_json::Value {
         let events = self.handle(ClientMessage::UsageStats {
@@ -5862,8 +5297,8 @@ impl Engine {
                                 ok: true,
                             },
                         );
-                        // 真实轮次的账目同时作为 Usage 事件发出去：Web 桥把会话快照
-                        // 的 cumulative 挂在这条事件上。此前只有 tool-adapter 的伪造
+                        // 真实轮次的账目同时作为 Usage 事件发出去：客户端可以从会话快照
+                        // 与事件中读取累计值。此前只有 tool-adapter 的伪造
                         // 分支会发 Usage，真实数字只躺在账本里，会话面板永远是 0。
                         if let Some(reported_usage) = reported.as_ref() {
                             let event = {
@@ -6085,7 +5520,6 @@ impl Engine {
             | ClientMessage::ProposeTerminal { client_msg_id, .. }
             | ClientMessage::ProposeGitMutation { client_msg_id, .. }
             | ClientMessage::GetSettings { client_msg_id }
-            | ClientMessage::GetHostInfo { client_msg_id }
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
             | ClientMessage::SuggestCommitMessage { client_msg_id, .. }
@@ -6853,7 +6287,7 @@ impl Engine {
                     return answer(false, Some(code));
                 }
                 // The probe can only be about the endpoint this host actually
-                // talks to: `base_url` came from a browser, and sending the
+                // talks to: `base_url` came from a client, and sending the
                 // host's credential to whatever a page asks for is not a
                 // "validation" feature.
                 let Some(adapter) = &self.adapter else {
@@ -7455,11 +6889,6 @@ impl Engine {
                     has_api_key: settings.has_api_key,
                 }]
             }
-            ClientMessage::GetHostInfo { .. } => {
-                vec![ServerMessage::HostInfo {
-                    info: (*self.host_info).clone(),
-                }]
-            }
             ClientMessage::UpdateSettings {
                 base_url, model, ..
             } => {
@@ -7761,7 +7190,7 @@ impl Engine {
                             bytes,
                         });
                         if let Some(preview) = undo {
-                            // The browser's diff tab reads this: without it the
+                            // The client's diff tab reads this: without it the
                             // proposal exists but nothing can name it back.
                             session.sequence += 1;
                             events.push(ServerMessage::DiffPreview {
@@ -8286,7 +7715,7 @@ impl Engine {
             "rejected"
         };
         let mut events = vec![ServerMessage::Ack { client_msg_id }];
-        // A refusal is not a resolution: `diff_resolved` clears the browser's
+        // A refusal is not a resolution: `diff_resolved` clears the client's
         // preview, so emitting it after a failed rollback would hide the refusal and
         // leave the file looking settled when nothing moved.
         let resolved = result.is_ok();
@@ -8818,7 +8247,7 @@ mod tests {
     #[test]
     fn streaming_headless_turn_reports_stderr_api_retry_and_still_delivers_text() {
         use std::os::unix::fs::PermissionsExt;
-        use std::sync::{Arc as StdArc, Mutex as StdMutex};
+        use std::sync::Mutex as StdMutex;
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("chaos-fixture");
         std::fs::write(
@@ -9598,7 +9027,7 @@ mod tests {
         });
         // A well-formed URL with no Provider configured cannot be probed either;
         // saying "not configured" is only honest if nothing was contacted, which
-        // is what `the_validation_request_never_contacts_a_browser_supplied_url`
+        // is what `the_validation_request_never_contacts_a_client_supplied_url`
         // holds to against a listening endpoint.
         assert!(
             matches!(&valid_shape[0], ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "provider_not_configured")
@@ -9607,7 +9036,7 @@ mod tests {
 
     /// A host without a Provider has no catalog to list, which is a different
     /// answer from "the Provider serves no models" and from "the Provider is down":
-    /// the browser draws a plain text field for the first and an error for the others.
+    /// the client draws a plain text field for the first and an error for the others.
     #[test]
     fn a_host_without_a_provider_reports_no_model_catalog() {
         let engine = Engine::new();
@@ -9850,8 +9279,7 @@ mod tests {
         }
     }
 
-    /// The host shape the Web binary assembles for a workspace root: the same
-    /// workspace adapter, the same `ProcessGitAdapter`, and a prompt adapter.
+    /// A host configured for a workspace root with its git and prompt adapters.
     fn engine_for_repo(root: &Path, reply: &'static str) -> (Engine, Arc<RecordingPromptAdapter>) {
         let recorder = Arc::new(RecordingPromptAdapter {
             reply,
@@ -10149,8 +9577,8 @@ mod tests {
 
     #[test]
     fn a_host_without_a_git_adapter_refuses_rather_than_inventing_wording() {
-        // The Web binary wires a Git adapter; a host built without one cannot read
-        // the staged area at all, and must say which half is missing instead of
+        // A host built without a Git adapter cannot read the staged area at all,
+        // and must say which half is missing instead of
         // asking the Provider about an empty diff.
         let (directory, head) = repo_with_staged_edit("two\n");
         let recorder = Arc::new(RecordingPromptAdapter {
@@ -10273,7 +9701,7 @@ mod tests {
             "{first:?}"
         );
         // A socket replay may not pay the Provider a second time, and may not
-        // hand the browser a second answer for the same request.
+        // hand the client a second answer for the same request.
         assert!(
             matches!(replay.as_slice(), [ServerMessage::Ack { .. }]),
             "{replay:?}"
@@ -10328,7 +9756,7 @@ mod tests {
         });
         match &events[1] {
             ServerMessage::CommitMessageSuggestion { truncated, .. } => {
-                assert!(*truncated, "the browser was told the whole diff was read")
+                assert!(*truncated, "the client was told the whole diff was read")
             }
             other => panic!("{other:?}"),
         }
@@ -10527,87 +9955,6 @@ mod tests {
         assert!(
             matches!(&rejected[0], ServerMessage::Error { code, .. } if code == "attachment_rejected")
         );
-    }
-
-    /// One message per wire tag, so the Safe Web Mode policy is checked against
-    /// every message the socket can receive rather than a sample of them.
-
-    #[test]
-    fn safe_mode_tags_are_the_serde_wire_tags_of_every_message() {
-        use std::collections::HashSet;
-        // The panel renders these tags and the refusal list is written in them, so a
-        // tag that drifted from serde would silently un-refuse a message.
-        let mut tags = HashSet::new();
-        for message in client_message_samples() {
-            let encoded = serde_json::to_value(&message).expect("client message serialises");
-            let wire = encoded
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .expect("internally tagged enum")
-                .to_owned();
-            assert_eq!(wire.as_str(), safe_mode_tag(&message), "tag for {wire}");
-            assert!(
-                tags.insert(wire.clone()),
-                "two messages share the tag {wire}"
-            );
-        }
-        assert_eq!(tags.len(), 52, "one sample per protocol message");
-    }
-
-    #[test]
-    fn safe_mode_policy_never_refuses_the_read_only_surface() {
-        let messages = client_message_samples();
-        for (tag, capability) in SAFE_MODE_REFUSALS {
-            assert!(
-                !capability.trim().is_empty(),
-                "{tag} has no capability text"
-            );
-            let refused = messages
-                .iter()
-                .find(|message| safe_mode_tag(message) == *tag)
-                .unwrap_or_else(|| {
-                    panic!("{tag} is listed as refused but no client message carries that tag")
-                });
-            assert!(
-                !safe_mode_allows(refused),
-                "{tag} is listed but the policy allows it"
-            );
-        }
-        let allowed: Vec<&'static str> = messages
-            .iter()
-            .filter(|message| safe_mode_allows(message))
-            .map(safe_mode_tag)
-            .collect();
-        for expected in [
-            "create_session",
-            "submit",
-            "cancel",
-            "snapshot",
-            "list_files",
-            "read_file",
-            "search_files",
-            "get_settings",
-            "get_host_info",
-            "respond_question",
-            "scan_marketplace",
-            "import_tui_session",
-            "preview_diff",
-            "list_modes",
-            "list_workflows",
-            "list_subagents",
-            "get_session_target",
-            "get_session_diff_summary",
-            "list_sessions",
-        ] {
-            assert!(
-                allowed.contains(&expected),
-                "{expected} must stay reachable in Safe Web Mode"
-            );
-        }
-        // The two halves have to cover the protocol exactly once, so a refusal can
-        // neither overlap the allowed set nor point at nothing.
-        assert_eq!(messages.len(), SAFE_MODE_REFUSALS.len() + allowed.len());
-        assert_eq!(safe_mode_refusals().len(), SAFE_MODE_REFUSALS.len());
     }
 
     #[test]
@@ -11383,9 +10730,9 @@ mod tests {
         assert_eq!(engine.pending_interaction_counts(Uuid::new_v4()), (0, 0));
     }
 
-    /// Provider 在 `usage` 帧里报了多少，账本上就得是多少——设置页那个「使用统计」
+    /// Provider 在 `usage` 帧里报了多少，账本上就得是多少——「使用统计」快照
     /// 有没有数，全靠这条链：adapter 的 `TurnReport` → `record_turn` →
-    /// `app_usage_snapshot`（Web 桥 `usage-stats.getAppUsageSnapshot` 的取数处）。
+    /// `app_usage_snapshot`。
     /// 聚合函数自己有单测，但「一次真实轮次」到「快照里的数字」之间没人验过。
     #[test]
     fn reported_provider_usage_reaches_the_app_usage_snapshot() {

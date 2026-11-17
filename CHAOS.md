@@ -1,6 +1,6 @@
 # Chaos AI 编码助手
 
-Chaos 是终端 AI 编码助手。模型、接口地址和密钥均由用户自行配置：Chaos 不提供
+Chaos 是终端 AI 编码助手，只提供 TUI，不提供浏览器 UI。模型、接口地址和密钥均由用户自行配置：Chaos 不提供
 `login` / `logout` / `/login` 命令，也不会为了调用模型去做 xAI 登录——聊天请求
 只使用你在 `config.toml` 里配置的 Provider 和密钥。
 

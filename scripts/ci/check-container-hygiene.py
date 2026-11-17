@@ -4,10 +4,10 @@
 Every shell script under `scripts/` is read, and a mount of the checkout is what decides
 who gets judged. Only one of them has such a mount today: `scripts/verify-in-docker.sh`
 bind-mounts the repository at `/src`, while `scripts/install-sh-in-docker.sh`,
-`scripts/install-integrity-in-docker.sh`, `scripts/npm-install-in-docker.sh`,
-`scripts/remote-acceptance-in-docker.sh` and `scripts/web-deployment-in-docker.sh` mount
-a throwaway lab directory instead. The distinction matters because the container runs as
-root, so anything it creates through the mount belongs to root inside the developer's
+`scripts/install-integrity-in-docker.sh`, `scripts/npm-install-in-docker.sh` and
+`scripts/remote-acceptance-in-docker.sh` mount a throwaway lab directory instead. The
+distinction matters because the container runs as root, so anything it creates through
+the mount belongs to root inside the developer's
 checkout.
 
 Three ways this went wrong have been measured on this machine:

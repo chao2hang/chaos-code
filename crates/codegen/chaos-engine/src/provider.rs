@@ -1,9 +1,9 @@
 //! Host-configured inference provider.
 //!
-//! The GUI protocol deliberately never carries an API key, so the credential
+//! The client protocol deliberately never carries an API key, so the credential
 //! lives on the host side only. These types read it from the process
 //! environment and talk to an OpenAI-compatible endpoint. Nothing here is
-//! reachable from a browser message: the base URL, model and key are fixed by
+//! reachable from a client message: the base URL, model and key are fixed by
 //! whoever started the process.
 
 use crate::PromptAdapter;
@@ -17,7 +17,7 @@ use std::{
 /// budget because a long generation legitimately takes minutes.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
-/// A model catalogue is a readout, not a turn. The browser connection's frame
+/// A model catalogue is a readout, not a turn. The client connection's frame
 /// worker waits for it, so an endpoint that accepts the connection and then goes
 /// quiet gets seconds rather than the five minutes a real generation may take.
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -233,7 +233,7 @@ impl HttpPromptAdapter {
     }
 
     /// The catalogue read gets a short budget: an endpoint that accepts the
-    /// connection and then stops answering must not hold the browser connection's
+    /// connection and then stops answering must not hold the client connection's
     /// frame worker for the five minutes a real generation is allowed to take.
     fn probe_client(&self) -> Result<reqwest::blocking::Client, String> {
         self.client_with(PROBE_CONNECT_TIMEOUT, PROBE_TIMEOUT)

@@ -125,7 +125,7 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本是 `
 
 **2026-09-24 复核与版本决策**：Cargo/npm 仍为 `0.4.2`，仓库已有 `v0.4.2` tag。release workflow 已强制签名/`require-sig`，installer 也默认 fail-closed；本轮确认真实 release dispatch 未执行，所以 GitHub signing preflight 的真实 secret public/private match 与 Windows installer runner 仍未验证。MT-1 七个 npm packages 仍受 Windows `0.0.1-security` placeholder 阻塞；未获包所有者处理、签名 secret/runner 及 release 负责人审批前，不创建 `0.4.3` tag/Release。
 
-**验收证据**：CI 检查的 PR、一次真实的 `npm install` 输出。本地能运行 GUI npm/Engine/Web 和临时 Chromium flow；官方 Windows npm subpackage 当前由 `0.0.1-security` placeholder 占有导致 package installation fails，必须由包所有者通过 npm support reclaim 或批准 new names/version-pin migration，不能本地镜像测试视作发版通过。
+**验收证据**：CI 检查的 PR、一次真实的 `npm install` 输出。本地只验证终端 npm 包装与安装器路径；旧 GUI/Engine/Web 和 Chromium 流程已随 Web/GUI 产品线退役，不再是验收项。官方 Windows npm subpackage 当前由 `0.0.1-security` placeholder 占有导致 package installation fails，必须由包所有者通过 npm support reclaim 或批准 new names/version-pin migration，不能本地镜像测试视作发版通过。
 
 **2026-10-04 复核**：判决**保持开放**，两侧各自重测，结论相反。仓库侧已闭环：
 `bash scripts/ci/check-versions.sh` → `OK — Cargo and all npm packages agree on 0.4.2`，元包、六

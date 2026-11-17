@@ -83,13 +83,11 @@ chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 
 ---
 
-## WebSocket 中继
+## Grok WebSocket 中继（Chaos 不支持）
 
-要让代理可以从公网访问，请把代理接到中继上，并让浏览器指向同一个中继：
+上游 `headless --grok-ws-url` 使用 Grok/xAI 登录态，不是 ACP 的 `serve` 传输。Chaos 采用 BYOK，不提供 xAI 登录，因此该中继模式在 Chaos 中不可用，也不代表 Chaos 提供浏览器 UI。
 
-```bash
-chaos agent --always-approve headless --grok-ws-url wss://your-relay.example.com/ws
-```
+需要远程 ACP 接入时，请使用前文的 `chaos agent serve`，并让受支持的客户端通过令牌连接。
 
 ---
 
