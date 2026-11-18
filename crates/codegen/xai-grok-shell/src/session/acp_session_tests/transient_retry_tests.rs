@@ -403,3 +403,148 @@ async fn invalid_image_code_is_never_transient_retried() {
         })
         .await;
 }
+
+fn encrypted_reasoning_item(id: &str, encrypted: Option<&str>) -> ConversationItem {
+    ConversationItem::Reasoning(xai_grok_sampling_types::rs::ReasoningItem {
+        id: id.to_string(),
+        summary: vec![xai_grok_sampling_types::rs::SummaryPart::SummaryText(
+            xai_grok_sampling_types::rs::SummaryTextContent {
+                text: "thought about it".to_string(),
+            },
+        )],
+        content: None,
+        encrypted_content: encrypted.map(str::to_owned),
+        status: None,
+    })
+}
+
+fn channel_lost_error(status: u16) -> xai_grok_sampler::SamplingErrorInfo {
+    let mut error = error_of_kind(xai_grok_sampler::SamplingErrorKind::Api, Some(status));
+    error.message = "API error (status 409 Conflict): new_api_error: No channel binding \
+                     exists for this encrypted Responses reasoning session. The original \
+                     channel cannot be recovered; start a new conversation."
+        .to_string();
+    error
+}
+
+/// The reported bug: a 409 channel-binding failure used to kill the turn. It must strip the
+/// dead ciphertext from persisted history and resubmit once.
+#[tokio::test(flavor = "current_thread")]
+async fn encrypted_reasoning_channel_loss_strips_history_and_resubmits() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, _rx) = make_actor().await;
+            actor.chat_state_handle.replace_conversation(vec![
+                ConversationItem::system("sys"),
+                encrypted_reasoning_item("rs_1", Some("opaque-blob")),
+                ConversationItem::user("continue"),
+            ]);
+            // `get_conversation` is a mailbox round-trip, so the seed above is applied.
+            assert_eq!(actor.chat_state_handle.get_conversation().await.len(), 3);
+
+            let result = actor
+                .handle_sampling_failure(
+                    channel_lost_error(409),
+                    0,
+                    transient_state(0, true),
+                    false,
+                    TurnParkState::Fresh,
+                )
+                .await;
+            assert!(
+                matches!(
+                    &result,
+                    Ok(SamplerFailureRecovery::StripEncryptedReasoningAndResubmit { stripped: 1 })
+                ),
+                "a channel-binding 409 must strip and resubmit, got {:?}",
+                result.as_ref().err().map(|e| e.message.as_str())
+            );
+
+            let conv = actor.chat_state_handle.get_conversation().await;
+            assert_eq!(conv.len(), 3, "summary-bearing reasoning must survive");
+            assert!(
+                !conv.iter().any(|item| matches!(
+                    item,
+                    ConversationItem::Reasoning(r) if r.encrypted_content.is_some()
+                )),
+                "the dead ciphertext must be removed from stored history: {conv:?}"
+            );
+        })
+        .await;
+}
+
+/// A provider that keeps rejecting after the rewrite must not loop; the terminal error must
+/// tell the user which backend still works.
+#[tokio::test(flavor = "current_thread")]
+async fn encrypted_reasoning_channel_loss_second_failure_is_actionable() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, _rx) = make_actor().await;
+            let state = TransientRetryState {
+                encrypted_reasoning_reset_attempted: true,
+                ..transient_state(0, true)
+            };
+            let Err(error) = actor
+                .handle_sampling_failure(
+                    channel_lost_error(409),
+                    0,
+                    state,
+                    false,
+                    TurnParkState::Fresh,
+                )
+                .await
+            else {
+                panic!("a second channel loss must be terminal");
+            };
+            let message = error
+                .data
+                .as_ref()
+                .and_then(|data| data.as_str())
+                .unwrap_or_default();
+            assert!(
+                message.contains("chat_completions") && message.contains("api_backend"),
+                "the terminal hint must name the working backend: {message}"
+            );
+        })
+        .await;
+}
+
+/// Only the encrypted-reasoning class recovers: an unrelated 409 stays terminal and does not
+/// claim the history was rewritten.
+#[tokio::test(flavor = "current_thread")]
+async fn unrelated_409_stays_terminal() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, _rx) = make_actor().await;
+            actor.chat_state_handle.replace_conversation(vec![
+                encrypted_reasoning_item("rs_1", Some("opaque-blob")),
+                ConversationItem::user("continue"),
+            ]);
+            let mut error = error_of_kind(xai_grok_sampler::SamplingErrorKind::Api, Some(409));
+            error.message = "merge conflict: branch already exists".to_string();
+
+            let result = actor
+                .handle_sampling_failure(
+                    error,
+                    0,
+                    transient_state(0, true),
+                    false,
+                    TurnParkState::Fresh,
+                )
+                .await;
+            assert!(result.is_err(), "an unrelated 409 must stay terminal");
+
+            let conv = actor.chat_state_handle.get_conversation().await;
+            assert!(
+                conv.iter().any(|item| matches!(
+                    item,
+                    ConversationItem::Reasoning(r) if r.encrypted_content.is_some()
+                )),
+                "an unrelated 409 must not rewrite history"
+            );
+        })
+        .await;
+}

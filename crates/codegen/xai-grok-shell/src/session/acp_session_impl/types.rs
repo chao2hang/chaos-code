@@ -55,6 +55,9 @@ pub(crate) enum SamplerFailureRecovery {
         kind: xai_grok_sampler::SamplingErrorKind,
         status_code: Option<u16>,
     },
+    /// The provider no longer recognizes the channel that minted the stored encrypted
+    /// reasoning. History was rewritten (ciphertext dropped) and the turn should resubmit once.
+    StripEncryptedReasoningAndResubmit { stripped: usize },
 }
 
 /// Outcome of a single turn attempt via the sampler-based path.
@@ -76,6 +79,10 @@ pub(crate) enum SamplerTurnOutcome {
     RetryTransient {
         kind: xai_grok_sampler::SamplingErrorKind,
         status_code: Option<u16>,
+    },
+    /// Mirrors [`SamplerFailureRecovery::StripEncryptedReasoningAndResubmit`].
+    StripEncryptedReasoningAndResubmit {
+        stripped: usize,
     },
 }
 

@@ -482,12 +482,16 @@ impl SessionEvent {
             SessionEvent::CompactionCancelled => "压缩已取消。".to_string(),
             SessionEvent::RetryFailed { error, error_type } => {
                 use crate::app::error_display::WireErrorType;
-                if WireErrorType::parse(error_type.as_deref())
-                    == WireErrorType::EncryptedContentMismatch
-                {
-                    "此会话的对话历史与当前模型不兼容。请开始新会话。".to_string()
-                } else {
-                    format!("重试失败：{error}")
+                match WireErrorType::parse(error_type.as_deref()) {
+                    WireErrorType::EncryptedContentMismatch => {
+                        "此会话的对话历史与当前模型不兼容。请开始新会话。".to_string()
+                    }
+                    WireErrorType::EncryptedReasoningChannel => {
+                        "提供商已无法解密本会话保存的加密推理（上游通道已变更），自动清理后重试仍失败。\
+                         请将该提供商的 api_backend 改为 \"chat_completions\" 后重新发送，或开始新会话。"
+                            .to_string()
+                    }
+                    _ => format!("重试失败：{error}"),
                 }
             }
             SessionEvent::RequestFailed {
@@ -966,6 +970,23 @@ mod tests {
         assert_eq!(
             event.message(),
             "此会话的对话历史与当前模型不兼容。请开始新会话。"
+        );
+    }
+
+    #[test]
+    fn retry_failed_encrypted_reasoning_channel_is_actionable() {
+        let event = SessionEvent::RetryFailed {
+            error: "raw API error message".into(),
+            error_type: Some("encrypted_reasoning_channel".into()),
+        };
+        let message = event.message();
+        assert!(
+            message.contains("api_backend") && message.contains("chat_completions"),
+            "the channel-loss message must name the working backend: {message}"
+        );
+        assert!(
+            !message.contains("raw API error message"),
+            "the raw wire error must not replace the actionable hint: {message}"
         );
     }
 

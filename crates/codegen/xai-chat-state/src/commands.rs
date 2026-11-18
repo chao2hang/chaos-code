@@ -191,6 +191,11 @@ pub enum ChatStateCommand {
         reply: tokio::sync::oneshot::Sender<crate::StripOutcome>,
     },
 
+    /// Persist a strip of encrypted reasoning the provider can no longer decrypt
+    /// (Responses backend channel loss). Replies with the number of items changed;
+    /// `0` means the history held no encrypted reasoning.
+    StripEncryptedReasoning { reply: oneshot::Sender<usize> },
+
     /// Atomically align the leading `System` message with `prompt`, persisting inside the actor.
     /// Serializes with turn pushes so a mid-turn reconnect cannot lose updates the way RMW would.
     /// A changed head re-bases `total_tokens`; acceptable because it invalidates the KV prefix anyway.

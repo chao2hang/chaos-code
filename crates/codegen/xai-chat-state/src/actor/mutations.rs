@@ -220,6 +220,23 @@ impl ChatStateActor {
         disk_ack.map(|ack| (stripped, ack))
     }
 
+    /// Drop encrypted reasoning a Responses provider can no longer decrypt, persisting the rewrite.
+    /// Full replace because encrypted-only items are removed; `replace_conversation` reseeds
+    /// token totals and rebases the turn capture for the new ordinals.
+    pub(super) fn strip_encrypted_reasoning(&mut self) -> usize {
+        // Clone, do not `mem::take`: `replace_conversation` snapshots the turn-capture tail first.
+        let mut conversation = self.state.conversation.clone();
+        let stripped = xai_grok_sampling_types::strip_encrypted_reasoning(&mut conversation);
+        if stripped > 0 {
+            tracing::warn!(
+                stripped,
+                "stripped encrypted reasoning from stored conversation"
+            );
+            self.replace_conversation(conversation, false);
+        }
+        stripped
+    }
+
     /// Make memory match the disk-authoritative switch for one generation.
     pub(super) fn converge_working_directory_switch(
         &mut self,

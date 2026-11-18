@@ -1087,6 +1087,95 @@ async fn strip_conversation_images_is_a_noop_without_images() {
     );
 }
 
+fn reasoning_item(id: &str, summary: &str, encrypted: Option<&str>) -> ConversationItem {
+    ConversationItem::Reasoning(xai_grok_sampling_types::rs::ReasoningItem {
+        id: id.to_string(),
+        summary: vec![xai_grok_sampling_types::rs::SummaryPart::SummaryText(
+            xai_grok_sampling_types::rs::SummaryTextContent {
+                text: summary.to_string(),
+            },
+        )],
+        content: None,
+        encrypted_content: encrypted.map(str::to_owned),
+        status: None,
+    })
+}
+
+#[tokio::test]
+async fn strip_encrypted_reasoning_persists_and_drops_ciphertext_only_items() {
+    let mut h = TestHarness::with_conversation(vec![
+        ConversationItem::system("sys"),
+        reasoning_item("rs_1", "thought about it", Some("blob-1")),
+        ConversationItem::user("continue"),
+        ConversationItem::Reasoning(xai_grok_sampling_types::rs::ReasoningItem {
+            id: "rs_2".to_string(),
+            summary: Vec::new(),
+            content: None,
+            encrypted_content: Some("blob-2".to_string()),
+            status: None,
+        }),
+        ConversationItem::assistant("answer"),
+    ]);
+
+    assert_eq!(
+        h.handle.strip_encrypted_reasoning().await,
+        Some(2),
+        "both ciphertext-bearing items must be reported as changed"
+    );
+
+    let conv = h.handle.get_conversation().await; // sync point
+    assert_eq!(conv.len(), 4, "ciphertext-only reasoning must be removed");
+    let Some(ConversationItem::Reasoning(r)) = conv.get(1) else {
+        panic!("expected summary-bearing reasoning at index 1: {conv:?}");
+    };
+    assert!(r.encrypted_content.is_none(), "ciphertext must be cleared");
+    assert!(r.id.is_empty(), "dead-channel id must be cleared");
+    assert_eq!(r.summary.len(), 1, "visible summary must survive");
+    assert!(
+        !conv
+            .iter()
+            .any(|i| matches!(i, ConversationItem::Reasoning(r) if r.encrypted_content.is_some())),
+        "no encrypted reasoning may remain: {conv:?}"
+    );
+
+    assert!(
+        h.drain_persistence()
+            .iter()
+            .any(|r| matches!(r, PersistenceRecord::ReplaceHistory(_))),
+        "the strip must be persisted so a resume does not replay the dead ciphertext"
+    );
+    assert!(
+        h.drain_events()
+            .iter()
+            .any(|e| matches!(e, ChatStateEvent::ConversationReset { .. })),
+        "a whole-history replace must reset derived state"
+    );
+
+    // A second strip has nothing left to do and must not write again.
+    assert_eq!(h.handle.strip_encrypted_reasoning().await, Some(0));
+    assert!(
+        h.drain_persistence().is_empty(),
+        "no-op strip must not rewrite history"
+    );
+}
+
+#[tokio::test]
+async fn strip_encrypted_reasoning_is_a_noop_without_ciphertext() {
+    let mut h = TestHarness::with_conversation(vec![
+        ConversationItem::user("plain"),
+        reasoning_item("chat-rs", "plain thinking", None),
+        ConversationItem::assistant("ok"),
+    ]);
+
+    assert_eq!(h.handle.strip_encrypted_reasoning().await, Some(0));
+    let conv = h.handle.get_conversation().await; // sync point
+    assert_eq!(conv.len(), 3);
+    assert!(
+        h.drain_persistence().is_empty(),
+        "nothing stripped must mean no persistence write"
+    );
+}
+
 #[tokio::test]
 async fn compaction_reseed_carries_provider_overhead() {
     let h = TestHarness::new();

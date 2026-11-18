@@ -2809,6 +2809,8 @@ impl SessionActor {
         );
         let mut transient_retry_attempts: u32 = 0;
         let transient_retry_enabled = self.transient_retry_enabled;
+        // At most one encrypted-reasoning strip per failure episode; reset on a successful response.
+        let mut encrypted_reasoning_reset_attempted = false;
         let mut turn_span_totals = TurnSpanTotals::default();
         let mut structured_output_retries: u32 = 0;
         let mut media_gen_resamples: u32 = 0;
@@ -3155,6 +3157,7 @@ impl SessionActor {
                         step_attempts: transient_retry_attempts,
                         prompt_attempts: self.transient_retries_prompt_total.get(),
                         episode_start: self.transient_episode_start.get(),
+                        encrypted_reasoning_reset_attempted,
                         enabled: transient_retry_enabled,
                     },
                     salvage.awaiting_continuation(),
@@ -3263,6 +3266,19 @@ impl SessionActor {
                     ))
                     .await;
                     sleep(delay).await;
+                    turn_phases.record_sampling_retries(1);
+                    continue;
+                }
+                Ok(SamplerTurnOutcome::StripEncryptedReasoningAndResubmit { stripped }) => {
+                    encrypted_reasoning_reset_attempted = true;
+                    xai_grok_telemetry::unified_log::warn(
+                        "shell.turn.encrypted_reasoning_resubmit",
+                        Some(self.session_info.id.0.as_ref()),
+                        Some(serde_json::json!({
+                            "loop_index": loop_index,
+                            "stripped": stripped,
+                        })),
+                    );
                     turn_phases.record_sampling_retries(1);
                     continue;
                 }
@@ -3408,6 +3424,7 @@ impl SessionActor {
             };
             auth_retry_schedule.reset_on_success();
             transient_retry_attempts = 0;
+            encrypted_reasoning_reset_attempted = false;
             self.transient_episode_start.set(None);
             let model_elapsed_ms = model_timer.elapsed().as_millis() as u64;
             let usage = response.usage.as_ref();

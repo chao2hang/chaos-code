@@ -334,6 +334,15 @@ impl ChatStateHandle {
         .unwrap_or(crate::StripOutcome::ActorUnavailable)
     }
 
+    /// Strip encrypted reasoning the provider can no longer decrypt and persist the result.
+    /// `None` if the actor is dead; `Some(0)` if nothing needed stripping.
+    pub async fn strip_encrypted_reasoning(&self) -> Option<usize> {
+        self.query("StripEncryptedReasoning", |reply| {
+            ChatStateCommand::StripEncryptedReasoning { reply }
+        })
+        .await
+    }
+
     /// Out-of-band history repair (`x.ai/session/repair`); see
     /// [`ChatStateCommand::RepairHistory`]. Returns `None` if the actor is
     /// dead, `Some(Err(_))` if a turn was in flight at processing time.

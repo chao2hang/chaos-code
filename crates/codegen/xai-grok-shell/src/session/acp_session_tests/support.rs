@@ -1176,6 +1176,7 @@ pub(crate) fn transient_state(step_attempts: u32, enabled: bool) -> TransientRet
         step_attempts,
         prompt_attempts: 0,
         episode_start: None,
+        encrypted_reasoning_reset_attempted: false,
         enabled,
     }
 }

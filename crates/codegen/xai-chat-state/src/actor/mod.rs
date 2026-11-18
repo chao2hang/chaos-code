@@ -339,6 +339,10 @@ impl ChatStateActor {
                     }
                 }
             }
+            ChatStateCommand::StripEncryptedReasoning { reply } => {
+                let stripped = self.strip_encrypted_reasoning();
+                let _ = reply.send(stripped);
+            }
             ChatStateCommand::ReplaceSystemHead { prompt, reply } => {
                 let changed = self.replace_system_head(&prompt);
                 let _ = reply.send(changed);

@@ -43,6 +43,9 @@ pub(crate) struct TransientRetryState {
     pub(crate) prompt_attempts: u32,
     /// First transient failure of the current recovery episode (`None` until one happens; cleared on success).
     pub(crate) episode_start: Option<tokio::time::Instant>,
+    /// Set after the encrypted-reasoning strip has been tried in this failure episode,
+    /// so a provider that keeps rejecting the replay cannot loop the rewrite.
+    pub(crate) encrypted_reasoning_reset_attempted: bool,
     pub(crate) enabled: bool,
 }
 
@@ -1208,16 +1211,18 @@ impl SessionActor {
         // On an in-flight salvage continuation, a max-tokens failure or a probable context overflow is not terminal.
         // Return before the budgeted-child rewrites so the marker survives for workflow children.
         // The request's usage never arrived; account for it fail-closed.
-        let encrypted_content_mismatch = matches!(error.kind, SamplingErrorKind::Api)
-            && error.status_code == Some(400)
-            && error.message.contains("encrypted_content");
+        let encrypted_reasoning_replay_error = matches!(error.kind, SamplingErrorKind::Api)
+            && xai_grok_sampling_types::is_encrypted_reasoning_replay_error(
+                error.status_code,
+                &error.message,
+            );
         let quiet_mid_salvage = mid_salvage_continuation
             && (error.kind == SamplingErrorKind::MaxTokensTruncation
                 || xai_grok_sampling_types::is_context_length_error(&error.message)
                 || (!matches!(
                     error.kind,
                     SamplingErrorKind::Auth | SamplingErrorKind::RateLimited
-                ) && !encrypted_content_mismatch
+                ) && !encrypted_reasoning_replay_error
                     && self.estimate_exceeds_error_context_window(&error).await));
         if quiet_mid_salvage {
             self.mark_turn_usage_unaccounted();
@@ -1263,6 +1268,69 @@ impl SessionActor {
                 &message,
             );
             return Err(acp::Error::internal_error().data(message));
+        }
+
+        // Encrypted reasoning replay: the provider lost the upstream channel that minted the
+        // stored ciphertext (409) or cannot decrypt it (400). The rest of the history is fine,
+        // so strip the ciphertext, persist the rewrite, and resubmit once.
+        // Budgeted workflow children keep failing closed via the guards above.
+        if encrypted_reasoning_replay_error {
+            if !transient.encrypted_reasoning_reset_attempted
+                && let Some(stripped) = self.chat_state_handle.strip_encrypted_reasoning().await
+                && stripped > 0
+            {
+                self.signals_handle()
+                    .record_error_typed("encrypted_reasoning_stripped");
+                xai_grok_telemetry::unified_log::warn(
+                    "shell.turn.encrypted_reasoning_stripped",
+                    Some(self.session_info.id.0.as_ref()),
+                    Some(serde_json::json!({
+                        "status_code": error.status_code,
+                        "stripped": stripped,
+                    })),
+                );
+                self.send_xai_notification(XaiSessionUpdate::RetryState(
+                    crate::extensions::notification::RetryState::Retrying {
+                        attempt: 1,
+                        max_retries: 1,
+                        reason: "Provider rejected the stored encrypted reasoning; removed it \
+                                 from history and retrying request"
+                            .to_string(),
+                        error_type: Some(
+                            crate::extensions::notification::ENCRYPTED_REASONING_CHANNEL_ERROR_TYPE
+                                .to_string(),
+                        ),
+                    },
+                ))
+                .await;
+                return Ok(SamplerFailureRecovery::StripEncryptedReasoningAndResubmit { stripped });
+            }
+
+            // No ciphertext left to strip, the actor is gone, or the strip-retry already
+            // happened this episode. Tell the user how to actually resume the conversation.
+            let friendly = if transient.encrypted_reasoning_reset_attempted {
+                "The provider still rejects this session after the stored encrypted reasoning \
+                 was removed. Switch this provider to `api_backend = \"chat_completions\"` in \
+                 config.toml to continue this conversation, or start a new session."
+            } else {
+                "The provider can no longer decrypt this session's stored reasoning (the \
+                 upstream channel changed), and there is no encrypted reasoning left to \
+                 remove. Switch this provider to `api_backend = \"chat_completions\"` in \
+                 config.toml to continue this conversation, or start a new session."
+            }
+            .to_string();
+            let error_type =
+                crate::extensions::notification::ENCRYPTED_REASONING_CHANNEL_ERROR_TYPE;
+            self.signals_handle().record_error_typed(error_type);
+            self.log_terminal_failure(error_type, error.status_code, &friendly);
+            self.send_xai_notification(XaiSessionUpdate::RetryState(
+                crate::extensions::notification::RetryState::Failed {
+                    error_type: error_type.to_string(),
+                    message: friendly.clone(),
+                },
+            ))
+            .await;
+            return Err(acp::Error::invalid_params().data(friendly));
         }
 
         // Never compact mid-salvage: the rewrite would drop the continue reminder and split the joined report
@@ -1313,25 +1381,7 @@ impl SessionActor {
             error.message.clone()
         };
 
-        // 2. Encrypted-content mismatch: friendly error, no retry.
-        //    Detect via the BadRequest and "encrypted_content" message pattern that `SamplingError::is_encrypted_content_error` used in the legacy path
-        if encrypted_content_mismatch {
-            self.signals_handle()
-                .record_error_typed("encrypted_content_mismatch");
-            let friendly = "This session's conversation history is incompatible \
-                            with the current model. Please start a new session."
-                .to_string();
-            self.log_terminal_failure("encrypted_content_mismatch", error.status_code, &friendly);
-            self.send_xai_notification(XaiSessionUpdate::RetryState(
-                crate::extensions::notification::RetryState::Failed {
-                    error_type: "encrypted_content_mismatch".to_string(),
-                    message: friendly.clone(),
-                },
-            ))
-            .await;
-            return Err(acp::Error::invalid_params().data(friendly));
-        }
-
+        // 2. Rate limit exhaustion.
         if matches!(error.kind, SamplingErrorKind::RateLimited) {
             self.log_terminal_failure("rate_limited", error.status_code, &detailed_message);
             self.send_xai_notification(XaiSessionUpdate::RetryState(
@@ -1962,6 +2012,9 @@ impl SessionActor {
             }
             SamplerFailureRecovery::RetryTransient { kind, status_code } => {
                 Ok(SamplerTurnOutcome::RetryTransient { kind, status_code })
+            }
+            SamplerFailureRecovery::StripEncryptedReasoningAndResubmit { stripped } => {
+                Ok(SamplerTurnOutcome::StripEncryptedReasoningAndResubmit { stripped })
             }
         }
     }

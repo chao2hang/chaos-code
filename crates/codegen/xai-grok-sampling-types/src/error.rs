@@ -846,6 +846,19 @@ pub fn is_retryable_api_status(status: StatusCode) -> bool {
     RetryPolicy::edge_client().should_retry(status.as_u16())
 }
 
+/// The Responses backend rejected replayed reasoning because the upstream channel that minted the
+/// encrypted blob is gone (409 from gateways, 400 from some) or the blob cannot be decrypted.
+/// Recovery strips `encrypted_content` from stored history and resubmits instead of failing the turn.
+pub fn is_encrypted_reasoning_replay_error(status: Option<u16>, message: &str) -> bool {
+    if !matches!(status, Some(400) | Some(409)) {
+        return false;
+    }
+    let message = message.to_ascii_lowercase();
+    message.contains("channel binding")
+        || message.contains("encrypted responses reasoning")
+        || message.contains("encrypted_content")
+}
+
 /// Decide whether a [`reqwest::Error`] is worth retrying.
 pub fn is_retryable_reqwest(err: &reqwest::Error) -> bool {
     if err.is_timeout() || err.is_connect() {
@@ -1810,6 +1823,54 @@ mod tests {
             !err.is_encrypted_content_error(),
             "unrelated 400 errors must not match"
         );
+    }
+
+    #[test]
+    fn encrypted_reasoning_replay_error_matches_channel_binding_and_decrypt_failures() {
+        let channel_lost = "API error (status 409 Conflict): new_api_error: No channel binding exists for this encrypted Responses reasoning session. The original channel cannot be recovered; start a new conversation.";
+        assert!(is_encrypted_reasoning_replay_error(Some(409), channel_lost));
+        // Some gateways wrap the same failure as a 400.
+        assert!(is_encrypted_reasoning_replay_error(
+            Some(400),
+            "No channel binding exists for this encrypted Responses reasoning session"
+        ));
+        // Case-insensitive on the body.
+        assert!(is_encrypted_reasoning_replay_error(
+            Some(409),
+            "ENCRYPTED RESPONSES REASONING session lost"
+        ));
+        // Existing 400 decryption failure stays in the class.
+        assert!(is_encrypted_reasoning_replay_error(
+            Some(400),
+            "Could not decrypt the provided encrypted_content."
+        ));
+    }
+
+    #[test]
+    fn encrypted_reasoning_replay_error_rejects_other_statuses_and_messages() {
+        let message = "No channel binding exists for this encrypted Responses reasoning session";
+        for status in [None, Some(400), Some(409)] {
+            let expected = matches!(status, Some(400) | Some(409));
+            assert_eq!(
+                is_encrypted_reasoning_replay_error(status, message),
+                expected,
+                "status {status:?}"
+            );
+        }
+        for status in [Some(404), Some(422), Some(500), Some(503)] {
+            assert!(
+                !is_encrypted_reasoning_replay_error(status, message),
+                "status {status:?} must not match"
+            );
+        }
+        assert!(!is_encrypted_reasoning_replay_error(
+            Some(409),
+            "merge conflict: branch already exists"
+        ));
+        assert!(!is_encrypted_reasoning_replay_error(
+            Some(400),
+            "Invalid model parameter"
+        ));
     }
 
     #[test]

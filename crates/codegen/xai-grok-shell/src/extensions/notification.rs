@@ -1321,6 +1321,11 @@ pub const PROMPT_COMPLETE_ERROR_KIND_KEY: &str = "errorKind";
 /// Frozen shell ↔ pager wire value — old pagers match the literal.
 pub const CONTEXT_LENGTH_ERROR_TYPE: &str = "context_length";
 
+/// `RetryState::Failed.error_type` for a Responses backend that rejects replayed
+/// encrypted reasoning because the upstream channel that minted it is gone.
+/// Frozen shell ↔ pager wire value.
+pub const ENCRYPTED_REASONING_CHANNEL_ERROR_TYPE: &str = "encrypted_reasoning_channel";
+
 /// State of a retry operation or error for visual feedback in the TUI
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", tag = "type")]

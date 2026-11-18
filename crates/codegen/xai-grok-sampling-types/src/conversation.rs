@@ -736,6 +736,31 @@ fn strip_images_where(
     stripped
 }
 
+/// Remove encrypted reasoning that the provider can no longer decrypt for replay.
+///
+/// Clears `encrypted_content` and the upstream item id from every reasoning item, then drops
+/// items left with neither summary nor content (an id-only item still points at the dead channel).
+/// Returns the number of items changed or removed; `0` means nothing needed stripping.
+pub fn strip_encrypted_reasoning(items: &mut Vec<ConversationItem>) -> usize {
+    let mut stripped = 0;
+    items.retain_mut(|item| {
+        let ConversationItem::Reasoning(r) = item else {
+            return true;
+        };
+        let had_encrypted = r.encrypted_content.take().is_some();
+        if had_encrypted {
+            r.id.clear();
+        }
+        let replayable =
+            !r.summary.is_empty() || r.content.as_ref().is_some_and(|parts| !parts.is_empty());
+        if had_encrypted || !replayable {
+            stripped += 1;
+        }
+        replayable
+    });
+    stripped
+}
+
 /// Tool choice options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -4120,6 +4145,107 @@ mod tests {
             "listed tool image removed, unlisted survives: {:?}",
             t.images
         );
+    }
+
+    // ========== strip_encrypted_reasoning tests ==========
+
+    #[test]
+    fn strip_encrypted_reasoning_keeps_summary_and_drops_ciphertext() {
+        let mut items = vec![
+            ConversationItem::user("continue"),
+            reasoning_sibling("rs_1", "considered the options", Some("opaque-blob")),
+            ConversationItem::assistant("done"),
+        ];
+
+        assert_eq!(strip_encrypted_reasoning(&mut items), 1);
+        assert_eq!(items.len(), 3, "summary-bearing reasoning must survive");
+
+        let ConversationItem::Reasoning(r) = &items[1] else {
+            panic!("expected reasoning at index 1: {items:?}");
+        };
+        assert!(r.encrypted_content.is_none(), "ciphertext must be cleared");
+        assert!(r.id.is_empty(), "dead-channel item id must be cleared");
+        assert!(
+            matches!(r.summary.first(), Some(rs::SummaryPart::SummaryText(s)) if s.text == "considered the options"),
+            "visible summary must survive: {:?}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn strip_encrypted_reasoning_removes_ciphertext_only_items() {
+        let mut items = vec![
+            ConversationItem::Reasoning(rs::ReasoningItem {
+                id: "rs_secret".into(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: Some("opaque-blob".into()),
+                status: None,
+            }),
+            ConversationItem::assistant("answer"),
+        ];
+
+        assert_eq!(strip_encrypted_reasoning(&mut items), 1);
+        assert_eq!(items.len(), 1, "ciphertext-only item must be removed");
+        assert_matches!(items.first(), Some(ConversationItem::Assistant(_)));
+    }
+
+    #[test]
+    fn strip_encrypted_reasoning_keeps_plain_reasoning_untouched() {
+        let item = ConversationItem::Reasoning(rs::ReasoningItem {
+            id: "chat-rs".into(),
+            summary: Vec::new(),
+            content: Some(vec![rs::ReasoningTextContent {
+                text: "plain thinking".into(),
+            }]),
+            encrypted_content: None,
+            status: None,
+        });
+        let mut items = vec![item, reasoning_sibling("rs_2", "summarized", Some("blob"))];
+
+        assert_eq!(strip_encrypted_reasoning(&mut items), 1);
+
+        let ConversationItem::Reasoning(r) = &items[0] else {
+            panic!("expected reasoning at index 0: {items:?}");
+        };
+        assert_eq!(r.id, "chat-rs");
+        assert_eq!(r.content.as_ref().map(Vec::len), Some(1));
+
+        // Idempotent: nothing left to strip.
+        assert_eq!(strip_encrypted_reasoning(&mut items), 0);
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn strip_encrypted_reasoning_preserves_other_items_and_order() {
+        let mut items = vec![
+            ConversationItem::system("sys"),
+            ConversationItem::user("hi"),
+            ConversationItem::Reasoning(rs::ReasoningItem {
+                id: "rs_only".into(),
+                summary: Vec::new(),
+                content: None,
+                encrypted_content: Some("blob".into()),
+                status: None,
+            }),
+            ConversationItem::assistant("hello"),
+            ConversationItem::tool_result("call_1", "output"),
+        ];
+
+        assert_eq!(strip_encrypted_reasoning(&mut items), 1);
+
+        let kinds: Vec<&str> = items
+            .iter()
+            .map(|item| match item {
+                ConversationItem::System(_) => "system",
+                ConversationItem::User(_) => "user",
+                ConversationItem::Assistant(_) => "assistant",
+                ConversationItem::ToolResult(_) => "tool_result",
+                ConversationItem::Reasoning(_) => "reasoning",
+                ConversationItem::BackendToolCall(_) => "backend_tool_call",
+            })
+            .collect();
+        assert_eq!(kinds, ["system", "user", "assistant", "tool_result"]);
     }
 
     #[test]

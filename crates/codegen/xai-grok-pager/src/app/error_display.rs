@@ -12,6 +12,7 @@ pub(crate) enum WireErrorType {
     LegacyAuth,
     ContextLength,
     EncryptedContentMismatch,
+    EncryptedReasoningChannel,
     DiskFull,
     Api,
     Http,
@@ -37,6 +38,11 @@ impl WireErrorType {
                 Self::ContextLength
             }
             "encrypted_content_mismatch" => Self::EncryptedContentMismatch,
+            s if s
+                == xai_grok_shell::extensions::notification::ENCRYPTED_REASONING_CHANNEL_ERROR_TYPE =>
+            {
+                Self::EncryptedReasoningChannel
+            }
             s if s == xai_grok_shell::extensions::notification::DISK_FULL_ERROR_TYPE => {
                 Self::DiskFull
             }
@@ -950,6 +956,10 @@ mod tests {
         assert_eq!(
             WireErrorType::parse(Some("encrypted_content_mismatch")),
             WireErrorType::EncryptedContentMismatch
+        );
+        assert_eq!(
+            WireErrorType::parse(Some("encrypted_reasoning_channel")),
+            WireErrorType::EncryptedReasoningChannel
         );
         assert_eq!(
             WireErrorType::parse(Some("disk_full")),

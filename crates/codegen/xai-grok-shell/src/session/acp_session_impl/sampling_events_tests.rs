@@ -1419,6 +1419,7 @@ async fn reasoning_only_doomloop_turn_captures_every_generation_as_segments() {
                         step_attempts: 0,
                         prompt_attempts: 0,
                         episode_start: None,
+                        encrypted_reasoning_reset_attempted: false,
                         enabled: true,
                     },
                     false,

@@ -147,7 +147,10 @@ impl GrokRequestHeaders<'_> {
 }
 
 /// Deserialize a Responses SSE event, stripping unknown tools and rewriting terminal `total_tokens` from `context_details`.
-pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
+/// Returns `Ok(None)` for event types the locked async-openai fork does not know (proxies add
+/// non-standard types such as `response.metadata`); those carry nothing the client consumes and
+/// must not kill the stream. Malformed known events still return an error.
+pub(crate) fn deserialize_response_event(data: &str) -> Result<Option<rs::ResponseStreamEvent>> {
     let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
         Ok(event) => event,
         Err(first_err) => {
@@ -163,8 +166,15 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
                 }
                 if let Ok(mut event) = serde_json::from_value::<rs::ResponseStreamEvent>(value) {
                     apply_terminal_event_overrides(&mut event, data);
-                    return Ok(event);
+                    return Ok(Some(event));
                 }
+            }
+            if let Some(event_type) = unknown_event_type(data, &first_err) {
+                tracing::debug!(
+                    event_type = %event_type,
+                    "Skipping Responses SSE event type the client does not model"
+                );
+                return Ok(None);
             }
             tracing::error!(
                 error = %first_err,
@@ -175,7 +185,21 @@ pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStrea
         }
     };
     apply_terminal_event_overrides(&mut event, data);
-    Ok(event)
+    Ok(Some(event))
+}
+
+/// The event's top-level `type` when serde rejected it as an unknown variant.
+/// Nested unknown variants (e.g. a new content-part type) do not match: the error names the
+/// nested tag, not the event's, so those stay fatal.
+fn unknown_event_type(data: &str, err: &serde_json::Error) -> Option<String> {
+    if err.classify() != serde_json::error::Category::Data {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(data).ok()?;
+    let event_type = value.get("type").and_then(|v| v.as_str())?;
+    err.to_string()
+        .contains(&format!("unknown variant `{event_type}`"))
+        .then(|| event_type.to_owned())
 }
 
 /// On `response.completed` / `response.incomplete`, rewrite `usage.total_tokens` to the live context length from `context_details`.
@@ -1873,7 +1897,8 @@ impl SamplingClient {
                         } else if let Some(stream_error) = try_parse_stream_error(data) {
                             Some(Some(Err(stream_error)))
                         } else {
-                            Some(Some(deserialize_response_event(data)))
+                            // `Ok(None)` (unmodeled event type) folds into `Some(None)` and is skipped
+                            Some(deserialize_response_event(data).transpose())
                         }
                     }
                     Err(e) => {
@@ -3655,7 +3680,9 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse");
+        let event = deserialize_response_event(sse)
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3692,7 +3719,9 @@ mod tests {
             )
         };
 
-        let event = deserialize_response_event(&make(78)).expect("parse");
+        let event = deserialize_response_event(&make(78))
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3706,7 +3735,9 @@ mod tests {
         );
 
         // The REST mapper backfills 0 for unbilled requests: no stash.
-        let event = deserialize_response_event(&make(0)).expect("parse");
+        let event = deserialize_response_event(&make(0))
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3736,7 +3767,9 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse");
+        let event = deserialize_response_event(sse)
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3770,7 +3803,9 @@ mod tests {
                 }
             }
         }"#;
-        let event = deserialize_response_event(sse).expect("parse");
+        let event = deserialize_response_event(sse)
+            .expect("parse")
+            .expect("known event");
         let rs::ResponseStreamEvent::ResponseCompleted(e) = event else {
             panic!("expected ResponseCompleted");
         };
@@ -3790,11 +3825,63 @@ mod tests {
             "delta": "hello",
             "logprobs": []
         }"#;
-        let event = deserialize_response_event(sse).expect("non-terminal event parses");
+        let event = deserialize_response_event(sse)
+            .expect("non-terminal event parses")
+            .expect("known event");
         assert!(matches!(
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
         ));
+    }
+
+    /// Proxies emit event types the locked fork does not model (`response.metadata`,
+    /// `response.reasoning_part.added`). They carry nothing the client consumes, so they are
+    /// skipped instead of serializing into a terminal error for the whole turn.
+    #[test]
+    fn deserialize_response_event_skips_unmodeled_event_types() {
+        let metadata = r#"{
+            "type": "response.metadata",
+            "sequence_number": 1,
+            "response": { "id": "resp_1", "metadata": { "channel": "eu" } }
+        }"#;
+        assert!(
+            deserialize_response_event(metadata)
+                .expect("unknown types are not errors")
+                .is_none(),
+            "response.metadata must be skipped"
+        );
+
+        let reasoning_part = r#"{
+            "type": "response.reasoning_part.added",
+            "sequence_number": 2,
+            "item_id": "rs_1",
+            "output_index": 0,
+            "summary_index": 0,
+            "part": { "type": "summary_text", "text": "thinking" }
+        }"#;
+        assert!(
+            deserialize_response_event(reasoning_part)
+                .expect("unknown types are not errors")
+                .is_none(),
+            "response.reasoning_part.added must be skipped"
+        );
+    }
+
+    /// A known event with malformed fields must still fail: only an unknown top-level
+    /// `type` is skippable.
+    #[test]
+    fn deserialize_response_event_rejects_malformed_known_event() {
+        let malformed = r#"{
+            "type": "response.output_text.delta",
+            "sequence_number": 0,
+            "item_id": "item-1",
+            "output_index": 0,
+            "content_index": 0
+        }"#;
+        assert!(
+            deserialize_response_event(malformed).is_err(),
+            "a known event missing required fields must stay fatal"
+        );
     }
 
     /// Build a `ChatCompletionRequest` with the given messages and every

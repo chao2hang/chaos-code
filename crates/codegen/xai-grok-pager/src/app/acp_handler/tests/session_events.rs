@@ -1460,6 +1460,38 @@
     }
 
     #[test]
+    fn retry_failed_encrypted_reasoning_channel_sets_model_incompatible() {
+        use xai_grok_shell::extensions::notification::RetryState;
+        let mut session = make_session(Some("s1"));
+        let mut scrollback = ScrollbackState::new();
+
+        assert!(!session.model_incompatible);
+        apply_retry_state(
+            &RetryState::Failed {
+                error_type: "encrypted_reasoning_channel".into(),
+                message: "channel lost".into(),
+            },
+            &mut session,
+            &mut scrollback,
+            false,
+        );
+        assert!(
+            session.model_incompatible,
+            "channel-loss recovery failure must suppress the duplicate TurnFailed banner"
+        );
+        assert!(
+            matches!(
+                last_session_event(&scrollback),
+                Some(SessionEvent::RetryFailed {
+                    error_type: Some(t),
+                    ..
+                }) if t == "encrypted_reasoning_channel"
+            ),
+            "the actionable retry-failed message must be rendered"
+        );
+    }
+
+    #[test]
     fn retry_failed_other_type_does_not_set_model_incompatible() {
         use xai_grok_shell::extensions::notification::RetryState;
         let mut session = make_session(Some("s1"));

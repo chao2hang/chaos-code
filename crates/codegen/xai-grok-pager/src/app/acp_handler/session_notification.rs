@@ -1978,7 +1978,11 @@ pub(super) fn apply_retry_state(
         } => {
             session.set_retry_activity(None);
             let wire = crate::app::error_display::WireErrorType::parse(Some(error_type.as_str()));
-            if wire == crate::app::error_display::WireErrorType::EncryptedContentMismatch {
+            if matches!(
+                wire,
+                crate::app::error_display::WireErrorType::EncryptedContentMismatch
+                    | crate::app::error_display::WireErrorType::EncryptedReasoningChannel
+            ) {
                 session.model_incompatible = true;
             }
             is_credit_limit = super::super::dispatch::is_credit_limit_error(None, message);
@@ -1997,6 +2001,7 @@ pub(super) fn apply_retry_state(
                         .push_block(RenderBlock::session_event(SessionEvent::ContextTooLarge));
                 }
             } else if wire == crate::app::error_display::WireErrorType::EncryptedContentMismatch
+                || wire == crate::app::error_display::WireErrorType::EncryptedReasoningChannel
                 || wire == crate::app::error_display::WireErrorType::LegacyAuth
             {
                 scrollback.push_block(RenderBlock::session_event(SessionEvent::RetryFailed {
