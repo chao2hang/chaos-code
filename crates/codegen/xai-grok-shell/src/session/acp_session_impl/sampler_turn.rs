@@ -446,9 +446,8 @@ impl SessionActor {
         filter_cursor_tools_by_plan_mode(defs, plan_active)
     }
 
-    /// Messages-backed models never see `use_tool`'s file forms: the Anthropic Messages API rejects the schema's
-    /// root-level union (`oneOf`) with HTTP 400, which fails every turn. Checked per request because a model switch
-    /// mid-session keeps the finalized toolset.
+    /// Messages-backed models are advertised `use_tool` without its file forms, keeping their contract to the
+    /// inline invocation. Checked per request because a model switch mid-session keeps the finalized toolset.
     pub(crate) async fn mcp_file_forms_hidden(&self) -> bool {
         self.chat_state_handle
             .get_sampling_config()

@@ -386,7 +386,7 @@ async fn file_advertisement_requires_host_preparation_and_bounded_filesystem() {
                 let mut actual = properties.keys().map(String::as_str).collect::<Vec<_>>();
                 actual.sort_unstable();
                 assert_eq!(expected, actual, "{case}");
-                assert_eq!(supported, tool.parameters.get("oneOf").is_some(), "{case}");
+                assert!(tool.parameters.get("oneOf").is_none(), "{case}");
                 let params = actor
                     .tool_bridge_handle()
                     .read_resource::<Params<UseToolParams>>()
@@ -477,11 +477,7 @@ async fn messages_backend_advertises_inline_only_use_tool() {
                     vec!["file", "tool_input", "tool_input_file", "tool_name"]
                 };
                 assert_eq!(expected, keys, "{backend:?}");
-                assert_eq!(
-                    !hidden,
-                    tool.parameters.get("oneOf").is_some(),
-                    "{backend:?}"
-                );
+                assert!(tool.parameters.get("oneOf").is_none(), "{backend:?}");
                 let description = tool.description.as_deref().unwrap();
                 let hint = actor.rendered_mcp_hint().await.unwrap();
                 for text in [description, hint.as_str(), &tool.parameters.to_string()] {
@@ -564,29 +560,17 @@ async fn finalized_randomized_wrapper_preserves_canonical_file_keys() {
             );
             let definitions = serde_json::to_value(toolset.tool_definitions()).unwrap();
             let schema = definitions.pointer("/0/function/parameters").unwrap();
+            assert_eq!(Some(&json!("object")), schema.get("type"));
+            assert!(schema.get("oneOf").is_none(), "{schema}");
             assert_eq!(
                 Some(&json!(true)),
-                schema.pointer("/oneOf/0/properties/args/additionalProperties")
+                schema.pointer("/properties/args/additionalProperties")
             );
-            assert_eq!(
-                Some(&json!(["source"])),
-                schema.pointer("/oneOf/2/required")
-            );
-            assert_eq!(
-                Some(&json!(["args_path"])),
-                schema.pointer("/oneOf/0/not/anyOf/0/required")
-            );
-            for branch in schema.get("oneOf").unwrap().as_array().unwrap() {
-                assert_eq!(Some(&json!("object")), branch.get("type"));
-                for required in branch.get("required").unwrap().as_array().unwrap() {
-                    assert!(
-                        branch
-                            .get("properties")
-                            .unwrap()
-                            .get(required.as_str().unwrap())
-                            .is_some()
-                    );
-                }
+            for key in ["args", "args_path", "source", "target"] {
+                assert!(
+                    schema.pointer(&format!("/properties/{key}")).is_some(),
+                    "{key}: {schema}"
+                );
             }
         })
         .await;

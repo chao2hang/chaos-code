@@ -200,21 +200,14 @@ impl UseToolInput {
         }
         let tool_input_file = serde_json::json!({"type": "string", "minLength": 1, "description": "UTF-8 JSON file containing only the complete remote argument object"});
         let file = serde_json::json!({"type": "string", "minLength": 1, "description": "UTF-8 JSON file containing canonical tool_name and object tool_input"});
-        // Root unions compile each branch without inheriting the root properties.
+        // OpenAI-style backends reject a root-level union in a function schema, so the exclusive
+        // forms live in the description and the parser enforces exactly one of them.
         schemars::json_schema!({
             "type": "object",
             "properties": {
                 "tool_name": tool_name, "tool_input": tool_input,
                 "tool_input_file": tool_input_file, "file": file
-            },
-            "oneOf": [
-                {"type": "object", "properties": {"tool_name": tool_name, "tool_input": tool_input},
-                 "required": ["tool_name", "tool_input"], "not": {"anyOf": [{"required": ["tool_input_file"]}, {"required": ["file"]}]}},
-                {"type": "object", "properties": {"tool_name": tool_name, "tool_input_file": tool_input_file},
-                 "required": ["tool_name", "tool_input_file"], "not": {"anyOf": [{"required": ["tool_input"]}, {"required": ["file"]}]}},
-                {"type": "object", "properties": {"file": file},
-                 "required": ["file"], "not": {"anyOf": [{"required": ["tool_name"]}, {"required": ["tool_input"]}, {"required": ["tool_input_file"]}]}}
-            ]
+            }
         })
     }
 }

@@ -34,6 +34,19 @@ fn all_known_field_presence_combinations_are_exclusive() {
 }
 
 #[test]
+fn file_input_schema_avoids_root_level_combinators() {
+    let schema = serde_json::to_value(UseToolInput::input_schema(true)).unwrap();
+    assert_eq!(Some(&json!("object")), schema.get("type"), "{schema}");
+    for keyword in ["oneOf", "anyOf", "allOf", "enum", "const", "not"] {
+        assert!(schema.get(keyword).is_none(), "{keyword}: {schema}");
+    }
+    let properties = schema.get("properties").unwrap().as_object().unwrap();
+    for field in FIELDS {
+        assert!(properties.contains_key(*field), "{field}: {schema}");
+    }
+}
+
+#[test]
 fn raw_duplicate_and_escaped_equivalent_keys_reject_before_mapping() {
     let mapping = HashMap::from([
         ("target".to_owned(), "tool_name".to_owned()),

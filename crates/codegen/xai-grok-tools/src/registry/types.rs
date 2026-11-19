@@ -1551,8 +1551,7 @@ impl FinalizedToolset {
             .map(|t| t.definition.clone())
             .collect()
     }
-    /// Built-in definitions with `use_tool` advertised inline-only. The Anthropic Messages API rejects the file-form
-    /// schema's root-level union, and Messages-backed models must not see the file forms at all.
+    /// Built-in definitions with `use_tool` advertised inline-only, for Messages-backed models.
     pub fn tool_definitions_builtins_only_inline_mcp(&self) -> Vec<ToolDefinition> {
         self.tools
             .read()
