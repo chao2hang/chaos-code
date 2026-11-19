@@ -168,6 +168,6 @@ Docker 入口跑 / 4 记为 CI-only / 1 豁免；`check-evidence-paths.py` → 2
 ## 本轮之外仍然开着的外部门禁
 
 不计入本文件任何判决：npm 名字回收与改名决策、带 Windows runner 的 release dry-run、
-tag/Release 的创建与推送、restricted-child fd 继承的独立安全评审、Tauri 打包与签名、
+tag/Release 的创建与推送、restricted-child fd 继承的独立安全评审、
 WSL/P9IO 崩溃报告外发。这些在本仓库里的表现是「一条会红的门 + 一句写明缺什么」，不是
 绿灯。

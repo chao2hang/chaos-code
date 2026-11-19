@@ -76,14 +76,14 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 - `crates/codegen/xai-grok-markdown/**`（表格换行）
 - `crates/codegen/xai-sqlite-journal/src/lib.rs`（busy retry）
 
-## 9. Chaos engine/desktop fork layer
+## 9. Chaos engine fork layer
 - `Cargo.toml`（workspace members 的 fork 区段）
 - `crates/codegen/chaos-engine/**`
-- `crates/codegen/xai-grok-desktop/**`
 
 2026-11-14：Web/GUI 线整体废弃，`frontend/zcode/**`、`xai-grok-web/**` 与
 `zcode-rpc-protocol` 已从仓库删除；原先的 Web 宿主与 RPC 桥不再属于需要维护的
-fork layer。剩余 fork 层只有 engine 与 desktop 两个 Rust crate。
+fork layer。2026-11-19：桌面宿主 crate `xai-grok-desktop` 也已删除，本项目不再有
+桌面端目标；剩余 fork 层只有 `chaos-engine`。
 
 ## 10. 文档
 - `crates/codegen/xai-grok-pager/docs/**`（中文；上游新增章节视情况补译）

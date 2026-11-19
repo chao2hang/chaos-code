@@ -2,13 +2,15 @@
 
 > 2026-11-14：Web/GUI 线（ZCode 前端、`chaos-web` 宿主、`/ws/zcode` RPC 桥及其协议 crate）已整体废弃并从仓库移除。本清单只维护终端 `chaos` 与上游同步。
 
+> 2026-11-19：桌面宿主 crate `xai-grok-desktop` 已删除；本项目不再有桌面端目标。
+
 > 本文件是项目的**唯一执行清单**，覆盖**维护线（MT-1～MT-7，第 7 章）**：现有 Chaos TUI 分叉在途的发布阻断项、安全债、测试债与中文化收尾。其中 MT-1 是下一次发版的硬前提。
 
 > 功能规格、架构说明和风险用于解释任务，不重复设置复选框。
 
 > **目标**：在保留现有 Chaos TUI 和上游同步能力的前提下，完成维护线。
 
-> **准确表述**：产品是终端 TUI（Rust），不包含 Web 前端或浏览器宿主；Node 仅用于安装器与发布脚本。
+> **准确表述**：产品是终端 TUI（Rust），不包含 Web 前端、浏览器宿主或桌面端；Node 仅用于安装器与发布脚本。
 
 ---
 
@@ -45,10 +47,9 @@
 
 ### 1.4 变更隔离
 
-引擎与桌面宿主的新代码默认只进入：
+引擎的新代码默认只进入：
 
 - `crates/codegen/chaos-engine`
-- `crates/codegen/xai-grok-desktop`
 
 修改 `xai-grok-agent`、`xai-grok-tools`、`xai-grok-config`、`xai-grok-pager` 等上游核心 crate 前，必须说明为何无法通过适配层完成，并更新 `sync/fork-layer-inventory.md`。目标是**可审计的低冲突**，不承诺不现实的“零冲突”。
 

@@ -8,7 +8,7 @@
 
 ## Decision
 
-The accepted product goal remains the desktop workbench described in `TODO.md`; its Web target was dropped on 2026-11-14 when the ZCode frontend and `chaos-web` host were removed. This record does not cancel the remaining deliverables. A capability is not supported for release merely because a protocol type, UI seam, fixture, or local-only adapter exists; support claims require their existing acceptance gates.
+The accepted product goal is the terminal TUI described in `TODO.md`. The Web target was dropped on 2026-11-14 when the ZCode frontend and `chaos-web` host were removed, and the desktop target was dropped on 2026-11-19 when the `xai-grok-desktop` host crate was removed. This record does not cancel the remaining deliverables. A capability is not supported for release merely because a protocol type, UI seam, fixture, or local-only adapter exists; support claims require their existing acceptance gates.
 
 The following first-stable boundaries are explicit:
 
@@ -18,11 +18,10 @@ The following first-stable boundaries are explicit:
 | Remote workspace execution and port forwarding | Deferred from first stable; retained as post-first-stable M4 roadmap work | Approved remote threat model, authenticated transport, server ownership, and controlled-host acceptance |
 | Remote interactive PTY, detached Agent, and container execution | Unsupported for first stable | Separate product and security review plus platform acceptance |
 | Public/multi-user Web deployment | Unsupported for first stable | Separate deployment, authentication, CSRF, audit, and operational security review |
-| Linux Tauri desktop | Accepted roadmap target, not yet supported | Real Tauri executable and visible-path acceptance |
-| macOS and Windows desktop | Accepted only if later added to the support matrix; not currently supported | Independent target-platform builds and user-path acceptance |
+| Desktop clients (Linux, macOS, Windows) | Not a product target; the desktop host crate was removed on 2026-11-19 | A new ADR is required before any desktop work |
 | Provider, MCP/plugins, workflows, and subagents | Accepted roadmap targets, not yet supported | Reviewed secret/trust policy, real adapters/lifecycle contracts, and controlled end-to-end acceptance |
 
-These decisions prevent release materials and capability declarations from implying an untested feature is available. Linux loopback Web acceptance does not establish native desktop support. Narrow browser layouts are an adaptation, not a mobile support promise.
+These decisions prevent release materials and capability declarations from implying an untested feature is available.
 
 ## Decisions intentionally not made
 

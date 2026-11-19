@@ -648,13 +648,12 @@ fails instead of quietly checking less. Rename one asset on either side and this
 check that says so, rather than a Windows user's install returning a 404 that looks like a
 missing version.
 
-Three crates deliberately do **not** follow the release version, and the check fails if
-this list and that paragraph drift apart: `xai-grok-desktop` is versioned by its own
-bundle, `chaos-engine` is versioned by the protocol it speaks, and `xai-grok-update`
-still carries the numbering it inherited from upstream. None of
-them publishes an artifact of its own, so nothing a user installs reads their version.
-Bumping one of them to match the release version is not a fix and the check will not ask
-for it.
+Two crates deliberately do **not** follow the release version, and the check fails if
+this list and that paragraph drift apart: `chaos-engine` is versioned by the protocol it
+speaks, and `xai-grok-update` still carries the numbering it inherited from upstream.
+Neither publishes an artifact of its own, so nothing a user installs reads their version.
+Bumping either to match the release version is not a fix and the check will not ask for
+it.
 
 With `--published` the same script also asks npm registry what it serves for the seven
 names. That half is opt-in because it needs network; run it before a release. It reports a

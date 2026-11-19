@@ -13701,13 +13701,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xai-grok-desktop"
-version = "0.1.0"
-dependencies = [
- "chaos-engine",
-]
-
-[[package]]
 name = "xai-grok-diag-server"
 version = "0.1.0"
 dependencies = [

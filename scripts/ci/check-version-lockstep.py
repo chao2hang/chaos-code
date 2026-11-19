@@ -12,8 +12,8 @@ three different mechanisms.
 - `crates/codegen/xai-grok-pager/Cargo.toml` and
   `xai-grok-pager-bin/Cargo.toml` are the crates whose build produces the binary
   whose `--version` line the auto-updater compares against a release feed;
-- the desktop, web and engine crates carry their own numbers, which upstream
-  bumped independently and which are not the product version at all.
+- the engine crate carries its own number, which upstream
+  bumped independently and which is not the product version at all.
 
 Nothing in the tree said which of these is the product version, so the same
 commit could be released twice and produce two numbers -- a tag from one file, a
@@ -52,7 +52,6 @@ SHIPPED_VERSION_CRATES = ["xai-grok-pager", "xai-grok-pager-bin"]
 # CONTRIBUTING.md as well -- an exception nobody can read about is how the next
 # person "fixes" it by bumping one file.
 INDEPENDENT_VERSION_CRATES = {
-    "xai-grok-desktop": "native shell; versioned by its own bundle",
     "chaos-engine": "engine protocol crate; versioned by the protocol it speaks",
     "xai-grok-update": "updater; version numbers inherited from upstream",
 }
