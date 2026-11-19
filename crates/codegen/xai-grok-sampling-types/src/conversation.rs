@@ -678,6 +678,21 @@ impl ConversationRequest {
         }
     }
 
+    /// Pin `reasoning_effort` to the explicit `"none"` wire value. Some
+    /// providers reject function tools on `/v1/chat/completions` whenever
+    /// reasoning is on — including the provider-side default when the field
+    /// is absent — and only accept the pair with reasoning explicitly off.
+    /// Returns `true` if the request changed, `false` if it already said
+    /// `"none"` (so the caller knows a retry would resend the same shape).
+    pub fn force_reasoning_effort_none(&mut self) -> bool {
+        if self.reasoning_effort == Some(crate::ReasoningEffort::None) {
+            false
+        } else {
+            self.reasoning_effort = Some(crate::ReasoningEffort::None);
+            true
+        }
+    }
+
     /// Strip every image; returns the stripped URLs.
     pub fn strip_images(&mut self) -> Vec<Arc<str>> {
         strip_images_where(&mut self.items, |_| true)
@@ -5175,5 +5190,20 @@ mod tests {
         // The legacy placeholder sentinel must not appear
         let body_str = serde_json::to_string(&input).unwrap();
         assert!(!body_str.contains("__RAW_OUTPUT_PLACEHOLDER_"));
+    }
+
+    #[test]
+    fn effort_correction_helpers_report_whether_they_changed_the_request() {
+        let mut req = ConversationRequest::from_items(vec![ConversationItem::user("hi")]);
+
+        assert!(!req.strip_reasoning_effort());
+        assert!(req.force_reasoning_effort_none());
+        assert_eq!(req.reasoning_effort, Some(crate::ReasoningEffort::None));
+        // Already explicit "none": a resend would have the same shape.
+        assert!(!req.force_reasoning_effort_none());
+
+        req.reasoning_effort = Some(crate::ReasoningEffort::Medium);
+        assert!(req.strip_reasoning_effort());
+        assert_eq!(req.reasoning_effort, None);
     }
 }

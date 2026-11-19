@@ -363,6 +363,23 @@ impl SamplingError {
         )
     }
 
+    /// Whether the error tells us to send an explicit `reasoning_effort`
+    /// value of `"none"` instead of omitting the parameter. Some providers
+    /// reject function tools on `/v1/chat/completions` whenever reasoning is
+    /// on — including their own default when the field is absent — and only
+    /// accept the pair with reasoning explicitly disabled.
+    pub fn wants_reasoning_effort_none(&self) -> bool {
+        matches!(
+            self,
+            SamplingError::Api {
+                status: StatusCode::BAD_REQUEST,
+                message,
+                ..
+            } if message.contains("reasoning_effort")
+                && (message.contains("'none'") || message.contains("\"none\""))
+        )
+    }
+
     pub fn is_rate_limited(&self) -> bool {
         matches!(
             self,
@@ -2113,5 +2130,33 @@ mod tests {
                 "origin-TLS {code} must not be retried"
             );
         }
+    }
+
+    fn bad_request(message: &str) -> SamplingError {
+        SamplingError::Api {
+            status: StatusCode::BAD_REQUEST,
+            message: message.to_string(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+            error_code: None,
+        }
+    }
+
+    #[test]
+    fn explicit_none_demand_is_recognized() {
+        let err = bad_request(
+            "invalid_request_error: Function tools with reasoning_effort are not supported for \
+             gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set \
+             reasoning_effort to 'none'.",
+        );
+        assert!(err.is_reasoning_effort_error());
+        assert!(err.wants_reasoning_effort_none());
+
+        let unsupported = bad_request("Unknown parameter: reasoning_effort is not supported.");
+        assert!(unsupported.is_reasoning_effort_error());
+        assert!(!unsupported.wants_reasoning_effort_none());
+
+        assert!(!bad_request("invalid json").wants_reasoning_effort_none());
     }
 }

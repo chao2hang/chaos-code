@@ -464,26 +464,42 @@ impl HttpPromptAdapter {
         match self.send_and_stream_once(&body, emit) {
             Ok(usage) => Ok(usage),
             Err(error) => {
-                // The engine's own sampler strips `reasoning_effort` and retries
-                // when a provider 400s on the parameter (xai-grok-sampler/retry.rs
-                // `is_reasoning_effort_error`); this minimal client mirrors that
-                // policy. Without it, one strict gateway would turn the picker
-                // into a turn-killer even though the provider answers fine
-                // without the parameter.
-                let rejects_effort = body.get("reasoning_effort").is_some()
-                    && Self::error_rejects_reasoning_effort(&error);
-                if !rejects_effort {
+                // The engine's own sampler corrects `reasoning_effort` and
+                // retries when a provider 400s on the parameter
+                // (xai-grok-sampler/retry.rs `is_reasoning_effort_error`).
+                // This minimal client mirrors that policy: strip the
+                // parameter when the provider rejects it outright, or pin it
+                // to explicit `"none"` when the provider rejects function
+                // tools unless reasoning is off. Without it, one strict
+                // gateway would turn the picker into a turn-killer even
+                // though the provider answers fine.
+                if !Self::error_rejects_reasoning_effort(&error) {
+                    return Err(error);
+                }
+                let wants_none = Self::error_wants_reasoning_effort_none(&error);
+                let mut corrected = body.clone();
+                let corrected_body = corrected
+                    .as_object_mut()
+                    .expect("request body is an object");
+                if wants_none {
+                    if corrected_body
+                        .get("reasoning_effort")
+                        .and_then(|v| v.as_str())
+                        == Some("none")
+                    {
+                        return Err(error);
+                    }
+                    corrected_body.insert(
+                        "reasoning_effort".to_string(),
+                        serde_json::Value::String("none".to_string()),
+                    );
+                } else if corrected_body.remove("reasoning_effort").is_none() {
                     return Err(error);
                 }
                 tracing::info!(
-                    "provider rejected reasoning_effort; stripped it before one retry: {error}"
+                    "provider rejected reasoning_effort; corrected it before one retry: {error}"
                 );
-                let mut stripped = body.clone();
-                stripped
-                    .as_object_mut()
-                    .expect("request body is an object")
-                    .remove("reasoning_effort");
-                self.send_and_stream_once(&stripped, emit)
+                self.send_and_stream_once(&corrected, emit)
             }
         }
     }
@@ -497,6 +513,13 @@ impl HttpPromptAdapter {
                 || error.contains("reasoning.effort")
                 || error.contains("unsupported parameter: reasoning")
                 || error.contains("unknown parameter: reasoning"))
+    }
+
+    /// Whether the provider demands an explicit `"none"` rather than omitting
+    /// the parameter (same wording as `SamplingError::wants_reasoning_effort_none`).
+    fn error_wants_reasoning_effort_none(error: &str) -> bool {
+        error.contains("reasoning_effort")
+            && (error.contains("'none'") || error.contains("\"none\""))
     }
 
     fn send_and_stream_once(
@@ -1142,6 +1165,78 @@ mod tests {
         assert!(
             second.get("reasoning_effort").is_none(),
             "重试不得再带 reasoning_effort：{second}"
+        );
+    }
+
+    /// 拒绝理由要求显式 `reasoning_effort: "none"`（function tools 与推理不可
+    /// 同开）时，不能只是剥掉参数：必须显式置为 `none` 再重试一次，否则网关
+    /// 会以同样的 400 拒绝。
+    #[test]
+    fn a_gateway_demanding_explicit_none_gets_a_none_retry() {
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorder = bodies.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for attempt in 0..2usize {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(read) = std::io::Read::read(&mut socket, &mut chunk) else {
+                        return;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                    let Some(header_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length:")?
+                                .trim()
+                                .parse::<usize>()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    let body_end = header_end + 4 + length;
+                    if buffer.len() < body_end {
+                        continue;
+                    }
+                    let body =
+                        String::from_utf8_lossy(&buffer[header_end + 4..body_end]).into_owned();
+                    recorder.lock().unwrap().push(body.clone());
+                    let response = if attempt == 0 {
+                        "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.\"}}".to_string()
+                    } else {
+                        sse_ok("retried")
+                    };
+                    let _ = std::io::Write::write_all(&mut socket, response.as_bytes());
+                    let _ = socket.shutdown(std::net::Shutdown::Both);
+                    break;
+                }
+            }
+        });
+        let adapter =
+            HttpPromptAdapter::new(&format!("http://{address}/v1"), "m", None::<String>).unwrap();
+        let reply = adapter
+            .run_prompt("hello", &crate::RunOptions::default())
+            .expect("显式 none 后的重试应当成功");
+        assert_eq!(reply.concat(), "retried");
+        let seen = bodies.lock().unwrap();
+        assert_eq!(seen.len(), 2, "第一次 400，纠正后重试恰好一次：{seen:?}");
+        let first: serde_json::Value = serde_json::from_str(seen[0].as_str()).unwrap();
+        assert!(first.get("reasoning_effort").is_none());
+        let second: serde_json::Value = serde_json::from_str(seen[1].as_str()).unwrap();
+        assert_eq!(
+            second["reasoning_effort"], "none",
+            "重试必须显式带 none：{second}"
         );
     }
 

@@ -31,8 +31,8 @@ use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ChatContentBlock,
     ChatRequestMessage, ConversationRequest, ConversationResponse, CreateResponseWrapper,
     DEFAULT_EXACT_REPETITION_MIN_TOKENS, DOOM_LOOP_CHECK_HEADER, EXACT_REPETITION_CHECK_HEADER,
-    MessageContent, MessagesRequestWrapper, ResponseModelMetadata, Result, Role, SamplingError,
-    SentCredential, build_messages_request, is_check_event, messages, rs,
+    MessageContent, MessagesRequestWrapper, ReasoningEffort, ResponseModelMetadata, Result, Role,
+    SamplingError, SentCredential, build_messages_request, is_check_event, messages, rs,
 };
 
 use crate::config::{AuthScheme, OriginClientInfo, RequestCompression, SamplerConfig};
@@ -1132,12 +1132,13 @@ impl SamplingClient {
         // leaves that assistant's `reasoning_content` as `None`, and the
         // next request 400s.
         //
-        // Thinking is considered active when EITHER the request carries
-        // `reasoning_effort` (explicit OpenAI-style parameter) OR the
-        // conversation has already seen reasoning — i.e. some prior
-        // assistant message already carries `reasoning_content`. The
-        // second arm covers inherently-thinking models (DeepSeek-R1 /
-        // Qwen3-Thinking / GLM-5 / GLM-Z1 / o3 / etc.) that emit
+        // Thinking is considered active when EITHER the request enables
+        // reasoning via `reasoning_effort` (explicit OpenAI-style parameter,
+        // excluding an explicit `"none"`) OR the conversation has already
+        // seen reasoning — i.e. some prior assistant message already carries
+        // `reasoning_content`. The second arm covers inherently-thinking
+        // models (DeepSeek-R1 / Qwen3-Thinking / GLM-5 / GLM-Z1 / o3 / etc.)
+        // that emit
         // `reasoning_content` but are frequently invoked WITHOUT the
         // `reasoning_effort` parameter; without it the previous
         // `reasoning_effort.is_some()`-only gate skipped the backfill and
@@ -1149,7 +1150,12 @@ impl SamplingClient {
         // gateways stop requiring non-empty `reasoning_content` on every
         // assistant message. See `REASONING_PLACEHOLDER` for the full
         // background and the cleanup tracking issue.
-        let thinking_active = request.reasoning_effort.is_some()
+        // An explicit `ReasoningEffort::None` means thinking is off, so the
+        // backfill must not run even though the field is present.
+        let reasoning_enabled = request
+            .reasoning_effort
+            .is_some_and(|effort| effort != ReasoningEffort::None);
+        let thinking_active = reasoning_enabled
             || request
                 .messages
                 .iter()

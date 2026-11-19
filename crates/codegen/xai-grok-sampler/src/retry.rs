@@ -130,9 +130,11 @@ pub enum RetryDecision {
 
     RetryWithImageStrip,
 
-    /// Retry after stripping the unsupported `reasoning_effort` parameter
-    /// (400 from a model/provider that rejects it). The caller checks
-    /// whether effort was actually present; if not, upgrades to `Fatal`.
+    /// Retry after correcting the `reasoning_effort` parameter: strip it when
+    /// the provider does not support it, or pin it to explicit `"none"` when
+    /// the provider says function tools require reasoning off. The caller
+    /// checks whether the request actually changed; if not, upgrades to
+    /// `Fatal`.
     RetryWithEffortFallback,
 
     /// Retry after rebuilding the HTTP client with HTTP/1.1 (transport
@@ -180,9 +182,10 @@ pub fn classify_error(
     }
 
     // Reasoning-effort rejection (400): the model/provider doesn't support
-    // the `reasoning_effort` parameter. Strip it and retry once instead of
-    // aborting the whole turn. The caller checks if effort was actually
-    // present; if not, upgrade to Fatal.
+    // the `reasoning_effort` parameter, or rejects function tools unless
+    // reasoning is explicitly off. Correct the parameter and retry once
+    // instead of aborting the whole turn. The caller checks whether the
+    // request actually changed; if not, upgrades to Fatal.
     if err.is_reasoning_effort_error() {
         return RetryDecision::RetryWithEffortFallback;
     }
@@ -719,6 +722,32 @@ mod tests {
         assert!(!matches!(
             classify_error(&unrelated, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
             RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
+    fn classify_reasoning_effort_rejection_falls_back() {
+        // Two provider shapes both take the correction path: "drop the
+        // parameter" and "function tools require reasoning_effort: none".
+        let unsupported = api_err(
+            StatusCode::BAD_REQUEST,
+            "Unknown parameter: reasoning_effort is not supported with this model.",
+        );
+        assert!(matches!(
+            classify_error(&unsupported, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithEffortFallback
+        ));
+
+        let wants_none = api_err(
+            StatusCode::BAD_REQUEST,
+            "Function tools with reasoning_effort are not supported for gpt-6-luna in \
+             /v1/chat/completions. To use function tools, use /v1/responses or set \
+             reasoning_effort to 'none'.",
+        );
+        assert!(wants_none.wants_reasoning_effort_none());
+        assert!(matches!(
+            classify_error(&wants_none, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithEffortFallback
         ));
     }
 

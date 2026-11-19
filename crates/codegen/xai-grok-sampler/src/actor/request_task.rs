@@ -438,9 +438,17 @@ async fn apply_retry_decision(
             true
         }
         RetryDecision::RetryWithEffortFallback => {
-            let stripped = request.strip_reasoning_effort();
-            if !stripped {
-                // No effort to strip; upgrade to fatal.
+            // Two shapes exist: "parameter not supported" (drop it) and
+            // "function tools need reasoning off" (pin explicit `"none"`).
+            let disable_reasoning = err.wants_reasoning_effort_none();
+            let changed = if disable_reasoning {
+                request.force_reasoning_effort_none()
+            } else {
+                request.strip_reasoning_effort()
+            };
+            if !changed {
+                // The request already has the shape the provider asked for;
+                // resending it would fail identically.
                 let terminal_event_queued = emit_failed(event_tx, request_id, err);
                 send_completion(completion, Err(clone_error(err)), terminal_event_queued);
                 return false;
@@ -448,7 +456,8 @@ async fn apply_retry_decision(
             *retry_count += 1;
             tracing::warn!(
                 target: crate::sampling_log::TARGET,
-                "stripped reasoning_effort before retry (provider rejected the parameter)"
+                corrected_to = if disable_reasoning { "none" } else { "unset" },
+                "corrected reasoning_effort before retry (provider rejected the parameter)"
             );
             emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
             true
