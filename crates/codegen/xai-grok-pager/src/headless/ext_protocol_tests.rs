@@ -160,10 +160,15 @@ fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
             "model": "grok-test"
         }),
     );
-    assert!(matches!(
-        handle_ext_notification(&spawned),
-        ExtEvent::SubagentLifecycle(SubagentStreamEvent { subagent_id, event, child_session_id, run_in_background, parent_tool_call_id, model, .. }) if subagent_id == "sub-1" && event == "spawned" && child_session_id == "c" && run_in_background == Some(true) && parent_tool_call_id.as_deref() == Some("tool-parent") && model.as_deref() == Some("grok-test")
-    ));
+    let ExtEvent::SubagentLifecycle(event) = handle_ext_notification(&spawned) else {
+        panic!("expected a subagent lifecycle event");
+    };
+    assert_eq!(event.subagent_id, "sub-1");
+    assert_eq!(event.event, "spawned");
+    assert_eq!(event.child_session_id, "c");
+    assert_eq!(event.run_in_background, Some(true));
+    assert_eq!(event.parent_tool_call_id.as_deref(), Some("tool-parent"));
+    assert_eq!(event.model.as_deref(), Some("grok-test"));
     let finished = make_ext_notif(
         "x.ai/session_notification",
         serde_json::json!({
@@ -176,10 +181,12 @@ fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
             "duration_ms": 5
         }),
     );
-    assert!(matches!(
-        handle_ext_notification(&finished),
-        ExtEvent::SubagentLifecycle(SubagentStreamEvent { subagent_id, event, status, .. }) if subagent_id == "sub-1" && event == "finished" && status.as_deref() == Some("completed")
-    ));
+    let ExtEvent::SubagentLifecycle(event) = handle_ext_notification(&finished) else {
+        panic!("expected a subagent lifecycle event");
+    };
+    assert_eq!(event.subagent_id, "sub-1");
+    assert_eq!(event.event, "finished");
+    assert_eq!(event.status.as_deref(), Some("completed"));
 
     let sequenced = make_raw_ext_notif(
         "x.ai/session_notification",
@@ -193,15 +200,12 @@ fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
             "_meta": { "eventId": "sess-1-42" }
         }),
     );
-    assert!(matches!(
-        handle_ext_notification(&sequenced),
-        ExtEvent::SubagentLifecycle(SubagentStreamEvent {
-            attempt_id: Some(attempt_id),
-            event_seq: Some(42),
-            event,
-            ..
-        }) if attempt_id == "at1.one" && event == "spawned"
-    ));
+    let ExtEvent::SubagentLifecycle(event) = handle_ext_notification(&sequenced) else {
+        panic!("expected a subagent lifecycle event");
+    };
+    assert_eq!(event.attempt_id.as_deref(), Some("at1.one"));
+    assert_eq!(event.event_seq, Some(42));
+    assert_eq!(event.event, "spawned");
 }
 
 #[test]
@@ -218,15 +222,12 @@ fn headless_subagent_progress_decodes_lifecycle_identity() {
             "_meta": { "eventId": "sess-1-43" }
         }),
     );
-    assert!(matches!(
-        handle_ext_notification(&progress),
-        ExtEvent::SubagentLifecycle(SubagentStreamEvent {
-            attempt_id: Some(attempt_id),
-            event_seq: Some(43),
-            event,
-            ..
-        }) if attempt_id == "at1.one" && event == "progress"
-    ));
+    let ExtEvent::SubagentLifecycle(event) = handle_ext_notification(&progress) else {
+        panic!("expected a subagent lifecycle event");
+    };
+    assert_eq!(event.attempt_id.as_deref(), Some("at1.one"));
+    assert_eq!(event.event_seq, Some(43));
+    assert_eq!(event.event, "progress");
 }
 
 #[test]

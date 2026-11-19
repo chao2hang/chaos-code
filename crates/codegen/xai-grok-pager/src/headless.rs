@@ -1627,9 +1627,15 @@ fn track_background_lifecycle(
     state: &mut BackgroundLifecycleState,
 ) -> Option<crate::headless::ext_protocol::SubagentStreamEvent> {
     match event {
-        ExtEvent::TaskBackgrounded { task_id, is_monitor } => {
+        ExtEvent::TaskBackgrounded {
+            task_id,
+            is_monitor,
+        } => {
             if state.completed_tasks.contains(&task_id) {
-                tracing::debug!(is_monitor, "headless: ignoring task_backgrounded for already-completed task");
+                tracing::debug!(
+                    is_monitor,
+                    "headless: ignoring task_backgrounded for already-completed task"
+                );
             } else {
                 pending_bg.insert(BackgroundWork::Task(task_id));
             }
@@ -1641,7 +1647,11 @@ fn track_background_lifecycle(
             None
         }
         ExtEvent::SubagentLifecycle(update) => {
-            let key = if update.child_session_id.is_empty() { update.subagent_id.clone() } else { update.child_session_id.clone() };
+            let key = if update.child_session_id.is_empty() {
+                update.subagent_id.clone()
+            } else {
+                update.child_session_id.clone()
+            };
             let transition = match update.event.as_str() {
                 "spawned" => SubagentLifecycleTransition::Spawned,
                 "progress" => SubagentLifecycleTransition::Progress,
@@ -1649,27 +1659,43 @@ fn track_background_lifecycle(
                 _ => return None,
             };
             let lifecycle = state.subagents.entry(key.clone()).or_default();
-            let SubagentLifecycleReduction::Accepted(accepted) = lifecycle.reduce(
-                transition, update.attempt_id.as_deref(), update.event_seq,
-            ) else { return None };
+            let SubagentLifecycleReduction::Accepted(accepted) =
+                lifecycle.reduce(transition, update.attempt_id.as_deref(), update.event_seq)
+            else {
+                return None;
+            };
             let effect = accepted.effect();
             accepted.commit(lifecycle);
             match (transition, effect) {
-                (SubagentLifecycleTransition::Spawned, SubagentLifecycleEffect::Apply | SubagentLifecycleEffect::ApplyNewAttempt)
-                    if update.run_in_background == Some(true) && update.workflow_run_id.is_none() => {
-                        pending_bg.insert(BackgroundWork::Subagent(key));
-                        Some(update)
-                    }
+                (
+                    SubagentLifecycleTransition::Spawned,
+                    SubagentLifecycleEffect::Apply | SubagentLifecycleEffect::ApplyNewAttempt,
+                ) if update.run_in_background == Some(true) && update.workflow_run_id.is_none() => {
+                    pending_bg.insert(BackgroundWork::Subagent(key));
+                    Some(*update)
+                }
                 (SubagentLifecycleTransition::Finished, SubagentLifecycleEffect::Apply)
-                    if pending_bg.remove(&BackgroundWork::Subagent(key.clone())) => Some(update),
+                    if pending_bg.remove(&BackgroundWork::Subagent(key.clone())) =>
+                {
+                    Some(*update)
+                }
                 (SubagentLifecycleTransition::Progress, SubagentLifecycleEffect::Apply)
-                    if pending_bg.contains(&BackgroundWork::Subagent(key)) => Some(update),
+                    if pending_bg.contains(&BackgroundWork::Subagent(key)) =>
+                {
+                    Some(*update)
+                }
                 _ => None,
             }
         }
         #[cfg(test)]
-        ExtEvent::SubagentSpawned { .. } | ExtEvent::SubagentProgress { .. } | ExtEvent::SubagentFinished { .. } => None,
-        ExtEvent::MonitorEvent | ExtEvent::None | ExtEvent::Lifecycle(_) | ExtEvent::Stream(_) | ExtEvent::Retry(_) => None,
+        ExtEvent::SubagentSpawned { .. }
+        | ExtEvent::SubagentProgress { .. }
+        | ExtEvent::SubagentFinished { .. } => None,
+        ExtEvent::MonitorEvent
+        | ExtEvent::None
+        | ExtEvent::Lifecycle(_)
+        | ExtEvent::Stream(_)
+        | ExtEvent::Retry(_) => None,
     }
 }
 /// Non-blocking drain-to-empty of `acp_rx`.
@@ -1827,7 +1853,9 @@ fn handle_headless_acp_message(
                 ExtEvent::Stream(event) => emitter.reduce_and_emit(*event),
                 ExtEvent::Retry(state) => emitter.on_retry(state),
                 other => {
-                    if let Some(update) = track_background_lifecycle(other, pending_bg, background_lifecycle) {
+                    if let Some(update) =
+                        track_background_lifecycle(other, pending_bg, background_lifecycle)
+                    {
                         emitter.on_subagent_event(update);
                     }
                 }

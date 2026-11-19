@@ -6,8 +6,12 @@ fn track(
     state: &mut super::BackgroundLifecycleState,
 ) -> Option<super::ext_protocol::SubagentStreamEvent> {
     let event = match event {
-        super::ExtEvent::SubagentSpawned { subagent_id, attempt_id, event_seq } => {
-            super::ExtEvent::SubagentLifecycle(super::ext_protocol::SubagentStreamEvent {
+        super::ExtEvent::SubagentSpawned {
+            subagent_id,
+            attempt_id,
+            event_seq,
+        } => {
+            super::ExtEvent::SubagentLifecycle(Box::new(super::ext_protocol::SubagentStreamEvent {
                 event: "spawned".into(),
                 child_session_id: subagent_id.clone(),
                 parent_session_id: "parent".into(),
@@ -24,10 +28,14 @@ fn track(
                 subagent_id,
                 attempt_id,
                 event_seq,
-            })
+            }))
         }
-        super::ExtEvent::SubagentProgress { subagent_id, attempt_id, event_seq } => {
-            super::ExtEvent::SubagentLifecycle(super::ext_protocol::SubagentStreamEvent {
+        super::ExtEvent::SubagentProgress {
+            subagent_id,
+            attempt_id,
+            event_seq,
+        } => {
+            super::ExtEvent::SubagentLifecycle(Box::new(super::ext_protocol::SubagentStreamEvent {
                 event: "progress".into(),
                 child_session_id: subagent_id.clone(),
                 parent_session_id: "parent".into(),
@@ -44,10 +52,14 @@ fn track(
                 subagent_id,
                 attempt_id,
                 event_seq,
-            })
+            }))
         }
-        super::ExtEvent::SubagentFinished { subagent_id, attempt_id, event_seq } => {
-            super::ExtEvent::SubagentLifecycle(super::ext_protocol::SubagentStreamEvent {
+        super::ExtEvent::SubagentFinished {
+            subagent_id,
+            attempt_id,
+            event_seq,
+        } => {
+            super::ExtEvent::SubagentLifecycle(Box::new(super::ext_protocol::SubagentStreamEvent {
                 event: "finished".into(),
                 child_session_id: subagent_id.clone(),
                 parent_session_id: "parent".into(),
@@ -64,7 +76,7 @@ fn track(
                 subagent_id,
                 attempt_id,
                 event_seq,
-            })
+            }))
         }
         other => other,
     };

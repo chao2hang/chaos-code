@@ -637,13 +637,13 @@ pub fn read_updates_transcript(directory: &Path) -> StoredTranscript {
                     _ => None,
                 });
                 if last_kind == Some(kind_rank) {
-                    match transcript.rows.last_mut() {
-                        Some(StoredRow::UserInput { text: existing })
-                        | Some(StoredRow::AssistantText { text: existing })
-                        | Some(StoredRow::Reasoning { text: existing }) => {
-                            existing.push_str(&chunk);
-                        }
-                        _ => unreachable!("kind matched the row"),
+                    if let Some(
+                        StoredRow::UserInput { text: existing }
+                        | StoredRow::AssistantText { text: existing }
+                        | StoredRow::Reasoning { text: existing },
+                    ) = transcript.rows.last_mut()
+                    {
+                        existing.push_str(&chunk);
                     }
                 } else if transcript.rows.len() < UPDATES_MAX_ROWS {
                     let row = match kind {

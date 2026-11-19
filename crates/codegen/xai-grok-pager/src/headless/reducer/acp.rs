@@ -286,7 +286,7 @@ impl Reducer for AcpReducer {
                     },
                 };
                 return vec![to_line(&line)];
-            },
+            }
             StreamEvent::Plan(entries) => AcpLine::Plan { entries },
             StreamEvent::AvailableCommands {
                 tools,
@@ -361,6 +361,34 @@ impl Reducer for AcpReducer {
     }
 }
 
+fn acp_lifecycle_line(l: Lifecycle) -> AcpLine {
+    match l {
+        Lifecycle::CompactStarted { percentage } => AcpLine::AutoCompactStarted { percentage },
+        Lifecycle::CompactCompleted { .. } => AcpLine::AutoCompactCompleted,
+        Lifecycle::CompactFailed { error } => AcpLine::AutoCompactFailed { error },
+        Lifecycle::CompactCancelled => AcpLine::AutoCompactCancelled,
+        Lifecycle::AutoContinue { total_tokens } => AcpLine::AutoContinueCompleted { total_tokens },
+        Lifecycle::ImageCompressed { message } => AcpLine::ImageCompressed { message },
+        Lifecycle::MemoryFlushStarted => AcpLine::MemoryFlushStarted,
+        Lifecycle::MemoryFlushCompleted { result, path } => {
+            AcpLine::MemoryFlushCompleted { result, path }
+        }
+        Lifecycle::MemoryCaptureActivity {
+            activity,
+            from_turn,
+            through_turn,
+            attempt,
+            detail,
+        } => AcpLine::MemoryCaptureActivity {
+            activity,
+            from_turn,
+            through_turn,
+            attempt,
+            detail,
+        },
+    }
+}
+
 #[cfg(test)]
 mod subagent_line_tests {
     use super::*;
@@ -393,33 +421,5 @@ mod subagent_line_tests {
         assert_eq!(lines[0]["parentToolCallId"], "tool-1");
         assert_eq!(lines[0]["runInBackground"], true);
         assert_eq!(lines[0]["startedAtMs"], 1234);
-    }
-}
-
-fn acp_lifecycle_line(l: Lifecycle) -> AcpLine {
-    match l {
-        Lifecycle::CompactStarted { percentage } => AcpLine::AutoCompactStarted { percentage },
-        Lifecycle::CompactCompleted { .. } => AcpLine::AutoCompactCompleted,
-        Lifecycle::CompactFailed { error } => AcpLine::AutoCompactFailed { error },
-        Lifecycle::CompactCancelled => AcpLine::AutoCompactCancelled,
-        Lifecycle::AutoContinue { total_tokens } => AcpLine::AutoContinueCompleted { total_tokens },
-        Lifecycle::ImageCompressed { message } => AcpLine::ImageCompressed { message },
-        Lifecycle::MemoryFlushStarted => AcpLine::MemoryFlushStarted,
-        Lifecycle::MemoryFlushCompleted { result, path } => {
-            AcpLine::MemoryFlushCompleted { result, path }
-        }
-        Lifecycle::MemoryCaptureActivity {
-            activity,
-            from_turn,
-            through_turn,
-            attempt,
-            detail,
-        } => AcpLine::MemoryCaptureActivity {
-            activity,
-            from_turn,
-            through_turn,
-            attempt,
-            detail,
-        },
     }
 }

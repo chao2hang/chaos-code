@@ -102,13 +102,25 @@ pub(crate) enum ExtEvent {
     TaskCompleted {
         task_id: String,
     },
-    SubagentLifecycle(SubagentStreamEvent),
+    SubagentLifecycle(Box<SubagentStreamEvent>),
     #[cfg(test)]
-    SubagentSpawned { subagent_id: String, attempt_id: Option<String>, event_seq: Option<u64> },
+    SubagentSpawned {
+        subagent_id: String,
+        attempt_id: Option<String>,
+        event_seq: Option<u64>,
+    },
     #[cfg(test)]
-    SubagentProgress { subagent_id: String, attempt_id: Option<String>, event_seq: Option<u64> },
+    SubagentProgress {
+        subagent_id: String,
+        attempt_id: Option<String>,
+        event_seq: Option<u64>,
+    },
     #[cfg(test)]
-    SubagentFinished { subagent_id: String, attempt_id: Option<String>, event_seq: Option<u64> },
+    SubagentFinished {
+        subagent_id: String,
+        attempt_id: Option<String>,
+        event_seq: Option<u64>,
+    },
     MonitorEvent,
     Lifecycle(Lifecycle),
     Stream(Box<StreamEvent>),
@@ -434,7 +446,7 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
             agent_address,
             is_background,
             parent_tool_call_id,
-        } => ExtEvent::SubagentLifecycle(SubagentStreamEvent {
+        } => ExtEvent::SubagentLifecycle(Box::new(SubagentStreamEvent {
             event: "spawned".into(),
             subagent_id,
             attempt_id,
@@ -451,14 +463,14 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
             run_in_background: Some(is_background),
             started_at_ms: Some(now_ms()),
             duration_ms: None,
-        }),
+        })),
         XaiUpdate::SubagentProgress {
             subagent_id,
             attempt_id,
             parent_session_id,
             child_session_id,
             duration_ms,
-        } => ExtEvent::SubagentLifecycle(SubagentStreamEvent {
+        } => ExtEvent::SubagentLifecycle(Box::new(SubagentStreamEvent {
             event: "progress".into(),
             subagent_id,
             attempt_id,
@@ -475,14 +487,14 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
             run_in_background: None,
             started_at_ms: None,
             duration_ms,
-        }),
+        })),
         XaiUpdate::SubagentFinished {
             subagent_id,
             attempt_id,
             child_session_id,
             status,
             duration_ms,
-        } => ExtEvent::SubagentLifecycle(SubagentStreamEvent {
+        } => ExtEvent::SubagentLifecycle(Box::new(SubagentStreamEvent {
             event: "finished".into(),
             subagent_id,
             attempt_id,
@@ -499,7 +511,7 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
             run_in_background: None,
             started_at_ms: None,
             duration_ms,
-        }),
+        })),
         XaiUpdate::ResponseStarted {
             message_id,
             model,

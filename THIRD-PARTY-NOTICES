@@ -5855,17 +5855,6 @@ Copyright notice:
 License text: see Part II — MIT
 
 --------------------------------------------------------------------------------
-http-range-header 0.4.2
---------------------------------------------------------------------------------
-Source:  https://github.com/MarcusGrass/parse-range-headers
-License: MIT
-
-Copyright notice:
-  Copyright (c) 2021 MarcusGrass
-
-License text: see Part II — MIT
-
---------------------------------------------------------------------------------
 httparse 1.10.1
 --------------------------------------------------------------------------------
 Source:  https://github.com/seanmonstar/httparse

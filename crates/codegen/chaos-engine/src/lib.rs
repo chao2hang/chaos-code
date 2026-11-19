@@ -244,7 +244,7 @@ pub enum TurnOutput<'a> {
     /// live 行同 id，resync 不重影。
     Tool(TurnTool<'a>),
     /// Structured child-session lifecycle from the headless ACP adapter.
-    Subagent(SubagentLifecycleEvent),
+    Subagent(Box<SubagentLifecycleEvent>),
     Progress(RunProgress),
 }
 
@@ -1118,7 +1118,7 @@ impl PromptAdapter for HeadlessProcessAdapter {
             Text(String),
             Thought(String),
             Tool(TurnToolEnv),
-            Subagent(SubagentLifecycleEvent),
+            Subagent(Box<SubagentLifecycleEvent>),
             Progress(RunProgress),
             Usage(ProviderUsage),
             End { stop_reason: String },
@@ -1165,31 +1165,79 @@ impl PromptAdapter for HeadlessProcessAdapter {
                             let _ = line_tx.send(Parsed::Thought(data.to_string()));
                         }
                     }
-                    Some("subagent_spawned") | Some("subagent_progress") | Some("subagent_finished") => {
-                        let kind = value.get("type").and_then(serde_json::Value::as_str).unwrap_or_default();
+                    Some("subagent_spawned")
+                    | Some("subagent_progress")
+                    | Some("subagent_finished") => {
+                        let kind = value
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default();
                         let event = match kind {
                             "subagent_spawned" => "spawned",
                             "subagent_progress" => "progress",
                             _ => "finished",
                         };
-                        let _ = line_tx.send(Parsed::Subagent(SubagentLifecycleEvent {
+                        let _ = line_tx.send(Parsed::Subagent(Box::new(SubagentLifecycleEvent {
                             event: event.to_owned(),
-                            subagent_id: value.get("subagentId").and_then(serde_json::Value::as_str).unwrap_or_default().to_owned(),
-                            child_session_id: value.get("childSessionId").and_then(serde_json::Value::as_str).unwrap_or_default().to_owned(),
-                            subagent_type: value.get("subagentType").and_then(serde_json::Value::as_str).unwrap_or("subagent").to_owned(),
-                            description: value.get("description").and_then(serde_json::Value::as_str).unwrap_or_default().to_owned(),
-                            status: value.get("status").and_then(serde_json::Value::as_str).map(str::to_owned),
-                            model: value.get("model").and_then(serde_json::Value::as_str).map(str::to_owned),
-                            run_in_background: value.get("runInBackground").and_then(serde_json::Value::as_bool),
-                            started_at_ms: value.get("startedAtMs").and_then(serde_json::Value::as_u64),
-                            parent_session_id: value.get("parentSessionId").and_then(serde_json::Value::as_str).map(str::to_owned),
-                            workflow_run_id: value.get("workflowRunId").and_then(serde_json::Value::as_str).map(str::to_owned),
-                            agent_address: value.get("agentAddress").and_then(serde_json::Value::as_str).map(str::to_owned),
-                            attempt_id: value.get("attemptId").and_then(serde_json::Value::as_str).map(str::to_owned),
+                            subagent_id: value
+                                .get("subagentId")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            child_session_id: value
+                                .get("childSessionId")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            subagent_type: value
+                                .get("subagentType")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("subagent")
+                                .to_owned(),
+                            description: value
+                                .get("description")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            status: value
+                                .get("status")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                            model: value
+                                .get("model")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                            run_in_background: value
+                                .get("runInBackground")
+                                .and_then(serde_json::Value::as_bool),
+                            started_at_ms: value
+                                .get("startedAtMs")
+                                .and_then(serde_json::Value::as_u64),
+                            parent_session_id: value
+                                .get("parentSessionId")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                            workflow_run_id: value
+                                .get("workflowRunId")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                            agent_address: value
+                                .get("agentAddress")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                            attempt_id: value
+                                .get("attemptId")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
                             event_seq: value.get("eventSeq").and_then(serde_json::Value::as_u64),
-                            duration_ms: value.get("durationMs").and_then(serde_json::Value::as_u64),
-                            parent_tool_call_id: value.get("parentToolCallId").and_then(serde_json::Value::as_str).map(str::to_owned),
-                        }));
+                            duration_ms: value
+                                .get("durationMs")
+                                .and_then(serde_json::Value::as_u64),
+                            parent_tool_call_id: value
+                                .get("parentToolCallId")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned),
+                        })));
                     }
                     Some("tool_call") => {
                         if let Some(tool_call_id) =
@@ -2626,7 +2674,11 @@ struct RuntimeSubagentProjection {
 impl RuntimeSubagentProjection {
     fn snapshot(&self) -> (u64, Vec<String>, Vec<RunningSubagentInfo>, usize) {
         let mut running: Vec<_> = self.children.values().cloned().collect();
-        running.sort_by(|a, b| a.started_at_ms.cmp(&b.started_at_ms).then(a.child_session_id.cmp(&b.child_session_id)));
+        running.sort_by(|a, b| {
+            a.started_at_ms
+                .cmp(&b.started_at_ms)
+                .then(a.child_session_id.cmp(&b.child_session_id))
+        });
         let mut child_session_ids: Vec<_> = self.children.keys().cloned().collect();
         child_session_ids.sort();
         let ended_total = self.ended_child_session_ids.len();
@@ -4029,16 +4081,23 @@ impl Engine {
                         duration_ms: event.duration_ms,
                         parent_tool_call_id: event.parent_tool_call_id.clone(),
                     };
-                    if projection.children.get(&child_key) == Some(&child) { return false; }
+                    if projection.children.get(&child_key) == Some(&child) {
+                        return false;
+                    }
                     projection.ended_child_session_ids.remove(&child_key);
                     projection.children.insert(child_key, child);
                     true
                 }
                 "progress" => {
-                    let Some(child) = projection.children.get_mut(&child_key) else { return false };
+                    let Some(child) = projection.children.get_mut(&child_key) else {
+                        return false;
+                    };
                     let status = event.status.as_deref().unwrap_or("running");
                     let mut changed = false;
-                    if child.status != status { child.status = status.to_owned(); changed = true; }
+                    if child.status != status {
+                        child.status = status.to_owned();
+                        changed = true;
+                    }
                     if event.duration_ms.is_some() && child.duration_ms != event.duration_ms {
                         child.duration_ms = event.duration_ms;
                         changed = true;
@@ -4050,7 +4109,9 @@ impl Engine {
                     changed
                 }
                 "finished" => {
-                    let Some(mut child) = projection.children.remove(&child_key) else { return false };
+                    let Some(mut child) = projection.children.remove(&child_key) else {
+                        return false;
+                    };
                     child.status = event.status.clone().unwrap_or_else(|| "completed".into());
                     child.duration_ms = event.duration_ms;
                     child.event_seq = event.event_seq.or(child.event_seq);
@@ -5194,8 +5255,10 @@ impl Engine {
                             })
                         }
                         TurnOutput::Subagent(mut subagent) => {
-                            subagent.parent_session_id.get_or_insert_with(|| session_id.to_string());
-                            self.update_subagent(session_id, subagent, sink, emit);
+                            subagent
+                                .parent_session_id
+                                .get_or_insert_with(|| session_id.to_string());
+                            self.update_subagent(session_id, *subagent, sink, emit);
                             return true;
                         }
                         TurnOutput::Tool(tool) => {
@@ -5451,10 +5514,11 @@ impl Engine {
         session.api_retry = None;
         let events = match failure {
             Some(message) => {
-                if let Some(last) = session.messages.last_mut() {
-                    if last.role == "assistant" && last.text.is_empty() {
-                        last.text = format!("请求失败：{message}");
-                    }
+                if let Some(last) = session.messages.last_mut()
+                    && last.role == "assistant"
+                    && last.text.is_empty()
+                {
+                    last.text = format!("请求失败：{message}");
                 }
                 session.sequence += 1;
                 session.record_preview();
@@ -8332,8 +8396,8 @@ mod tests {
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
         let adapter = HeadlessProcessAdapter::new(&binary, dir.path());
         // 借用与线程边界：TurnTool 借的是闭包局部的字符串，先把要断言的字段抄出来。
-        let cards: std::sync::Mutex<Vec<(bool, String, String, Option<bool>, String)>> =
-            std::sync::Mutex::new(Vec::new());
+        type ToolCard = (bool, String, String, Option<bool>, String);
+        let cards: std::sync::Mutex<Vec<ToolCard>> = std::sync::Mutex::new(Vec::new());
         adapter
             .run_prompt_turn_progressing("hello", &RunOptions::default(), &mut |output| {
                 if let TurnOutput::Tool(tool) = output {
@@ -8423,7 +8487,7 @@ mod tests {
             eprintln!("chaos 二进制不存在，跳过");
             return;
         }
-        let adapter = HeadlessProcessAdapter::new(&binary, &std::env::temp_dir());
+        let adapter = HeadlessProcessAdapter::new(&binary, std::env::temp_dir());
         let mut text = String::new();
         let mut thought = String::new();
         let mut tool_ids: Vec<String> = Vec::new();
@@ -10416,7 +10480,14 @@ mod tests {
             child_session_id: child_session_id.into(),
             subagent_type: "explore".into(),
             description: "Inspect the repository".into(),
-            status: Some(if event == "finished" { "completed" } else { "running" }.into()),
+            status: Some(
+                if event == "finished" {
+                    "completed"
+                } else {
+                    "running"
+                }
+                .into(),
+            ),
             model: Some("grok-test".into()),
             run_in_background: Some(true),
             started_at_ms: Some(100),
@@ -10442,7 +10513,10 @@ mod tests {
             &mut |event| emitted.push(event),
         ));
         assert_eq!(emitted.len(), 1);
-        assert!(matches!(emitted[0], ServerMessage::SubagentsUpdated { revision: 1, .. }));
+        assert!(matches!(
+            emitted[0],
+            ServerMessage::SubagentsUpdated { revision: 1, .. }
+        ));
         assert!(!engine.update_subagent(
             parent,
             background_subagent_event("spawned", "child-1", Some("attempt-1"), Some(1)),
@@ -10453,15 +10527,23 @@ mod tests {
         assert_eq!(revision, 1);
         assert_eq!(ids, vec!["child-1"]);
         assert_eq!(ended, 0);
-        assert_eq!(running[0].parent_tool_call_id.as_deref(), Some("tool-parent"));
+        assert_eq!(
+            running[0].parent_tool_call_id.as_deref(),
+            Some("tool-parent")
+        );
         assert_eq!(running[0].status, "running");
 
-        let mut progress = background_subagent_event("progress", "child-1", Some("attempt-1"), Some(2));
+        let mut progress =
+            background_subagent_event("progress", "child-1", Some("attempt-1"), Some(2));
         progress.description = String::new();
         assert!(engine.update_subagent(parent, progress, None, &mut |event| emitted.push(event)));
-        let mut finish = background_subagent_event("finished", "child-1", Some("attempt-1"), Some(3));
+        let mut finish =
+            background_subagent_event("finished", "child-1", Some("attempt-1"), Some(3));
         finish.run_in_background = None;
-        assert!(engine.update_subagent(parent, finish.clone(), None, &mut |event| emitted.push(event)));
+        assert!(
+            engine.update_subagent(parent, finish.clone(), None, &mut |event| emitted
+                .push(event))
+        );
         assert!(!engine.update_subagent(parent, finish, None, &mut |event| emitted.push(event)));
         let (revision, ids, running, ended) = engine.session_subagents(parent);
         assert_eq!(revision, 3);
@@ -10480,7 +10562,10 @@ mod tests {
         let mut workflow = background_subagent_event("spawned", "child-wf", None, Some(2));
         workflow.workflow_run_id = Some("workflow-1".into());
         assert!(!engine.update_subagent(parent, workflow, None, &mut |_| {}));
-        assert_eq!(engine.session_subagents(parent), (0, Vec::new(), Vec::new(), 0));
+        assert_eq!(
+            engine.session_subagents(parent),
+            (0, Vec::new(), Vec::new(), 0)
+        );
     }
 
     #[test]

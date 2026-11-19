@@ -305,6 +305,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The build above only downloads what this target actually compiles. `cargo metadata`
+          # still has to read the manifest of every package the lock resolves (for example the
+          # optional platform-gated crates), so fetch the whole lock before going offline.
+          cargo fetch --locked
           mkdir -p sbom-out
           stamp="$(git log -1 --date=format:%Y-%m-%dT%H:%M:%SZ --format=%cd)"
           python3 scripts/gen-sbom.py --timestamp "$stamp" --output sbom-out/chaos.cdx.json

@@ -1,6 +1,27 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 — 2026-11-19
+
+### 修复：OpenAI 兼容网关上的工具调用与推理参数
+
+- `use_tool` 的输入 schema 改为顶层扁平 `object`（`tool_name` / `tool_input` /
+  `tool_input_file` / `file`），不再在根上使用 `oneOf`，兼容只接受纯 object 根节点的
+  OpenAI 风格后端。
+- 网关以 400 拒绝「函数工具 + `reasoning_effort`」时，重试逻辑现在会按错误原文处理：
+  要求显式 `none` 的，写入 `reasoning_effort: "none"` 后重试一次；只是不支持该参数的，
+  继续剥离参数。此前参数本来就不存在时会被判为「无需修改」，整轮直接失败。
+- `reasoning_content` 占位回填只在推理真正启用（或历史里已有推理内容）时发生，避免给
+  非推理请求塞入无意义的占位文本。
+
+### 修复：Responses 加密推理会话失效与未知 SSE 事件
+
+加密推理通道返回 409 时自动清理不再可重放的推理历史并重试一次；无法识别的 SSE 事件
+不再被判为致命错误，流式响应可以继续。
+
+### 移除：桌面端宿主清理
+
+删除 `xai-grok-desktop` crate 及其工作区成员、版本锁步与 panic 基线条目；桌面端不再随
+本项目发布。共享引擎协议、终端 TUI 与 ACP 远程服务保持不变。
 
 ### 移除：Web 端整体废弃
 
@@ -9,6 +30,14 @@ ZCode 前端源码、Web 宿主（`chaos-web`）与 RPC 协议 crate 已从仓�
 `HostInfo` / Safe Web Mode 元数据与策略也已移除；Desktop 共用的引擎协议、终端 TUI
 及 ACP 远程服务保留。产品不提供浏览器 UI。历史发布记录与验证转录仍保留作档案，
 不表示这些旧 Web 功能仍受支持。
+
+### 发布：修复 v1.0.0 发布流水线的两处失败
+
+- Windows 目标的 `xai-tty-utils` 补齐 `GetCurrentProcess` / `DuplicateHandle` /
+  `HANDLE` / `DUPLICATE_SAME_ACCESS` 的 `windows` crate 导入，两个 MSVC 目标恢复可编译。
+- SBOM 步骤在 `cargo metadata --frozen` 之前执行 `cargo fetch --locked`，让整个锁文件的
+  清单都进入缓存；之前的构建只下载当前目标实际编译的依赖，导致平台相关 crate 缺失时
+  SBOM 生成失败。
 
 ## 0.5.0 — 2026-10-09
 
