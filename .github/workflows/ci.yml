@@ -172,7 +172,7 @@ jobs:
   # sandbox's Linux seccomp/namespaces vs Windows Job Object, the updater's
   # per-OS installer hint, PTY teardown) only compile on their target OS, so a
   # Linux-only job cannot claim they work. `release.yml` already runs on
-  # macos-14 and windows-latest; this job runs the same crates' tests there.
+  # macos-15 and windows-latest; this job runs the same crates' tests there.
   platform-tests:
     name: platform tests (${{ matrix.os }})
     needs: rust
@@ -187,7 +187,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        os: [macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v4
 

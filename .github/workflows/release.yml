@@ -148,15 +148,16 @@ jobs:
             bin: chaos
             required: true
 
-          # macOS — arm host; x64 via Apple cross target on same runner
+          # macOS — arm host; x64 via Apple cross target on same runner.
+          # macOS 14 images were retired on 2026-11-02; macos-15 is the GA arm64 image.
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
             artifact: chaos-darwin-arm64
             bin: chaos
             required: true
 
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-15
             artifact: chaos-darwin-x64
             bin: chaos
             required: true

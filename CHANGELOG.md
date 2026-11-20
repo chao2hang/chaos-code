@@ -31,13 +31,14 @@ ZCode 前端源码、Web 宿主（`chaos-web`）与 RPC 协议 crate 已从仓�
 及 ACP 远程服务保留。产品不提供浏览器 UI。历史发布记录与验证转录仍保留作档案，
 不表示这些旧 Web 功能仍受支持。
 
-### 发布：修复 v1.0.0 发布流水线的两处失败
+### 发布：修复发布流水线的失败
 
 - Windows 目标的 `xai-tty-utils` 补齐 `GetCurrentProcess` / `DuplicateHandle` /
   `HANDLE` / `DUPLICATE_SAME_ACCESS` 的 `windows` crate 导入，两个 MSVC 目标恢复可编译。
 - SBOM 步骤在 `cargo metadata --frozen` 之前执行 `cargo fetch --locked`，让整个锁文件的
   清单都进入缓存；之前的构建只下载当前目标实际编译的依赖，导致平台相关 crate 缺失时
   SBOM 生成失败。
+- macOS 14 托管镜像已于 2026-11-02 退役，发布构建与平台测试改用 `macos-15`。
 
 ## 0.5.0 — 2026-10-09
 

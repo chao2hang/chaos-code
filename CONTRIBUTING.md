@@ -424,7 +424,7 @@ scripts/test-platform.sh 2>&1 | tee "platform-test-$(uname -s).log"
 ```
 
 Both print the toolchain/OS report first and then run the same crate set the
-`platform-tests` CI job uses (`macos-14` and `windows-latest`), and both accept
+`platform-tests` CI job uses (`macos-15` and `windows-latest`), and both accept
 crate names to narrow the run. Keep the log: it is the evidence a platform row in
 `TODO.md` needs, and a Linux log never substitutes for it.
 
