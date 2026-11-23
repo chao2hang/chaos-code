@@ -9,7 +9,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 /// inherits it (fish reads `ESC [ 99 ; 5 : 3 u` as Ctrl+D and exits). The scripted terminal answers DA1 only after the
 /// release, the order a real terminal produces, so the fence must have consumed it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in a Unix PTY with /bin/sh, stty and cat to capture late kitty key-release bytes; review 2027-01"]
 #[cfg(unix)]
 async fn quit_fence_consumes_kitty_release() {
     let content = ContentController::start().await.expect("start content");

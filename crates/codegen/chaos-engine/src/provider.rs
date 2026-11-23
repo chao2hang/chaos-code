@@ -518,8 +518,12 @@ impl HttpPromptAdapter {
     /// Whether the provider demands an explicit `"none"` rather than omitting
     /// the parameter (same wording as `SamplingError::wants_reasoning_effort_none`).
     fn error_wants_reasoning_effort_none(error: &str) -> bool {
-        error.contains("reasoning_effort")
-            && (error.contains("'none'") || error.contains("\"none\""))
+        // This error still contains the raw JSON body, so normalize escaped
+        // double quotes before matching the same instruction as the sampler.
+        // Merely naming `none` can mean the provider rejects it, not demands it.
+        let error = error.replace("\\\"", "\"").to_ascii_lowercase();
+        error.contains("set reasoning_effort to 'none'")
+            || error.contains("set reasoning_effort to \"none\"")
     }
 
     fn send_and_stream_once(
@@ -1238,6 +1242,100 @@ mod tests {
             second["reasoning_effort"], "none",
             "重试必须显式带 none：{second}"
         );
+    }
+
+    #[test]
+    fn explicit_none_correction_requires_an_instruction_not_a_rejected_value() {
+        for message in [
+            "To use function tools, set reasoning_effort to 'none'.",
+            "To use function tools, set reasoning_effort to \"none\".",
+        ] {
+            // The adapter sees the raw JSON, including escaped double quotes.
+            let error = format!(
+                "Provider 返回 HTTP 400：{}",
+                serde_json::json!({ "error": { "message": message } })
+            );
+            assert!(HttpPromptAdapter::error_rejects_reasoning_effort(&error));
+            assert!(HttpPromptAdapter::error_wants_reasoning_effort_none(&error));
+        }
+        for message in [
+            "Invalid value for 'reasoning_effort': 'none' is not supported with this model.",
+            "Invalid value for reasoning_effort: \"none\" is not supported with this model.",
+            "Unknown parameter: reasoning_effort; received value 'none'.",
+            "Invalid reasoning_effort. Supported values are 'none', 'low', and 'high'.",
+        ] {
+            let error = format!(
+                "Provider 返回 HTTP 400：{}",
+                serde_json::json!({ "error": { "message": message } })
+            );
+            assert!(HttpPromptAdapter::error_rejects_reasoning_effort(&error));
+            assert!(!HttpPromptAdapter::error_wants_reasoning_effort_none(&error));
+        }
+    }
+
+    /// Rejecting the selected `none` value is the opposite of demanding it:
+    /// the second HTTP request must omit effort and let the model use its default.
+    #[test]
+    fn a_gateway_rejecting_none_gets_one_stripped_retry() {
+        use std::io::{BufRead, Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::<serde_json::Value>::new();
+            for attempt in 0..2 {
+                let (socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = std::io::BufReader::new(socket);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let response = if attempt == 0 {
+                    assert_eq!(body["reasoning_effort"], "none");
+                    let rejection = serde_json::json!({
+                        "error": {
+                            "message": "Invalid value for 'reasoning_effort': 'none' is not supported with this model."
+                        }
+                    });
+                    format!("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n{rejection}")
+                } else {
+                    assert!(body.get("reasoning_effort").is_none(), "{body}");
+                    sse_ok("retried")
+                };
+                bodies.push(body);
+                reader.get_mut().write_all(response.as_bytes()).unwrap();
+            }
+            bodies
+        });
+        let adapter =
+            HttpPromptAdapter::new(&format!("http://{address}/v1"), "m", None::<String>).unwrap();
+        let reply = adapter
+            .run_prompt(
+                "hello",
+                &crate::RunOptions {
+                    thought_level: Some("none".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("rejecting none must strip the parameter and retry");
+        assert_eq!(reply.concat(), "retried");
+        let bodies = server.join().unwrap();
+        assert_eq!(bodies.len(), 2, "exactly one corrected retry: {bodies:?}");
+        assert_eq!(bodies[0]["reasoning_effort"], "none");
+        assert!(bodies[1].get("reasoning_effort").is_none());
     }
 
     /// 拒绝理由没点名 `reasoning_effort` 的 400 不是这个口径的事：原样报错，

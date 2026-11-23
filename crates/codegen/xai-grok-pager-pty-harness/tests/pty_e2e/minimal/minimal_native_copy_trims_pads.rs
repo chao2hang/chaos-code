@@ -16,7 +16,7 @@ const COPY_COLS: u16 = 40;
 const COPY_ROWS: u16 = 50;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with cursor-query replies and terminal emulation to inspect minimal-mode native copy text; review 2027-01"]
 async fn minimal_native_copy_trims_pads() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL}\n{YAML_RESPONSE}"));

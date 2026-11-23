@@ -385,6 +385,7 @@ gates=(
   # The recon record is named by date + upstream tip, so a second same-day run used to
   # overwrite the first; these fixtures drive the shipped script and pin that it cannot.
   "upstream recon: python3 scripts/ci/test-upstream-recon.py"
+  "release signing and assets: python3 scripts/ci/test-release-signing-preflight.py && python3 scripts/ci/test-release-assets.py"
   "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py && python3 scripts/ci/test-installer-download-size.py && python3 scripts/ci/test-installer-download-stall.py"
   "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/install-lib.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos-bootstrap.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && node crates/codegen/xai-grok-pager/npm/chaos/scripts/test-postinstall.js && bash scripts/ci/test-publish-npm.sh && bash scripts/ci/test-assemble-notices.sh && bash scripts/ci/test-assemble-integrity.sh && python3 scripts/ci/test-check-npm-integrity.py && python3 scripts/ci/check-npm-integrity.py"
   "docs localization: ${bootstrap}; bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"

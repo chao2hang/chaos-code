@@ -43,19 +43,19 @@ const TEAM_REASON: &str = "Managed by your team admin.";
 const DESCRIPTION_PREFIX: &str = "Opt-in to provide SpaceXAI";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test settings_locked_row_e2e -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test settings_locked_row_e2e -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY
 async fn zdr_team_locks_row_and_suppresses_banner() {
     run_zdr().await.expect("zdr locked-row e2e");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test settings_locked_row_e2e -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test settings_locked_row_e2e -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY
 async fn team_member_sees_admin_managed_row_and_no_banner() {
     run_team_member().await.expect("team-member locked-row e2e");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "requires the built pager binary in an OS PTY with seeded mock team auth to exercise settings rendering; review 2027-01"] // opt-in: spawns the real pager binary in a PTY
 async fn team_member_with_unknown_capability_sees_no_banner_and_editable_row() {
     run_unknown_capability()
         .await

@@ -41,6 +41,7 @@ RUN apt-get update \
         ca-certificates \
         ripgrep \
         python3 \
+        python3-cryptography \
         git \
         curl \
         wget \

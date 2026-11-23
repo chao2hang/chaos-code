@@ -97,6 +97,55 @@ pub(crate) fn idle_timeout_user_message(elapsed_secs: u64) -> String {
 /// This stays in xai-grok-shell because it depends on `agent_client_protocol::Error`.
 pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
     use reqwest::StatusCode;
+    // ACP's existing codes conflate HTTP/SSE failures and local bugs. Preserve their
+    // code/message contracts, but carry a typed marker for headless's exit decision.
+    let (reason, provider_kind) = match &err {
+        SamplingError::Api { status: StatusCode::FORBIDDEN, .. } =>
+            ("permission_denied", None),
+        SamplingError::Api { error_code, .. } => {
+            let kind = match error_code {
+                Some(ApiErrorCode::Other(code)) if matches!(code.as_str(), "unsupported_tools" | "unsupported_tools_for_model") =>
+                    Some("provider_unsupported_tools"),
+                _ => None,
+            };
+            ("provider_error", kind)
+        }
+        SamplingError::Auth { .. }
+        | SamplingError::Http(_)
+        | SamplingError::EventStreamError(_)
+        | SamplingError::StreamError { .. }
+        | SamplingError::EmptyResponse { .. }
+        | SamplingError::MaxTokensTruncation
+        | SamplingError::MalformedToolCall { .. }
+        | SamplingError::IdleTimeout { .. } => ("provider_error", None),
+        // A doom loop is a local safety stop, not a provider failure.
+        SamplingError::DoomLoopDetected { .. } => ("internal_error", None),
+        SamplingError::InvalidConfiguration(_)
+        | SamplingError::MtlsConfiguration(_)
+        | SamplingError::Serialization(_) => ("internal_error", None),
+    };
+    // Overload copy is shown verbatim. ACP Display appends JSON `data`, so this
+    // one case keeps `data` unset; headless still classifies it as a provider error
+    // through the dedicated rate/overload message and ACP code.
+    if err.is_overloaded() {
+        return map_sampling_err_to_acp_inner(err);
+    }
+    let mut mapped = map_sampling_err_to_acp_inner(err);
+    let mut data = match mapped.data.take() {
+        Some(serde_json::Value::Object(object)) => object,
+        Some(data) => serde_json::Map::from_iter([("message".to_owned(), data)]),
+        None => serde_json::Map::new(),
+    };
+    data.insert(RUN_EXIT_REASON_DATA_KEY.to_owned(), serde_json::json!(reason));
+    if let Some(kind) = provider_kind {
+        data.insert(PROVIDER_KIND_DATA_KEY.to_owned(), serde_json::json!(kind));
+    }
+    mapped.data = Some(serde_json::Value::Object(data));
+    mapped
+}
+
+fn map_sampling_err_to_acp_inner(err: SamplingError) -> acp::Error {
+    use reqwest::StatusCode;
     // Capacity/overload gets the same short copy everywhere
     // Message only, `data` unset: `Display` appends JSON-encoded `data`, and this string is meant for direct display
     if err.is_overloaded() {
@@ -208,6 +257,17 @@ pub(crate) fn local_error(code: &str, message: impl Into<String>) -> acp::Error 
 /// Snake_case like its shipped `data` siblings (`http_status`); frozen wire format.
 /// The notification paths carry the kind under their own keys/fields (see `extensions::notification::PROMPT_COMPLETE_ERROR_KIND_KEY`).
 const ERROR_KIND_DATA_KEY: &str = "error_kind";
+/// ACP `data` markers added without changing the shipped code or message.
+const RUN_EXIT_REASON_DATA_KEY: &str = "run_exit_reason";
+const PROVIDER_KIND_DATA_KEY: &str = "provider_kind";
+
+pub fn run_exit_reason_from_error(err: &acp::Error) -> Option<&str> {
+    err.data.as_ref()?.get(RUN_EXIT_REASON_DATA_KEY)?.as_str()
+}
+
+pub fn provider_kind_from_error(err: &acp::Error) -> Option<&str> {
+    err.data.as_ref()?.get(PROVIDER_KIND_DATA_KEY)?.as_str()
+}
 
 /// `acp::Error.data` key for a local failure's stable `code`; shared by [`local_error`], [`error_code_from_data`], and `session::persistence::io_error_to_acp`.
 pub(crate) const ERROR_CODE_DATA_KEY: &str = "code";
@@ -338,7 +398,7 @@ pub fn error_detail_from_data(data: &serde_json::Value) -> Option<String> {
 }
 
 /// Detail an ACP error carries: `data` via [`error_detail_from_data`], else the JSON-RPC `message`, so foreign shapes classify as the safe `Other`.
-pub(crate) fn acp_error_message(err: &acp::Error) -> String {
+pub fn acp_error_message(err: &acp::Error) -> String {
     err.data
         .as_ref()
         .and_then(error_detail_from_data)
@@ -661,6 +721,7 @@ mod tests {
         assert_eq!(acp_err.message, OVERLOADED_USER_MESSAGE);
         // Display appends JSON-encoded `data`; direct-display copy must not carry any
         assert_eq!(acp_err.data, None);
+        assert_eq!(acp_err.to_string(), OVERLOADED_USER_MESSAGE);
 
         let err_529 = SamplingError::Api {
             status: StatusCode::from_u16(529).expect("valid status"),
@@ -673,6 +734,7 @@ mod tests {
         let acp_529 = map_sampling_err_to_acp(err_529);
         assert_eq!(acp_529.message, OVERLOADED_USER_MESSAGE);
         assert_eq!(acp_529.data, None);
+        assert_eq!(acp_529.to_string(), OVERLOADED_USER_MESSAGE);
     }
 
     #[test]
@@ -689,9 +751,10 @@ mod tests {
         assert_eq!(acp_err.code, acp::ErrorCode::from(RATE_LIMITED_ERROR_CODE));
         assert_eq!(acp_err.message, "Rate limited");
         assert_eq!(
-            acp_err.data,
-            Some(serde_json::Value::String("Rate limit exceeded".into()))
+            error_detail_from_data(acp_err.data.as_ref().expect("rate-limit detail")),
+            Some("Rate limit exceeded".into())
         );
+        assert_eq!(run_exit_reason_from_error(&acp_err), Some("provider_error"));
     }
 
     #[test]
@@ -771,11 +834,15 @@ mod tests {
             "403 Forbidden must not be surfaced as auth_required"
         );
         assert_eq!(
-            acp_err.data,
-            Some(serde_json::Value::String(
+            error_detail_from_data(acp_err.data.as_ref().expect("forbidden detail")),
+            Some(
                 "Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_DATA_LEAKAGE"
                     .into()
-            ))
+            )
+        );
+        assert_eq!(
+            run_exit_reason_from_error(&acp_err),
+            Some("permission_denied")
         );
     }
 
@@ -821,8 +888,8 @@ mod tests {
                 error_code: None,
             };
             let acp_err = map_sampling_err_to_acp(err);
-            let data = acp_err.data.unwrap();
-            let msg = data.as_str().unwrap();
+            let msg = error_detail_from_data(acp_err.data.as_ref().expect("detail"))
+                .expect("detail text");
             assert!(
                 msg.contains("grok logout"),
                 "should suggest grok logout when API key is available: {msg}"
@@ -847,8 +914,8 @@ mod tests {
                 error_code: None,
             };
             let acp_err = map_sampling_err_to_acp(err);
-            let data = acp_err.data.unwrap();
-            let msg = data.as_str().unwrap();
+            let msg = error_detail_from_data(acp_err.data.as_ref().expect("detail"))
+                .expect("detail text");
             assert!(
                 !msg.contains("grok logout"),
                 "should NOT suggest logout when no API key is available: {msg}"
@@ -869,8 +936,8 @@ mod tests {
                 error_code: None,
             };
             let acp_err = map_sampling_err_to_acp(err);
-            let data = acp_err.data.unwrap();
-            let msg = data.as_str().unwrap();
+            let msg = error_detail_from_data(acp_err.data.as_ref().expect("detail"))
+                .expect("detail text");
             assert!(
                 !msg.contains("grok logout"),
                 "should NOT suggest logout for non-subscription 403: {msg}"

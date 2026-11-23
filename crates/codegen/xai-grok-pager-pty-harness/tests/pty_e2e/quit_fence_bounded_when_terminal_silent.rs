@@ -5,7 +5,7 @@ use super::common::*;
 /// A terminal that pushed kitty flags but never answers DA1 must not hold the quit. The marker deadline is what makes this
 /// load-bearing: an unbounded fence would still reach exit 0 through the 20 s watchdog.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in a Unix PTY with /bin/sh, stty and cat to time the quit fence without a DA1 reply; review 2027-01"]
 #[cfg(unix)]
 async fn quit_fence_bounded_when_terminal_silent() {
     let content = ContentController::start().await.expect("start content");

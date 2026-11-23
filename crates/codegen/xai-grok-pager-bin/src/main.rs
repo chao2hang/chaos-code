@@ -2206,13 +2206,18 @@ fn main() {
     if let Err(e) = result {
         xai_tty_utils::restore_native_stderr();
         finalize_span_profile();
-        let report = match e.downcast_ref::<xai_grok_pager::app::StartupFailure>() {
-            Some(startup) => startup.user_report(),
-            None => format!("Error: {e:#}"),
+        let (code, report) = if let Some(failure) =
+            e.downcast_ref::<xai_grok_pager::headless::HeadlessFailure>()
+        {
+            (failure.reason.code(), failure.diagnostic())
+        } else if let Some(startup) = e.downcast_ref::<xai_grok_pager::app::StartupFailure>() {
+            (1, startup.user_report())
+        } else {
+            (1, format!("Error: {e:#}"))
         };
         xai_grok_pager::best_effort_stderr::eprint_line(&report);
         drop(_sentry_guard);
-        std::process::exit(1);
+        std::process::exit(code);
     }
     finalize_span_profile();
 }

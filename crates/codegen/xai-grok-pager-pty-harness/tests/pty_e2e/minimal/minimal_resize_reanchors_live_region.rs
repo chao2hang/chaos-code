@@ -101,7 +101,7 @@ fn assert_single_after_resize(harness: &mut PtyHarness, rows: u16, cols: u16, to
 /// A resize re-anchors the live region on where the terminal reflowed the cursor, then reprints the history at the new width.
 /// Neither step may drop a committed row or leave a stale copy of the status row or prompt behind.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with cursor-query replies and Alacritty-style terminal reflow during resize; review 2027-01"]
 async fn minimal_resize_reanchors_live_region() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(bullet_response());
@@ -167,7 +167,7 @@ async fn minimal_resize_reanchors_live_region() {
 /// A narrowing drag mid-stream re-wraps the live tail rows above the prompt. The redraw must start above all of them.
 /// No resize may query the cursor inside an open synchronized update.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with cursor-query replies and Alacritty-style terminal reflow during resize; review 2027-01"]
 async fn minimal_resize_mid_stream_reanchors_live_region() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(bullet_response());

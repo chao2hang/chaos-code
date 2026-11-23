@@ -375,8 +375,14 @@ impl SamplingError {
                 status: StatusCode::BAD_REQUEST,
                 message,
                 ..
-            } if message.contains("reasoning_effort")
-                && (message.contains("'none'") || message.contains("\"none\""))
+            } if {
+                // Match an instruction, not just an enum value: a provider can
+                // mention `'none'` because it rejects that value, in which case
+                // the fallback must remove the parameter instead of pinning it.
+                let message = message.to_ascii_lowercase();
+                message.contains("set reasoning_effort to 'none'")
+                    || message.contains("set reasoning_effort to \"none\"")
+            }
         )
     }
 
@@ -2158,5 +2164,30 @@ mod tests {
         assert!(!unsupported.wants_reasoning_effort_none());
 
         assert!(!bad_request("invalid json").wants_reasoning_effort_none());
+    }
+
+    #[test]
+    fn explicit_none_demand_accepts_double_quotes_but_requires_bad_request() {
+        let message = "To use function tools, set reasoning_effort to \"none\".";
+        assert!(bad_request(message).wants_reasoning_effort_none());
+        let mut unavailable = bad_request(message);
+        if let SamplingError::Api { status, .. } = &mut unavailable {
+            *status = StatusCode::SERVICE_UNAVAILABLE;
+        }
+        assert!(!unavailable.wants_reasoning_effort_none());
+    }
+
+    #[test]
+    fn rejecting_or_listing_none_is_not_a_demand_for_none() {
+        for message in [
+            "Invalid value for 'reasoning_effort': 'none' is not supported with this model.",
+            "Invalid value for reasoning_effort: \"none\" is not supported with this model.",
+            "Unknown parameter: reasoning_effort; received value 'none'.",
+            "Invalid reasoning_effort. Supported values are 'none', 'low', and 'high'.",
+        ] {
+            let err = bad_request(message);
+            assert!(err.is_reasoning_effort_error(), "{message}");
+            assert!(!err.wants_reasoning_effort_none(), "{message}");
+        }
     }
 }

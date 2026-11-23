@@ -752,6 +752,33 @@ mod tests {
     }
 
     #[test]
+    fn rejected_none_effort_falls_back_to_omitting_the_parameter() {
+        let rejected_none = api_err(
+            StatusCode::BAD_REQUEST,
+            "Invalid value for 'reasoning_effort': 'none' is not supported with this model.",
+        );
+        assert!(matches!(
+            classify_error(&rejected_none, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithEffortFallback
+        ));
+        assert!(!rejected_none.wants_reasoning_effort_none());
+
+        let mut request = xai_grok_sampling_types::ConversationRequest {
+            reasoning_effort: Some(xai_grok_sampling_types::ReasoningEffort::None),
+            ..Default::default()
+        };
+        // Mirror the correction branch: rejecting `none` must strip it, not
+        // force the already-present value and conclude there is no fallback.
+        let changed = if rejected_none.wants_reasoning_effort_none() {
+            request.force_reasoning_effort_none()
+        } else {
+            request.strip_reasoning_effort()
+        };
+        assert!(changed);
+        assert_eq!(request.reasoning_effort, None);
+    }
+
+    #[test]
     fn classify_rate_limited_uses_retry_after() {
         let err = api_err_with_retry_after(StatusCode::TOO_MANY_REQUESTS, 7);
         match classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD) {

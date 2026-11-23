@@ -118,7 +118,7 @@ jobs:
           import base64, os, sys
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
           from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-          seed = base64.b64decode(os.environ['CHAOS_SIGNING_PRIVATE_KEY'].strip().lstrip('\\ufeff'), validate=True)
+          seed = base64.b64decode(os.environ['CHAOS_SIGNING_PRIVATE_KEY'].strip().lstrip('\ufeff').strip(), validate=True)
           expected = base64.b64decode(os.environ['CHAOS_SIGNING_PUBLIC_KEY'].strip(), validate=True)
           if len(seed) != 32 or len(expected) != 32:
               sys.exit('signing key material has an invalid length')
@@ -410,6 +410,7 @@ jobs:
       # Format is plain `sha256sum`/`shasum -a 256` output so the installers can
       # check it with stock tooling on every platform.
       - name: Generate SHA256SUMS
+        id: checksums
         shell: bash
         run: |
           set -euo pipefail
@@ -428,6 +429,7 @@ jobs:
       # Signing is mandatory for this release workflow; missing credentials
       # fail in signing-preflight before any platform build starts.
       - name: Sign binaries
+        id: signing
         shell: bash
         env:
           CHAOS_SIGNING_PRIVATE_KEY: ${{ secrets.CHAOS_SIGNING_PRIVATE_KEY }}
@@ -454,6 +456,8 @@ jobs:
           else
             PY=python3
           fi
+          # Pass the interpreter with cryptography to the independent asset verifier.
+          echo "python=$PY" >> "$GITHUB_OUTPUT"
           # Sign each binary with Python's cryptography library (ed25519,
           # raw — no pre-hash). The .sig file is a bare base64 64-byte
           # signature, matching what the Rust auto-updater expects.
@@ -462,11 +466,12 @@ jobs:
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
           from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 
-          # strip() also drops a UTF-8 BOM (\ufeff) and stray whitespace that
-          # can sneak in when the secret was set from a Windows shell — the
-          # exact failure mode of release run 31796456487.
+          # strip() removes surrounding whitespace; lstrip('\ufeff') removes
+          # the leading BOM, then strip() handles whitespace immediately after it.
+          # These can sneak in when a secret is set from a Windows shell (release
+          # run 31796456487); normalize the seed exactly as signing-preflight does.
           seed = base64.b64decode(
-              os.environ['CHAOS_SIGNING_PRIVATE_KEY'].strip().lstrip('\ufeff'),
+              os.environ['CHAOS_SIGNING_PRIVATE_KEY'].strip().lstrip('\ufeff').strip(),
               validate=True,
           )
           sk = Ed25519PrivateKey.from_private_bytes(seed)
@@ -522,6 +527,7 @@ jobs:
       # whose .sig sidecar was just produced, the release stops here rather than on someone's
       # machine where the installer refuses to write the binary.
       - name: Check npm packages against the signed artifact digests
+        id: npm_integrity
         shell: bash
         run: |
           set -euo pipefail
@@ -543,6 +549,67 @@ jobs:
               (cd "$p" && npm pack --dry-run 2>&1 | tail -20)
             fi
           done
+
+      # Verify the actual upload set before npm publication. A later npm failure
+      # may leave this job red, but only these verified assets may reach GitHub.
+      - name: Verify release assets
+        id: release_assets
+        shell: bash
+        env:
+          CHAOS_SIGNING_PUBLIC_KEY: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY }}
+          SIGNING_PYTHON: ${{ steps.signing.outputs.python }}
+        run: |
+          set -euo pipefail
+          "${SIGNING_PYTHON:?}" - <<'PY'
+          import base64, hashlib, json, os, pathlib, re
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+          root = pathlib.Path('release-bins')
+          required = [
+              'chaos-linux-x64', 'chaos-linux-arm64',
+              'chaos-darwin-arm64', 'chaos-darwin-x64', 'chaos-win32-x64.exe',
+          ]
+          optional = 'chaos-win32-arm64.exe'
+
+          def require_file(path):
+              if not path.is_file() or path.stat().st_size == 0:
+                  raise ValueError(f'missing or empty release asset: {path}')
+              return path.read_bytes()
+
+          for name in required:
+              require_file(root / name)
+          binaries = required + ([optional] if (root / optional).exists() else [])
+          checksums = require_file(root / 'SHA256SUMS').decode('utf-8')
+          digests = {}
+          for line in checksums.splitlines():
+              match = re.fullmatch(r'([0-9a-f]{64})  (chaos-[A-Za-z0-9.-]+)', line)
+              if not match or match[2] in digests:
+                  raise ValueError('invalid or duplicate SHA256SUMS entry')
+              digests[match[2]] = match[1]
+          if set(digests) != set(binaries):
+              raise ValueError('SHA256SUMS must cover exactly the available release binaries')
+          key = Ed25519PublicKey.from_public_bytes(base64.b64decode(
+              os.environ['CHAOS_SIGNING_PUBLIC_KEY'].strip(), validate=True))
+          files = [str(root / 'SHA256SUMS')]
+          for name in binaries:
+              path = root / name
+              data = require_file(path)
+              if hashlib.sha256(data).hexdigest() != digests[name]:
+                  raise ValueError(f'checksum mismatch: {name}')
+              sidecar = pathlib.Path(str(path) + '.sig')
+              signature = base64.b64decode(require_file(sidecar).strip(), validate=True)
+              key.verify(signature, data)
+              files.extend([str(path), str(sidecar)])
+          notices = pathlib.Path('crates/codegen/xai-grok-pager/npm/THIRD_PARTY_NOTICES.md')
+          sbom = pathlib.Path('sbom/chaos.cdx.json')
+          require_file(notices)
+          json.loads(require_file(sbom))
+          files.extend([str(notices), str(sbom)])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('files<<CHAOS_RELEASE_FILES\n' + '\n'.join(files)
+                           + '\nCHAOS_RELEASE_FILES\n')
+          print(f'verified {len(binaries)} signed binaries and all release assets')
+          PY
 
       - name: Verify npm package names are available
         if: needs.resolve-version.outputs.publish_npm == 'true'
@@ -608,31 +675,16 @@ jobs:
           always()
           && needs.resolve-version.outputs.create_github_release == 'true'
           && steps.layout.outcome == 'success'
+          && steps.checksums.outcome == 'success'
+          && steps.signing.outcome == 'success'
+          && steps.npm_integrity.outcome == 'success'
+          && steps.release_assets.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
           name: Chaos ${{ needs.resolve-version.outputs.version }}
           generate_release_notes: true
-          fail_on_unmatched_files: false
-          files: |
-            release-bins/SHA256SUMS
-            release-bins/chaos-linux-x64
-            release-bins/chaos-linux-x64.sig
-            release-bins/chaos-linux-arm64
-            release-bins/chaos-linux-arm64.sig
-            release-bins/chaos-darwin-arm64
-            release-bins/chaos-darwin-arm64.sig
-            release-bins/chaos-darwin-x64
-            release-bins/chaos-darwin-x64.sig
-            release-bins/chaos-win32-x64.exe
-            release-bins/chaos-win32-x64.exe.sig
-            release-bins/chaos-win32-arm64.exe
-            release-bins/chaos-win32-arm64.exe.sig
-            # Whoever downloads a binary instead of installing from npm still has to receive
-            # the notices; this is the same document that goes inside every tarball.
-            crates/codegen/xai-grok-pager/npm/THIRD_PARTY_NOTICES.md
-            # ... and the machine-readable answer to "what is in this binary", which is what an
-            # SBOM consumer (a scanner, a customer's security review) can actually load.
-            sbom/chaos.cdx.json
+          fail_on_unmatched_files: true
+          files: ${{ steps.release_assets.outputs.files }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

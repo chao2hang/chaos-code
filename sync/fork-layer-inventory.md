@@ -48,6 +48,16 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 - `crates/codegen/xai-grok-sampler/src/shared_http.rs`
 - `crates/codegen/xai-grok-sampler/src/attribution.rs`
 - `crates/codegen/xai-grok-shell/src/agent/config.rs`（is_workbuddy / marker 注入）
+- `crates/codegen/xai-grok-sampling-types/src/error.rs`（BYOK 网关的 reasoning_effort 错误分类）
+
+2026-11-22：修正 `4720335a7` 的反向 `none` 误判，只在错误明确要求
+`set reasoning_effort to 'none'`（或双引号形式）时显式关闭推理；服务器拒绝
+`none` 或仅列出该枚举值时仍剥参重试。此处不能只改 `chaos-engine` 适配层：
+终端 `xai-grok-sampler` 的 actor 在内部调用 `SamplingError` 分类并决定是否终止，
+适配层无法拦截该决定。因此在核心错误类型里做最小谓词修正，并在 sampler 的
+现有重试测试中固定拒绝 `none` → 删除参数的行为；独立的 `chaos-engine` HTTP
+客户端同步同一口径，增加真实 TCP mock 的 400 → 剥参 → SSE 成功测试。
+当前环境无 Rust 工具链，这些 Rust 测试尚未运行，不能视为编译或测试通过证据。
 
 ## 6. 版本 / 二进制 / 日志
 - `crates/codegen/xai-grok-pager-bin/**`（`[[bin]] name = "chaos"`）

@@ -565,6 +565,14 @@ jobs:
           python3 scripts/ci/test-check-versions.py
           ./scripts/ci/check-versions.sh
 
+      - name: release signing and asset fixtures
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-cryptography
+          python3 scripts/ci/test-release-signing-preflight.py
+          python3 scripts/ci/test-release-assets.py
+
       - name: installer signature policy
         run: python3 scripts/ci/test-installer-signature-policy.py
 

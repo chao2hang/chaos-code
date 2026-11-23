@@ -89,13 +89,13 @@ async fn assert_waiting_alignment(rows: u16) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with mock SSE delays and dock enabled to observe the pre-token waiting layout; review 2027-01"]
 async fn waiting_for_model_label_shows_before_first_token() {
     assert_waiting_alignment(DEFAULT_ROWS).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with mock SSE delays and dock enabled to observe the pre-token waiting layout; review 2027-01"]
 async fn compact_home_and_session_prompts_keep_the_same_left_edge() {
     assert_waiting_alignment(18).await;
 }

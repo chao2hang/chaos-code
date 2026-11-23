@@ -37,7 +37,9 @@ use xai_grok_shell::sampling::types::{
 };
 use xai_grok_shell::util::config as cli_config;
 use xai_grok_telemetry::startup::PendingStartup;
+mod exit_status;
 mod ext_protocol;
+pub use exit_status::{HeadlessFailure, RunExitReason};
 mod mcp_init;
 mod prompt_ack;
 mod reducer;
@@ -110,6 +112,10 @@ struct HeadlessEmitter {
     out: std::io::Stdout,
     /// Latched once stdout is unwritable so later writes are dropped instead of panicking.
     output_closed: bool,
+    /// Final status of each ACP tool call, keyed by call id. A call that fails and is
+    /// then retried under a new id is not the same as a call whose final report is
+    /// `Failed`, so the id is part of the record rather than a single latched flag.
+    tool_statuses: HashMap<String, acp::ToolCallStatus>,
     /// First hard stdout IO error (not a broken pipe), surfaced so the process exits non-zero.
     write_error: Option<std::io::Error>,
 }
@@ -126,6 +132,7 @@ impl HeadlessEmitter {
             prompt_started: None,
             out: std::io::stdout(),
             output_closed: false,
+            tool_statuses: HashMap::new(),
             write_error: None,
         }
     }
@@ -254,6 +261,14 @@ impl HeadlessEmitter {
             self.structured_output = Some(Ok(value.clone()));
         }
     }
+    fn note_tool_call(&mut self, id: &str, status: acp::ToolCallStatus) {
+        self.tool_statuses.insert(id.to_owned(), status);
+    }
+    fn tool_failed(&self) -> bool {
+        self.tool_statuses
+            .values()
+            .any(|status| *status == acp::ToolCallStatus::Failed)
+    }
     fn set_usage_from_meta(&mut self, meta: Option<&acp::Meta>) {
         let Some(meta) = meta else { return };
         self.usage = meta.get("usage").cloned();
@@ -302,12 +317,14 @@ impl HeadlessEmitter {
         stop_reason: &str,
         session_id: &str,
         request_id: &str,
+        reason: RunExitReason,
     ) -> serde_json::Value {
         let mut result = serde_json::json!({
             "text": self.text_buffer,
             "stopReason": stop_reason,
             "sessionId": session_id,
-            "requestId": request_id
+            "requestId": request_id,
+            "run": {"exit_reason": reason.wire()}
         });
         if !self.thought_buffer.is_empty()
             && let Some(obj) = result.as_object_mut()
@@ -323,13 +340,13 @@ impl HeadlessEmitter {
         self.attach_structured_output(&mut result);
         result
     }
-    fn on_end(&mut self, stop_reason: &str, session_id: &str, request_id: &str) {
+    fn on_end(&mut self, stop_reason: &str, session_id: &str, request_id: &str, reason: RunExitReason) {
         match self.format {
             OutputFormat::Plain => {
                 let _ = self.write_out(b"\n", false);
             }
             OutputFormat::Json => {
-                let result = self.build_json_result(stop_reason, session_id, request_id);
+                let result = self.build_json_result(stop_reason, session_id, request_id, reason);
                 let mut rendered =
                     serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string());
                 rendered.push('\n');
@@ -352,7 +369,8 @@ impl HeadlessEmitter {
                     };
                     reducer.finish(&end)
                 });
-                if let Some(lines) = lines {
+                if let Some(mut lines) = lines {
+                    stamp_terminal_run_reason(&mut lines, reason);
                     self.emit_lines(lines);
                 }
             }
@@ -373,11 +391,11 @@ impl HeadlessEmitter {
         }
     }
     /// Emit the terminal error; `stop_reason_override` stamps a Messages stop reason (e.g. `max_tokens`).
-    fn on_error(&mut self, message: &str, stop_reason_override: Option<&str>) {
+    fn on_error(&mut self, message: &str, stop_reason_override: Option<&str>, reason: RunExitReason) {
         match self.format {
             OutputFormat::Plain => eprint_line(message),
             OutputFormat::Json => {
-                let mut err = serde_json::json!({"type":"error","message": message});
+                let mut err = serde_json::json!({"type":"error","message": message, "run":{"exit_reason":reason.wire()}});
                 if let Some(usage) = &self.usage {
                     attach_result_usage(&mut err, usage);
                 }
@@ -389,13 +407,24 @@ impl HeadlessEmitter {
                 let lines = self.reducer.as_mut().map(|reducer| {
                     reducer.error(message, usage.as_ref(), duration_ms, stop_reason_override)
                 });
-                if let Some(lines) = lines {
+                if let Some(mut lines) = lines {
+                    stamp_terminal_run_reason(&mut lines, reason);
                     self.emit_lines(lines);
                 }
             }
         }
     }
 }
+fn stamp_terminal_run_reason(lines: &mut [serde_json::Value], reason: RunExitReason) {
+    for line in lines {
+        if matches!(line.get("type").and_then(|v| v.as_str()), Some("result" | "end" | "error"))
+            && let Some(obj) = line.as_object_mut()
+        {
+            obj.insert("run".into(), serde_json::json!({"exit_reason": reason.wire()}));
+        }
+    }
+}
+
 pub(crate) fn attach_result_usage(result: &mut serde_json::Value, usage: &serde_json::Value) {
     xai_grok_shell::extensions::notification::attach_result_usage_fail_closed(result, usage);
 }
@@ -920,7 +949,7 @@ pub async fn run_single_turn(
         Err(e) => {
             report_startup_failure(&timer);
             let msg = format!("Couldn't start session: {e}");
-            emitter.on_error(&msg, None);
+            emitter.on_error(&msg, None, RunExitReason::InternalError);
             anyhow::bail!("{msg}");
         }
     };
@@ -944,7 +973,7 @@ pub async fn run_single_turn(
         Err(e) => {
             report_startup_failure(&timer);
             let msg = format!("Couldn't initialize: {e}");
-            emitter.on_error(&msg, None);
+            emitter.on_error(&msg, None, RunExitReason::InternalError);
             anyhow::bail!("{msg}");
         }
     };
@@ -965,7 +994,7 @@ pub async fn run_single_turn(
         Ok(is_api_key) => is_api_key,
         Err(e) => {
             report_startup_failure(&timer);
-            emitter.on_error(&e.to_string(), None);
+            emitter.on_error(&e.to_string(), None, RunExitReason::InternalError);
             return Err(e);
         }
     };
@@ -1092,7 +1121,7 @@ pub async fn run_single_turn(
         Err(e) => {
             PendingStartup::finish_held(&mut pending_startup, crate::acp::StartupOutcome::Error);
             let msg = format!("Couldn't create session: {e}");
-            emitter.on_error(&msg, None);
+            emitter.on_error(&msg, None, RunExitReason::InternalError);
             anyhow::bail!("{msg}");
         }
     };
@@ -1184,7 +1213,7 @@ pub async fn run_single_turn(
     .await
     {
         let msg = e.to_string();
-        emitter.on_error(&msg, None);
+        emitter.on_error(&msg, None, RunExitReason::InternalError);
         anyhow::bail!("{msg}");
     }
     let t_prompt = Instant::now();
@@ -1285,7 +1314,11 @@ pub async fn run_single_turn(
                 () = deferred_exit.signalled() => break,
                 msg = acp_rx.recv() => {
                     let Some(msg) = msg else {
-                        emitter.on_error("Connection closed unexpectedly", None);
+                        emitter.on_error(
+                            "Connection closed unexpectedly",
+                            None,
+                            RunExitReason::ProviderError,
+                        );
                         connection_closed = true;
                         break;
                     };
@@ -1394,7 +1427,11 @@ pub async fn run_single_turn(
         crate::app::signal_handler::force_exit(code);
     }
     let outcome: Result<()> = match prompt_result {
-        _ if connection_closed => Err(anyhow::anyhow!("Connection closed unexpectedly")),
+        _ if connection_closed => Err(anyhow::Error::new(HeadlessFailure::new(
+            RunExitReason::ProviderError,
+            "Connection closed unexpectedly",
+            options.model.as_deref(),
+        ))),
         Some(Ok(resp)) => {
             let stop_reason = stop_reason_wire(resp.stop_reason);
             emitter.set_structured_output_from_meta(resp.meta.as_ref());
@@ -1421,31 +1458,41 @@ pub async fn run_single_turn(
                     ""
                 }
             };
-            let is_max_turns = resp
-                .meta
-                .as_ref()
-                .and_then(|m| m.get(crate::app::CANCELLATION_CATEGORY_KEY))
-                .and_then(|v| v.as_str())
-                == Some(xai_grok_shell::session::commands::MAX_TURNS_REACHED_CATEGORY);
-            if is_max_turns {
+            let reason = RunExitReason::from_prompt_response(&resp, emitter.tool_failed());
+            if reason == RunExitReason::MaxTurns {
                 emitter.on_max_turns();
-                emitter.on_end(&stop_reason, sid, rid);
-                Err(anyhow::anyhow!("max turns reached"))
-            } else {
-                emitter.on_end(&stop_reason, sid, rid);
+            }
+            emitter.on_end(&stop_reason, sid, rid, reason);
+            if reason == RunExitReason::Completed {
                 Ok(())
+            } else {
+                Err(anyhow::Error::new(HeadlessFailure::new(
+                    reason,
+                    match reason {
+                        RunExitReason::MaxTurns => "max turns reached",
+                        RunExitReason::PermissionDenied => "permission denied",
+                        RunExitReason::ToolError => "a tool call failed",
+                        _ => "headless run did not complete",
+                    },
+                    options.model.as_deref(),
+                )))
             }
         }
         Some(Err(err)) => {
-            let msg = if i32::from(err.code) == RATE_LIMITED_ERROR_CODE {
-                let detail = err.data.as_ref().and_then(error_detail_from_data);
-                crate::app::sanitize_user_error(&format_rate_limited_user_message(
-                    detail.as_deref(),
-                    is_api_key_auth,
-                ))
-            } else {
-                err.to_string()
-            };
+            let failure = HeadlessFailure::from_prompt_error(
+                &err,
+                if i32::from(err.code) == RATE_LIMITED_ERROR_CODE {
+                    let detail = err.data.as_ref().and_then(error_detail_from_data);
+                    crate::app::sanitize_user_error(&format_rate_limited_user_message(
+                        detail.as_deref(),
+                        is_api_key_auth,
+                    ))
+                } else {
+                    xai_grok_shell::sampling::error::acp_error_message(&err)
+                },
+                options.model.as_deref(),
+            );
+            let msg = failure.to_string();
             if let Some(usage) = xai_grok_shell::sampling::error::prompt_usage_from_error(&err) {
                 match serde_json::to_value(&usage) {
                     Ok(v) => emitter.usage = Some(v),
@@ -1460,8 +1507,8 @@ pub async fn run_single_turn(
             let stop_reason_override =
                 (xai_grok_shell::sampling::error::stop_reason_for_turn_error(&err) == "MaxTokens")
                     .then_some("max_tokens");
-            emitter.on_error(&msg, stop_reason_override);
-            Err(anyhow::anyhow!("{msg}"))
+            emitter.on_error(&msg, stop_reason_override, failure.reason);
+            Err(anyhow::Error::new(failure))
         }
         None => Ok(()),
     };
@@ -1783,6 +1830,17 @@ fn handle_headless_acp_message(
 ) {
     match msg {
         AcpClientMessageBox::SessionNotification(boxed) => {
+            match &boxed.request.update {
+                acp::SessionUpdate::ToolCall(call) => {
+                    emitter.note_tool_call(&call.tool_call_id.0, call.status);
+                }
+                acp::SessionUpdate::ToolCallUpdate(update) => {
+                    if let Some(status) = update.fields.status {
+                        emitter.note_tool_call(&update.tool_call_id.0, status);
+                    }
+                }
+                _ => {}
+            }
             match &boxed.request.update {
                 acp::SessionUpdate::AgentMessageChunk(chunk) => {
                     if let acp::ContentBlock::Text(text) = &chunk.content

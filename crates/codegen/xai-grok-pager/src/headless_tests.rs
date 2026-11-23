@@ -663,7 +663,7 @@ fn structured_output_without_meta_errors_never_parses_text() {
     let mut emitter = HeadlessEmitter::new(OutputFormat::Json, true);
     emitter.text_buffer = r#"{"name":"alice","age":30}"#.into();
     emitter.set_structured_output_from_meta(serde_json::json!({}).as_object());
-    let result = emitter.build_json_result("EndTurn", "sess-1", "req-1");
+    let result = emitter.build_json_result("EndTurn", "sess-1", "req-1", super::RunExitReason::Completed);
     assert!(result.get("structuredOutput").is_none_or(|v| v.is_null()));
     assert_eq!(
         result.get("structuredOutputError").and_then(|v| v.as_str()),
@@ -678,7 +678,7 @@ fn structured_output_from_meta_wins_over_text_buffer() {
     emitter.set_structured_output_from_meta(
         serde_json::json!({"structuredOutput": {"name": "carol"}}).as_object(),
     );
-    let result = emitter.build_json_result("EndTurn", "sess-1", "req-1");
+    let result = emitter.build_json_result("EndTurn", "sess-1", "req-1", super::RunExitReason::Completed);
     assert_eq!(
         result
             .get("structuredOutput")
@@ -695,7 +695,7 @@ fn structured_output_from_meta_wins_over_text_buffer() {
         })
         .as_object(),
     );
-    let result = emitter.build_json_result("EndTurn", "sess-1", "req-1");
+    let result = emitter.build_json_result("EndTurn", "sess-1", "req-1", super::RunExitReason::Completed);
     assert!(result.get("structuredOutput").is_none_or(|v| v.is_null()));
     assert_eq!(
         result.get("structuredOutputError").and_then(|v| v.as_str()),

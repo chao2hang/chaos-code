@@ -92,7 +92,7 @@ async fn send_page_flips_by_default() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with a blocked mock second turn to inspect page-flip viewport behavior; review 2027-01"]
 async fn wheel_can_leave_and_restore_page_flipped_view() {
     let content = ContentController::start().await.expect("start content");
     let (mut harness, second_turn) = drive_to_second_send(&content).await;
@@ -149,7 +149,7 @@ async fn wheel_can_leave_and_restore_page_flipped_view() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with a blocked mock second turn to inspect page-flip viewport behavior; review 2027-01"]
 async fn send_keeps_viewport_when_page_flip_disabled() {
     let content = ContentController::start().await.expect("start content");
     seed_ui_config(&content, "page_flip_on_send = false");

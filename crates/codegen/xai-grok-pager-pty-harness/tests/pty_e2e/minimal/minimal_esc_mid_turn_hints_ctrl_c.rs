@@ -6,7 +6,7 @@ use crate::common::*;
 /// That branch never cancels: minimal has no toast slot, so the Ctrl+C hint is committed to native scrollback as a system line, and the turn keeps streaming.
 /// Ctrl+C then cancels, and the cancellation marker is committed like any other block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with cursor-query replies and paced mock streaming for minimal-mode Esc handling; review 2027-01"]
 async fn minimal_esc_mid_turn_hints_ctrl_c() {
     let content = ContentController::start().await.expect("start content");
     // Paced, long stream so the turn is provably still running when Esc lands.

@@ -9,7 +9,7 @@ const REASONING_SENTINEL: &str = "REASONINGSENTINEL";
 /// GB-5502: a fullscreen → minimal → fullscreen round trip must not leave thinking folds sprung
 /// open.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with cursor-query replies and mock reasoning SSE for fullscreen/minimal mode switching; review 2027-01"]
 async fn minimal_switch_round_trip_refolds_thinking() {
     // The model must run on the Responses backend; only the Responses API streams reasoning summary deltas (the scripted events below)
     let content = ContentController::start_with_models(vec![

@@ -5,7 +5,7 @@ use super::common::*;
 /// `/model <name> ` opens the effort sub-menu on the model's default effort, so a bare Enter picks that level.
 /// The current model is `grok-4.5` so the session's live effort (`xhigh`) cannot mask `grok-4.6`'s catalog default.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with a mock model catalog and captured Responses requests to exercise the effort menu; review 2027-01"]
 async fn reasoning_efforts_model_menu_opens_on_default() {
     let content = ContentController::start_with_models(vec![
         MockModel::new("grok-4.5")

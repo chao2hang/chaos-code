@@ -1556,6 +1556,92 @@ async fn responses_doom_loop_does_not_resample_after_output_when_retry_only_befo
 }
 
 // ---------------------------------------------------------------------------
+// Provider capability mismatch (issue #30)
+// ---------------------------------------------------------------------------
+
+/// An identity profile is not an API backend override. Keep both rounds on the
+/// model-configured chat endpoint; a 400 asking for explicit `none` may change
+/// the effort parameter, but must not silently switch to `/v1/responses`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn function_tools_reasoning_400_retries_once_on_first_and_later_turns() {
+    use axum::extract::State;
+    use axum::http::HeaderMap;
+    use axum::response::IntoResponse;
+    use xai_grok_sampling_types::{ReasoningEffort, ToolSpec};
+
+    let observed = Arc::new(std::sync::Mutex::new(Vec::<(String, serde_json::Value)>::new()));
+    let app = Router::new()
+        .route(
+            "/v1/chat/completions",
+            post(
+                |State(observed): State<Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>>,
+                 headers: HeaderMap,
+                 axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    let identity = headers
+                        .get("x-grok-client-identifier")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    observed.lock().unwrap().push((identity, body.clone()));
+                    if body["reasoning_effort"] != "none" {
+                        let error = json!({"error": {"message":
+                            "Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."
+                        }});
+                        return (StatusCode::BAD_REQUEST, axum::Json(error)).into_response();
+                    }
+                    let events = sse::chat_completion_events("accepted", "gpt-6-luna");
+                    Sse::new(stream::iter(
+                        events.into_iter().map(Ok::<_, std::convert::Infallible>),
+                    ))
+                    .into_response()
+                },
+            ),
+        )
+        .route("/v1/responses", post(|| async { StatusCode::IM_A_TEAPOT }))
+        .with_state(observed.clone());
+    let server = MockServer::spawn(app).await;
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let mut config = test_config(server.base_url(), "gpt-6-luna");
+    config.api_backend = ApiBackend::ChatCompletions;
+    config.client_identifier = Some("claude-code".to_owned());
+    let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
+
+    for turn in 1..=2 {
+        let mut request = user_request(&format!("turn {turn}"));
+        request.reasoning_effort = Some(ReasoningEffort::High);
+        request.tools = vec![ToolSpec {
+            name: "test_function".to_owned(),
+            description: None,
+            parameters: json!({"type":"object","properties":{}}),
+        }];
+        let (response, metrics) = handle
+            .submit_and_collect(RequestId::from(format!("provider-400-turn-{turn}")), request)
+            .await
+            .expect("provider requested explicit none; the corrected retry succeeds");
+        assert_eq!(response.assistant_text(), "accepted");
+        assert_eq!(metrics.attempts, 2, "one corrected retry per turn");
+    }
+    server.shutdown();
+
+    let attempts = observed.lock().unwrap();
+    assert_eq!(attempts.len(), 4, "exactly one fallback per turn");
+    for pair in attempts.chunks_exact(2) {
+        assert_eq!(pair[0].0, "claude-code", "identity survives 400");
+        assert_eq!(pair[1].0, "claude-code", "identity survives retry");
+        assert_eq!(pair[0].1["reasoning_effort"], "high");
+        assert_eq!(pair[1].1["reasoning_effort"], "none");
+        assert_eq!(pair[0].1["model"], "gpt-6-luna");
+        assert_eq!(pair[1].1["model"], "gpt-6-luna");
+        assert_eq!(pair[0].1["tools"][0]["type"], "function");
+        assert_eq!(pair[1].1["tools"][0]["type"], "function");
+    }
+    let retry_events = std::iter::from_fn(|| event_rx.try_recv().ok())
+        .filter(|event| matches!(event, SamplingEvent::Retrying { .. }))
+        .count();
+    assert_eq!(retry_events, 2);
+}
+
+// ---------------------------------------------------------------------------
 // Helpers for draining the event channel
 // ---------------------------------------------------------------------------
 

@@ -61,7 +61,7 @@ impl PtyTap {
 /// Regression test for the blocked-tty mid-turn freeze: pre-fix, a terminal that stopped reading
 /// the pty parked the writer thread in its blocking write holding the stderr lock.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary and Unix PTY file descriptors with paused output draining to reproduce a blocked terminal write; review 2027-01"]
 async fn writer_blocked_tty_keeps_loop_alive() {
     let content = ContentController::start().await.expect("start content");
     let long_body = (0..2000)

@@ -4,7 +4,7 @@ use super::common::*;
 
 /// Terminals that never pushed kitty flags must keep today's teardown byte stream: no DA1 query on quit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with terminal-brand markers scrubbed to inspect raw quit output without kitty flags; review 2027-01"]
 async fn quit_without_kitty_flags_sends_no_da1() {
     let content = ContentController::start().await.expect("start content");
     let binary = pager_binary().expect("resolve pager binary");

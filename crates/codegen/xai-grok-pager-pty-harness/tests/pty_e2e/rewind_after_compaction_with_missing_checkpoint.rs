@@ -44,7 +44,7 @@ fn submit_turn(harness: &mut PtyHarness, content: &ContentController, prompt: &s
 
 /// Deleting the older of two checkpoint files (what the 30-day sweep did) must not block a rewind based on the newer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "requires the built pager binary in an OS PTY with mock summary responses and sandbox checkpoint files to exercise compaction and rewind; review 2027-01"]
 async fn rewind_after_compaction_with_missing_checkpoint() {
     let content = ContentController::start().await.expect("start content");
 
